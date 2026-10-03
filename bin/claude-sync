@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# claude-sync dispatcher. Subcommands for later phases are not registered here.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+# shellcheck source=lib/sync.sh
+source "$ROOT/lib/sync.sh"
+
+VERSION="0.0.0"
+
+usage() {
+  cat <<'EOF'
+Usage: claude-sync pull [--hook]
+       claude-sync push [--hook]
+       claude-sync --version
+       claude-sync --help
+EOF
+}
+
+: "${CLAUDE_SYNC_DIR:=$HOME/.claude-sync}"
+: "${CLAUDE_HOME:=$HOME/.claude}"
+: "${CLAUDE_SYNC_TIMEOUT:=20}"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-sync"
+
+# CLAUDE_HOME is the Claude config dir. Phase 1 does not read it; later phases do.
+# shellcheck disable=SC2034
+export CLAUDE_SYNC_DIR CLAUDE_HOME CLAUDE_SYNC_TIMEOUT STATE_DIR
+
+export HOOK=0
+CMD=""
+
+# --hook anywhere in the arguments means a bad invocation still exits 0.
+for _arg in "$@"; do
+  if [ "$_arg" = "--hook" ]; then
+    HOOK=1
+  fi
+done
+
+bad_args() {
+  if [ "$HOOK" -eq 1 ]; then
+    printf 'claude-sync: unknown argument.\n' >&2
+    exit 0
+  fi
+  usage >&2
+  exit 1
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --hook)
+      HOOK=1
+      ;;
+    --version)
+      if [ -n "$CMD" ]; then
+        bad_args
+      fi
+      CMD=version
+      ;;
+    --help|-h)
+      if [ -n "$CMD" ]; then
+        bad_args
+      fi
+      CMD=help
+      ;;
+    pull|push)
+      if [ -n "$CMD" ]; then
+        bad_args
+      fi
+      CMD=$1
+      ;;
+    *)
+      bad_args
+      ;;
+  esac
+  shift
+done
+export HOOK
+
+case "$CMD" in
+  version)
+    printf 'claude-sync %s\n' "$VERSION"
+    ;;
+  help)
+    usage
+    ;;
+  pull)
+    sync_pull
+    ;;
+  push)
+    sync_push
+    ;;
+  *)
+    if [ "$HOOK" -eq 1 ]; then
+      printf 'claude-sync: missing command.\n' >&2
+      exit 0
+    fi
+    usage >&2
+    exit 1
+    ;;
+esac
