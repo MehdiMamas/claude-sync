@@ -2,14 +2,14 @@
 
 Read this file **before** any work. It is the single source of truth for which phases are active and what blocks the rest. Rules: `.cursor/rules/05-phase-discipline.mdc`. Roadmap: `.cursor/plans/00-roadmap.plan.md`. Spec: `SPEC.md`.
 
-**Active phases:** 2 – Link layer (not started) → `.cursor/plans/phase-02-link-layer.plan.md`
-**Next:** 3 – Init and join (blocked: Needs Phase 2 gate passed)
+**Active phases:** 3 – Init and join (not started) → `.cursor/plans/phase-03-init-join.plan.md`
+**Next:** 4 – Plugin (blocked: Needs Phase 3 gate passed; Needs the name decision)
 
 | Phase | Plan | Status | Gate evidence | Date |
 |---|---|---|---|---|
 | 1 | `phase-01-sync-engine.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 26 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. Three-OS CI for this commit is the pull request checks (ubuntu-latest, macos-latest, windows-latest). | 2026-10-03 |
-| 2 | `phase-02-link-layer.plan.md` | not started | | |
-| 3 | `phase-03-init-join.plan.md` | blocked: Needs Phase 2 gate passed | | |
+| 2 | `phase-02-link-layer.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 35 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. Smoke on that OS: a temp repo's skill `claude-sync-phase2-smoke` was linked into the real `~/.claude/skills/` (`bin/claude-sync link`, exit 0); `claude -p "List the names of the skills available to you, one per line"` exited 0 and its first line was `claude-sync-phase2-smoke`; `unlink` removed that link; `~/.claude/CLAUDE.md` matched a byte copy taken before the smoke (`cmp`). Three-OS CI for this commit is the pull request checks (ubuntu-latest, macos-latest, windows-latest). | 2026-10-03 |
+| 3 | `phase-03-init-join.plan.md` | not started | | |
 | 4 | `phase-04-plugin.plan.md` | blocked: Needs Phase 3 gate passed; Needs the name decision | | |
 | 5 | `phase-05-doctor-release.plan.md` | blocked: Needs Phase 4 gate passed; Needs the license decision | | |
 | 6 | `phase-06-cursor-sync.plan.md` | blocked: Needs Phase 3 gate passed | | |
@@ -20,8 +20,8 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 ## Handoff (2026-10-03)
 
 **Where we are**
-- Phase 1 (sync engine) is done on this branch: `bin/claude-sync`, `lib/sync.sh`, `lib/secrets.sh`, the test runner, and CI. Pull does not call link; that is Phase 3.
-- After this pull request merges, Phase 2 (link layer) is next.
+- Phase 2 (link layer) is done on this branch: `lib/link.sh` plus `link`, `unlink` and `status` on `bin/claude-sync`. Pull still does not call link; that is Phase 3.
+- After this pull request merges, Phase 3 (init and join) is next.
 - The private repo is https://github.com/MehdiMamas/claude-sync.
 
 **Who does what**
@@ -54,3 +54,7 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 - 2026-10-03: Hook mode sends other stderr to the log (or `/dev/null` if the log cannot be opened), prints at most one line, and exits 0. Git output in the log has credentials stripped from URLs. `GCM_INTERACTIVE=never` is set only in hook mode.
 - 2026-10-03: Phase 1 plan gate items 5, 10, and 12 now name the pre-staged path, empty-lock, and no-prompt cases the tests cover.
 - 2026-10-03: Left open (review follow-ups, not this round): whether `push` scans commits the user made by hand, and whether never-sync names inside allowlisted dirs are refused by the engine as well as by the Phase 3 gitignore.
+- 2026-10-03: `status` prints one stdout line per item (`CLAUDE.md`, `skills/<name>`, `agents`, `commands`, `output-styles`) as `linked`, `missing`, or `conflict`, then `branch`, `ahead`, `behind`, `dirty`, `last-pull`, and `last-push`. Ahead/behind come from the local upstream ref; status does not fetch. `skills/synced` is not listed.
+- 2026-10-03: Dangling-link cleanup looks at direct children of `~/.claude` and at names inside a real `skills/` directory. It does not walk real directories such as `projects/`. A link is removed only when its target path is inside the repo dir and the target is gone.
+- 2026-10-03: On Windows, directory links are junctions: `cmd.exe //c mklink //J`. MSYS rewrites a single `/J` into a drive path before `cmd` sees it, so the bash source uses `//J` and `//c`. Junctions are removed with `cmd.exe //c rmdir`, never `rm`.
+- 2026-10-03: The CLAUDE.md import path is `~/…` when the repo dir is under `$HOME`, keeping the repo directory's own spelling. Outside `$HOME`, Unix writes the absolute `pwd -L` path and Windows writes a drive-letter path from `cygpath -m`, because Claude Code is a native process and cannot open an MSYS path. The tilde is text in the file, not a shell expansion.

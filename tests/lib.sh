@@ -215,6 +215,65 @@ assert_no_rebase() {
   fi
 }
 
+seed_sync_repo() {
+  prepare_bare
+  clone_here
+  mkdir -p "$CLAUDE_SYNC_DIR/skills/alpha" \
+    "$CLAUDE_SYNC_DIR/skills/synced/managed" \
+    "$CLAUDE_SYNC_DIR/agents" \
+    "$CLAUDE_SYNC_DIR/commands" \
+    "$CLAUDE_SYNC_DIR/output-styles"
+  printf 'alpha\n' > "$CLAUDE_SYNC_DIR/skills/alpha/SKILL.md"
+  printf 'managed\n' > "$CLAUDE_SYNC_DIR/skills/synced/managed/SKILL.md"
+  printf 'agent\n' > "$CLAUDE_SYNC_DIR/agents/a.md"
+  printf 'command\n' > "$CLAUDE_SYNC_DIR/commands/c.md"
+  printf 'style\n' > "$CLAUDE_SYNC_DIR/output-styles/s.md"
+  git -C "$CLAUDE_SYNC_DIR" add skills agents commands output-styles
+  git -C "$CLAUDE_SYNC_DIR" commit -m content >/dev/null
+}
+
+# Directory link the way this platform does it. The target must already exist.
+make_platform_link() {
+  local link="$1" target="$2" wlink wtarget
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      # //J and //AL reach cmd as /J and /AL. A single slash is rewritten by MSYS.
+      wlink=$(cygpath -w -- "$link")
+      wtarget=$(cygpath -w -- "$target")
+      cmd.exe //c mklink //J "$wlink" "$wtarget" >/dev/null
+      ;;
+    *)
+      ln -s -- "$target" "$link"
+      ;;
+  esac
+}
+
+assert_dir_link() {
+  local link="$1" parent base out
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      parent=$(cygpath -w -- "$(dirname -- "$link")")
+      base=$(basename -- "$link")
+      out=$(cmd.exe //c dir //AL "$parent") || fail "dir /AL failed for $link"
+      case "$out" in
+        *"<JUNCTION>"*"$base"*) ;;
+        *) fail "expected a junction for $base, got: $out" ;;
+      esac
+      ;;
+    *)
+      if [ ! -L "$link" ]; then
+        fail "expected a symlink: $link"
+      fi
+      ;;
+  esac
+}
+
+assert_file_eq() {
+  if ! cmp -s "$1" "$2"; then
+    fail "files differ ($1)"
+  fi
+}
+
 snapshot_repo() {
   local dir="$1"
   {
