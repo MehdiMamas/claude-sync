@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 # Execute one claude-sync phase
 
-Invoked as `/phase`, `/phase <number>`, `/phase resume` or `/phase <number> resume`. Without a number, run the next phase (see **Argument**). One phase per branch and one pull request. Run the review loop below until Claude's review says **Ready to merge**, merge, then hand off to a new session (see **Hand off**). Never start the next phase in this chat.
+Invoked as `/phase`, `/phase <number>`, `/phase resume` or `/phase <number> resume`. Without a number, run the next phase (see **Argument**). One phase per branch and one pull request. Run the review loop below until Claude's review says **Ready to merge**, merge, then hand off to a new session (see **Hand off**). Never start the next phase in this chat. Do the work in this checkout. Never create a git worktree or a sibling folder.
 
 With `resume`, the pull request for this phase already exists: check out its branch, skip to **Review loop**, and start at step 1 for the current head commit.
 
@@ -112,7 +112,7 @@ Merge only when all of these are true. If one is not, stop and tell the user why
 Then:
 
 1. `gh pr merge <n> --merge --delete-branch --match-head-commit <reviewed sha>`.
-2. `git switch main && git pull --ff-only`. If `main` is checked out in another worktree, run `git fetch origin main` instead.
+2. `git switch main && git pull --ff-only`. Never create a worktree to reach `main`. If the switch fails because this folder has uncommitted work, commit that work first, then switch in this folder.
 3. Go to **Hand off**.
 
 ## Hand off
