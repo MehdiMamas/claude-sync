@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-# shellcheck source=../lib/sync.sh
+# shellcheck source=lib/sync.sh
 source "$ROOT/lib/sync.sh"
 
 VERSION="0.0.0"

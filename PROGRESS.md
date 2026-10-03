@@ -7,7 +7,7 @@ Read this file **before** any work. It is the single source of truth for which p
 
 | Phase | Plan | Status | Gate evidence | Date |
 |---|---|---|---|---|
-| 1 | `phase-01-sync-engine.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200 3.6.9): 14 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` is clean aside from SC1091 info on this Windows shellcheck binary, which cannot open sourced files; ubuntu CI runs that command. CI on ubuntu-latest, macos-latest, and windows-latest: not run yet (the workflow starts on this pull request). | 2026-10-03 |
+| 1 | `phase-01-sync-engine.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200 3.6.9): 14 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` exit 0 (shellcheck 0.10.0). CI on ubuntu-latest, macos-latest, and windows-latest: first run failed; this commit fixes bash 3.2 and the shellcheck source paths. | 2026-10-03 |
 | 2 | `phase-02-link-layer.plan.md` | not started | | |
 | 3 | `phase-03-init-join.plan.md` | blocked: Needs Phase 2 gate passed | | |
 | 4 | `phase-04-plugin.plan.md` | blocked: Needs Phase 3 gate passed; Needs the name decision | | |
@@ -47,3 +47,4 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 - 2026-10-03: A push with a clean work tree still publishes commits that are ahead of upstream, so a push that committed and then failed to reach the remote is not stuck.
 - 2026-10-03: `git add` is run per allowlist path. A pathspec that matches nothing is skipped; `git add` would otherwise fail before the paths that do exist are staged.
 - 2026-10-03: Current Git rejects a non-fast-forward with `fetch first`, not only the older `non-fast-forward` wording. Both count as the one allowed rebase retry.
+- 2026-10-03: bash 3.2 (macOS) marks `BASH_REMATCH` readonly, so the secret scan never assigns it. The matched text is not printed.

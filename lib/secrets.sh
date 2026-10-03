@@ -94,13 +94,10 @@ scan_staged() {
               name=${SECRET_NAME[$i]}
               if secret_match "$content" "$regex"; then
                 printf '%s:%s:%s\n' "$file" "$current" "$name"
-                # Drop the matched text so a later error path cannot print it.
-                BASH_REMATCH=()
                 break
               fi
               i=$((i + 1))
             done
-            BASH_REMATCH=()
             ;;
           ' '*)
             if [ "$seen" -eq 0 ]; then

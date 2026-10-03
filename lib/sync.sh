@@ -3,7 +3,7 @@
 # This is the only file that runs network git commands (pull, push).
 # link is intentionally not called; Phase 3 wires that in after a pull.
 
-# shellcheck source=secrets.sh
+# shellcheck source=lib/secrets.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/secrets.sh"
 
 prepare_git() {
