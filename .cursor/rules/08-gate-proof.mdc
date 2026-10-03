@@ -1,0 +1,16 @@
+---
+description: A phase ends as a pull request whose gate cell is command output, reviewed by Claude and merged before the next phase starts
+alwaysApply: true
+---
+
+# Gate proof and phase PR
+
+`05-phase-discipline.mdc` says when to stop. This rule says what counts as done.
+
+- The gate cell in `PROGRESS.md` includes the command and a result: exit code, test counts, or a CI run URL. "Check passed" is not a gate.
+- If you did not run it, write that you did not run it, and name the phase that will.
+- A screenshot shows appearance. Behavior proof is the action and its result.
+- Platform claims name the OS that actually ran. A macOS launch is not a Windows or Linux install.
+- One phase, one branch `phase-<NN>-<slug>`, one pull request into `main`. The body uses `.github/pull_request_template.md` and includes the gate output plus a review checklist.
+- Claude reviews the pull request locally (`.cursor/skills/phase/review.sh`). Merge only through the review loop in `.cursor/skills/phase/SKILL.md`: a **Ready to merge** verdict on the head commit, CI green (or no CI checks on the PR), no push after the reviewed commit. Never merge on any other verdict.
+- After the merge, return the pull request URL and stop. The user decides when the next phase starts.

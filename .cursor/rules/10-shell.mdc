@@ -1,0 +1,16 @@
+---
+description: Bash conventions for claude-sync (portable across macOS bash 3.2, Linux and Git Bash on Windows)
+globs: bin/**,lib/**,tests/**,hooks/**
+alwaysApply: false
+---
+
+# Shell rules
+
+- `#!/usr/bin/env bash` and `set -euo pipefail` in every executable; library files are sourced and don't set options.
+- Must run on **bash 3.2** (macOS default): no associative arrays, no `${var,,}`, no `mapfile`/`readarray`, no `&>>`, no `declare -n`, no negative array indices.
+- Quote every expansion. Arrays for argument lists. No `eval`. Never parse `ls`.
+- Use `$HOME`, never a literal `~`, in code. Paths with spaces must work (tests use a temp HOME containing a space).
+- Portable tools only: no GNU-only flags (`sed -i` without a suffix, `readlink -f`, `date -d`, `stat -c`). Write a helper when needed.
+- Windows: convert with `cygpath -w` only when calling `cmd`. Create directory links with `mklink /J`, remove them with `cmd //c rmdir`. Never `rm -rf` a path that might be a link or junction.
+- Git calls: `git -C "$dir"`, `GIT_TERMINAL_PROMPT=0`, no interactive commands, and a time limit on network operations (§6).
+- Every file in `bin/`, `lib/`, `tests/`, `hooks/` is LF and passes `shellcheck -x` with no disabled checks unless the line has a comment saying why.

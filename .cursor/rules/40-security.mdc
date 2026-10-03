@@ -1,0 +1,14 @@
+---
+description: claude-sync security rules (what may sync, secrets, user data)
+globs: bin/**,lib/**,hooks/**,commands/**,templates/**
+alwaysApply: false
+---
+
+# Security rules
+
+- The allowlist in `SPEC.md` §4 is the only way a path enters the user's repo. Staging uses explicit pathspecs, never `git add -A` on the whole repo.
+- Never read, copy, print or log `~/.claude/.credentials.json`, tokens, `settings*.json` (until Phase 7, and then only the merge), history or transcripts.
+- The secret scan (§7) runs before every commit claude-sync makes, including `init` and `join`. Its output names file, line and pattern, never the matched value. Logs follow the same rule.
+- Never create a public repo. Warn when an existing remote is public.
+- Before moving or replacing any user file, back it up (§9). Undo partial work on failure.
+- Plugin command files must not instruct Claude to edit `~/.claude` directly or to pass `--merge`/`--replace` without asking the user.

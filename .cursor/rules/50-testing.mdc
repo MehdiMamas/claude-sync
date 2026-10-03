@@ -1,0 +1,13 @@
+---
+description: claude-sync testing rules
+globs: tests/**,bin/**,lib/**,.github/workflows/**
+alwaysApply: false
+---
+
+# Testing rules
+
+- Plain bash tests: `tests/*.test.sh`, run by `tests/run.sh` (§14). No bats or other installed framework.
+- Each test uses a fresh temp `HOME` (with a space in its path) and sets `CLAUDE_HOME` and `CLAUDE_SYNC_DIR` inside it. Remotes are local bare repos via `file://`. Tests never touch the real `~/.claude`, the real `~/.claude-sync`, or the network. External tools that would hit the network (`gh`) are replaced by fakes on `PATH`.
+- Every behavior listed in a phase's Scope or Gate has a test named after it. A changed behavior gets a new or updated test in the same PR.
+- Tests clean up their temp dirs, including on failure (`trap`).
+- CI runs every test on ubuntu-latest, macos-latest and windows-latest. A test may be skipped on one OS only with a printed reason, and the skip counts in the summary.
