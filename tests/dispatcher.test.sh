@@ -9,9 +9,12 @@ run_sync --help
 assert_code 0
 assert_out_contains "pull"
 assert_out_contains "push"
+assert_out_contains "link"
+assert_out_contains "unlink"
+assert_out_contains "status"
 assert_out_contains "--version"
 case "$RUN_OUT$RUN_ERR" in
-  *link*|*init*|*doctor*|*uninstall*|*status*) fail "help lists a later-phase command" ;;
+  *init*|*doctor*|*uninstall*) fail "help lists a later-phase command" ;;
 esac
 
 run_sync --version
@@ -27,6 +30,9 @@ assert_code 1
 assert_err_contains "Usage:"
 
 run_sync pull extra
+assert_code 1
+
+run_sync link extra
 assert_code 1
 
 run_sync --hook

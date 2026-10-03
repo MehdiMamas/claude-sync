@@ -4,34 +4,34 @@ overview: "Phase 2 of 7. Link layer: link, unlink and status connecting ~/.claud
 todos:
   - id: p02-0-preflight
     content: "Preflight: read PROGRESS.md, confirm Phase 1 gate evidence; read SPEC.md §4, §8, §11, §13 and .cursor/rules/*"
-    status: pending
+    status: completed
   - id: p02-1-platform
     content: "lib/link.sh platform helpers: make_dir_link / remove_dir_link / is_link / link_target, with ln -s on Unix and mklink /J + rmdir via cmd on Windows (cygpath -w at the boundary only)"
-    status: pending
+    status: completed
     dependencies: [p02-0-preflight]
   - id: p02-2-claude-md
     content: "CLAUDE.md managed block: insert at top or update in place, create the file if missing, unlink removes only the block"
-    status: pending
+    status: completed
     dependencies: [p02-0-preflight]
   - id: p02-3-link
     content: "link: per-skill links (skip skills/synced), whole-dir links for agents/commands/output-styles, conflict reporting without touching local content, dangling-link cleanup limited to links into the repo dir"
-    status: pending
+    status: completed
     dependencies: [p02-1-platform, p02-2-claude-md]
   - id: p02-4-unlink-status
     content: "unlink (removes only our links and the block) and status (per-item linked/missing/conflict + branch, ahead/behind, dirty, last pull/push); add the three to the dispatcher and --help"
-    status: pending
+    status: completed
     dependencies: [p02-3-link]
   - id: p02-5-tests
     content: "Tests for every behavior listed under Gate, run in CI on all three OSes"
-    status: pending
+    status: completed
     dependencies: [p02-4-unlink-status]
   - id: p02-8-gate
     content: "Verify gate: tests pass locally (name the OS) and in CI on all three OSes; shellcheck clean"
-    status: pending
+    status: completed
     dependencies: [p02-5-tests]
   - id: p02-9-handoff
     content: "Record gate evidence in PROGRESS.md, mark Phase 2 complete there, open the PR and run the review loop, then hand off with `next-phase.sh` (new headless session) and stop"
-    status: pending
+    status: completed
     dependencies: [p02-8-gate]
 ---
 

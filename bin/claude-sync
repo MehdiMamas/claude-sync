@@ -6,6 +6,8 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 # shellcheck source=lib/sync.sh
 source "$ROOT/lib/sync.sh"
+# shellcheck source=lib/link.sh
+source "$ROOT/lib/link.sh"
 
 VERSION="0.0.0"
 
@@ -13,6 +15,9 @@ usage() {
   cat <<'EOF'
 Usage: claude-sync pull [--hook]
        claude-sync push [--hook]
+       claude-sync link
+       claude-sync unlink
+       claude-sync status
        claude-sync --version
        claude-sync --help
 EOF
@@ -23,7 +28,7 @@ EOF
 : "${CLAUDE_SYNC_TIMEOUT:=20}"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-sync"
 
-# CLAUDE_HOME is the Claude config dir. Phase 1 does not read it; later phases do.
+# CLAUDE_HOME is the Claude config dir. link, unlink and status use it.
 # shellcheck disable=SC2034
 export CLAUDE_SYNC_DIR CLAUDE_HOME CLAUDE_SYNC_TIMEOUT STATE_DIR
 
@@ -63,7 +68,7 @@ while [ $# -gt 0 ]; do
       fi
       CMD=help
       ;;
-    pull|push)
+    pull|push|link|unlink|status)
       if [ -n "$CMD" ]; then
         bad_args
       fi
@@ -89,6 +94,15 @@ case "$CMD" in
     ;;
   push)
     sync_push
+    ;;
+  link)
+    cmd_link
+    ;;
+  unlink)
+    cmd_unlink
+    ;;
+  status)
+    cmd_status
     ;;
   *)
     if [ "$HOOK" -eq 1 ]; then
