@@ -30,6 +30,22 @@ export CLAUDE_SYNC_DIR CLAUDE_HOME CLAUDE_SYNC_TIMEOUT STATE_DIR
 export HOOK=0
 CMD=""
 
+# --hook anywhere in the arguments means a bad invocation still exits 0.
+for _arg in "$@"; do
+  if [ "$_arg" = "--hook" ]; then
+    HOOK=1
+  fi
+done
+
+bad_args() {
+  if [ "$HOOK" -eq 1 ]; then
+    printf 'claude-sync: unknown argument.\n' >&2
+    exit 0
+  fi
+  usage >&2
+  exit 1
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --hook)
@@ -37,28 +53,24 @@ while [ $# -gt 0 ]; do
       ;;
     --version)
       if [ -n "$CMD" ]; then
-        usage >&2
-        exit 1
+        bad_args
       fi
       CMD=version
       ;;
     --help|-h)
       if [ -n "$CMD" ]; then
-        usage >&2
-        exit 1
+        bad_args
       fi
       CMD=help
       ;;
     pull|push)
       if [ -n "$CMD" ]; then
-        usage >&2
-        exit 1
+        bad_args
       fi
       CMD=$1
       ;;
     *)
-      usage >&2
-      exit 1
+      bad_args
       ;;
   esac
   shift
@@ -79,6 +91,10 @@ case "$CMD" in
     sync_push
     ;;
   *)
+    if [ "$HOOK" -eq 1 ]; then
+      printf 'claude-sync: missing command.\n' >&2
+      exit 0
+    fi
     usage >&2
     exit 1
     ;;

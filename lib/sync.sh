@@ -16,6 +16,10 @@ prepare_git() {
   if [ -z "${GIT_SSH_COMMAND:-}" ]; then
     export GIT_SSH_COMMAND="ssh -o BatchMode=yes"
   fi
+  # Git Credential Manager opens a GUI that GIT_TERMINAL_PROMPT does not stop.
+  if [ "$HOOK" -eq 1 ]; then
+    export GCM_INTERACTIVE=never
+  fi
 }
 
 validate_timeout() {
@@ -29,18 +33,55 @@ validate_timeout() {
   fi
 }
 
-log_line() {
-  mkdir -p "$STATE_DIR"
-  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$STATE_DIR/log"
+# Hook mode keeps the terminal's stderr on fd 3 and sends everything else to the log.
+setup_hook_stdio() {
+  if [ "$HOOK" -ne 1 ]; then
+    return 0
+  fi
+  exec 3>&2
+  HOOK_STDERR=1
+  if mkdir -p "$STATE_DIR" 2>/dev/null && touch "$STATE_DIR/log" 2>/dev/null; then
+    exec 2>>"$STATE_DIR/log" || exec 2>/dev/null
+  else
+    exec 2>/dev/null
+  fi
 }
 
-# One user-visible line. Hook mode keeps only the first of these on stderr.
+log_line() {
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$STATE_DIR/log" 2>/dev/null || true
+}
+
+# Append git's own output to the log. Credentials in URLs are removed first.
+# Diff text is never passed here.
+log_git_detail() {
+  local line cleaned
+  [ -n "${1:-}" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    cleaned=$(printf '%s\n' "$line" | sed 's#://[^/@]*@#://#g')
+    log_line "git: $cleaned"
+  done <<EOF
+$1
+EOF
+}
+
+write_stamp() {
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+  printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_DIR/$1" 2>/dev/null || true
+}
+
+# One user-visible line. Hook mode keeps only the first of these on the terminal.
 note() {
-  log_line "$*"
+  log_line "$*" || true
   if [ "$HOOK" -eq 1 ]; then
     if [ "$WARNED" -eq 0 ]; then
-      printf 'claude-sync: %s\n' "$*" >&2
       WARNED=1
+      if [ "${HOOK_STDERR:-0}" -eq 1 ]; then
+        printf 'claude-sync: %s\n' "$*" >&3
+      else
+        printf 'claude-sync: %s\n' "$*" >&2
+      fi
     fi
   else
     printf 'claude-sync: %s\n' "$*" >&2
@@ -55,6 +96,17 @@ die() {
     exit 0
   fi
   exit "$code"
+}
+
+finish_sync() {
+  local status=$?
+  # Any exit path puts the user's non-allowlisted staging back.
+  restore_outside_staged || true
+  release_lock || true
+  if [ "${HOOK:-0}" -eq 1 ]; then
+    exit 0
+  fi
+  exit "$status"
 }
 
 release_lock() {
@@ -95,7 +147,15 @@ pid_alive() {
 lock_is_stale() {
   local lock="$1"
   local now stamp pid
-  if [ ! -d "$lock" ]; then
+  if [ ! -d "$lock" ] || [ -L "$lock" ]; then
+    return 1
+  fi
+  # A lock dir with neither pid nor time was left behind mid-create.
+  # Treat it as stale once the directory itself is older than 10 minutes.
+  if [ ! -f "$lock/pid" ] && [ ! -f "$lock/time" ]; then
+    if find "$lock" -prune -mmin +10 2>/dev/null | grep -q .; then
+      return 0
+    fi
     return 1
   fi
   now=$(date +%s)
@@ -120,19 +180,21 @@ lock_is_stale() {
 # Returns 0 when this process holds the lock. Hook mode does not wait.
 acquire_lock() {
   local lock="$STATE_DIR/lock"
-  local waited=0
-  mkdir -p "$STATE_DIR"
+  local waited=0 stale
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 1
   while true; do
     if mkdir "$lock" 2>/dev/null; then
-      printf '%s\n' "$$" > "$lock/pid"
-      printf '%s\n' "$(date +%s)" > "$lock/time"
+      printf '%s\n' "$$" > "$lock/pid" || true
+      printf '%s\n' "$(date +%s)" > "$lock/time" || true
       LOCK_HELD=1
       return 0
     fi
     if lock_is_stale "$lock"; then
       log_line "taking over stale lock"
-      remove_lock_dir "$lock"
-      if [ ! -e "$lock" ]; then
+      # Rename first so two waiters cannot both delete a lock the other just took.
+      stale="${lock}.stale.$$"
+      if mv "$lock" "$stale" 2>/dev/null; then
+        remove_lock_dir "$stale"
         continue
       fi
     fi
@@ -149,7 +211,7 @@ acquire_lock() {
 
 rebase_in_progress() {
   local gd
-  gd=$(git -C "$CLAUDE_SYNC_DIR" rev-parse --absolute-git-dir)
+  gd=$(git -C "$CLAUDE_SYNC_DIR" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   [ -d "$gd/rebase-merge" ] || [ -d "$gd/rebase-apply" ]
 }
 
@@ -160,9 +222,20 @@ abort_rebase_if_any() {
   fi
 }
 
-# Force-stop a git process that ignored SIGTERM. On Windows, kill the tree.
+# Stop a git process: SIGTERM, a short wait, then SIGKILL.
+# On Windows, kill the process tree. A killed git can leave index.lock;
+# SIGTERM gives it a chance to remove that lock first.
 kill_pid() {
-  local pid="$1" winpid
+  local pid="$1" winpid i
+  kill -TERM "$pid" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt 10 ]; do
+    if ! ps -p "$pid" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
       # ps WINPID is the Windows id. taskkill cannot see the MSYS pid.
@@ -236,7 +309,10 @@ begin_sync() {
   WARNED=0
   HAS_ALLOWLISTED=0
   OTHER_UNTRACKED=""
-  trap release_lock EXIT
+  OUTSIDE_SAVED=""
+  HOOK_STDERR=0
+  trap finish_sync EXIT
+  setup_hook_stdio
   prepare_git
   validate_timeout
   if ! acquire_lock; then
@@ -259,11 +335,11 @@ path_allowlisted() {
 }
 
 collect_status() {
-  local tmp entry xy path
+  local tmp entry xy path old
   HAS_ALLOWLISTED=0
   OTHER_UNTRACKED=""
-  mkdir -p "$STATE_DIR"
-  tmp=$(mktemp "$STATE_DIR/status.XXXXXX")
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  tmp=$(mktemp "$STATE_DIR/status.XXXXXX" 2>/dev/null || mktemp)
   if ! git -C "$CLAUDE_SYNC_DIR" status --porcelain -z --untracked-files=all > "$tmp"; then
     rm -f "$tmp"
     die 3 "could not read git status in $CLAUDE_SYNC_DIR. Check that the repo is usable, then try again."
@@ -272,11 +348,12 @@ collect_status() {
     [ -n "$entry" ] || continue
     xy=${entry:0:2}
     path=${entry:3}
-    # Rename and copy records are "XY old\0new\0". The new path is what we stage.
+    old=""
+    # porcelain -z rename/copy records are "XY <new>\0<old>\0".
     if [ "${xy:0:1}" = "R" ] || [ "${xy:0:1}" = "C" ]; then
-      IFS= read -r -d '' path || true
+      IFS= read -r -d '' old || true
     fi
-    if path_allowlisted "$path"; then
+    if path_allowlisted "$path" || { [ -n "$old" ] && path_allowlisted "$old"; }; then
       HAS_ALLOWLISTED=1
     elif [ "$xy" = "??" ]; then
       OTHER_UNTRACKED="${OTHER_UNTRACKED}${path}
@@ -286,20 +363,39 @@ collect_status() {
   rm -f "$tmp"
 }
 
-log_untracked() {
-  local list
-  [ -n "$OTHER_UNTRACKED" ] || return 0
-  list=$(printf '%s' "$OTHER_UNTRACKED" | tr '\n' ' ')
-  list=${list% }
-  log_line "left untracked: $list"
+path_was_reported() {
+  local path="$1" line
+  [ -f "$STATE_DIR/reported-untracked" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ "$line" = "$path" ] && return 0
+  done < "$STATE_DIR/reported-untracked"
+  return 1
 }
 
+remember_untracked() {
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+  printf '%s\n' "$1" >> "$STATE_DIR/reported-untracked" 2>/dev/null || true
+}
+
+# Untracked files outside the allowlist are mentioned once per path.
 report_untracked() {
-  local list
-  log_untracked || true
+  local path fresh="" list
   [ -n "$OTHER_UNTRACKED" ] || return 0
-  list=$(printf '%s' "$OTHER_UNTRACKED" | tr '\n' ' ')
+  while IFS= read -r path || [ -n "$path" ]; do
+    [ -n "$path" ] || continue
+    if path_was_reported "$path"; then
+      continue
+    fi
+    remember_untracked "$path"
+    fresh="${fresh}${path}
+"
+  done <<EOF
+$OTHER_UNTRACKED
+EOF
+  [ -n "$fresh" ] || return 0
+  list=$(printf '%s' "$fresh" | tr '\n' ' ')
   list=${list% }
+  log_line "left untracked: $list"
   note "left untracked (not on the allowlist): $list"
 }
 
@@ -322,12 +418,95 @@ stage_allowlist() {
   done
 }
 
-unstage_all() {
+# Record one non-allowlisted index entry, then unstage it so the commit cannot include it.
+save_index_entry() {
+  local path="$1" line mode sha
+  line=$(git -C "$CLAUDE_SYNC_DIR" ls-files -s -z -- "$path" | tr '\0' '\n' || true)
+  line=${line%%$'\n'*}
+  if [ -n "$line" ]; then
+    mode=${line%% *}
+    sha=${line#* }
+    sha=${sha%% *}
+    printf 'C\0%s\0%s\0%s\0' "$mode" "$sha" "$path" >> "$OUTSIDE_SAVED"
+  else
+    printf 'R\0%s\0' "$path" >> "$OUTSIDE_SAVED"
+  fi
+  if git -C "$CLAUDE_SYNC_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
+    git -C "$CLAUDE_SYNC_DIR" reset -q -- "$path"
+  else
+    git -C "$CLAUDE_SYNC_DIR" rm --cached -q -- "$path" >/dev/null 2>&1 || true
+  fi
+}
+
+# Pull non-allowlisted staged paths out of the index. A rename or copy stays
+# when either side is allowlisted, so the commit records the rename.
+shelve_outside_staged() {
+  local tmp status path old new
+  OUTSIDE_SAVED=$(mktemp)
+  tmp=$(mktemp)
+  if ! git -C "$CLAUDE_SYNC_DIR" diff --cached --name-status -z > "$tmp"; then
+    rm -f "$tmp" "$OUTSIDE_SAVED"
+    OUTSIDE_SAVED=""
+    return 1
+  fi
+  while IFS= read -r -d '' status || [ -n "$status" ]; do
+    [ -n "$status" ] || continue
+    case "$status" in
+      R*|C*)
+        # name-status -z is "R100\0<old>\0<new>\0", unlike porcelain -z.
+        IFS= read -r -d '' old || true
+        IFS= read -r -d '' new || true
+        if path_allowlisted "$old" || path_allowlisted "$new"; then
+          continue
+        fi
+        save_index_entry "$old"
+        save_index_entry "$new"
+        ;;
+      *)
+        IFS= read -r -d '' path || true
+        if path_allowlisted "$path"; then
+          continue
+        fi
+        save_index_entry "$path"
+        ;;
+    esac
+  done < "$tmp"
+  rm -f "$tmp"
+}
+
+restore_outside_staged() {
+  local kind mode sha path
+  [ -n "${OUTSIDE_SAVED:-}" ] && [ -f "$OUTSIDE_SAVED" ] || return 0
+  while IFS= read -r -d '' kind || [ -n "$kind" ]; do
+    [ -n "$kind" ] || continue
+    case "$kind" in
+      C)
+        IFS= read -r -d '' mode || break
+        IFS= read -r -d '' sha || break
+        IFS= read -r -d '' path || break
+        git -C "$CLAUDE_SYNC_DIR" update-index --add --cacheinfo "$mode" "$sha" "$path"
+        ;;
+      R)
+        IFS= read -r -d '' path || break
+        git -C "$CLAUDE_SYNC_DIR" update-index --force-remove -- "$path"
+        ;;
+    esac
+  done < "$OUTSIDE_SAVED"
+  rm -f "$OUTSIDE_SAVED"
+  OUTSIDE_SAVED=""
+}
+
+reset_index() {
   if git -C "$CLAUDE_SYNC_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
     git -C "$CLAUDE_SYNC_DIR" reset -q
   else
     git -C "$CLAUDE_SYNC_DIR" rm -r --cached -q -- . >/dev/null 2>&1 || true
   fi
+}
+
+abandon_staged_sync() {
+  reset_index
+  restore_outside_staged
 }
 
 branch_is_ahead() {
@@ -347,6 +526,55 @@ is_rejected_non_ff() {
   return 1
 }
 
+pull_has_conflict() {
+  local out="$1"
+  if rebase_in_progress; then
+    return 0
+  fi
+  if [ -n "$(git -C "$CLAUDE_SYNC_DIR" ls-files -u 2>/dev/null)" ]; then
+    return 0
+  fi
+  case "$out" in
+    *CONFLICT*|*"resulted in conflicts"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# Put back the pre-pull commit and the local edits autostash could not reapply.
+undo_autostash_conflict() {
+  local before="$1" stash_top
+  if [ -n "$before" ]; then
+    git -C "$CLAUDE_SYNC_DIR" reset --hard "$before" >/dev/null 2>&1 || true
+  fi
+  stash_top=$(git -C "$CLAUDE_SYNC_DIR" stash list 2>/dev/null || true)
+  stash_top=${stash_top%%$'\n'*}
+  case "$stash_top" in
+    *autostash*)
+      git -C "$CLAUDE_SYNC_DIR" stash pop >/dev/null 2>&1 || true
+      ;;
+  esac
+  if [ -n "$(git -C "$CLAUDE_SYNC_DIR" ls-files -u 2>/dev/null)" ] && [ -n "$before" ]; then
+    git -C "$CLAUDE_SYNC_DIR" reset --hard "$before" >/dev/null 2>&1 || true
+    git -C "$CLAUDE_SYNC_DIR" stash pop >/dev/null 2>&1 || true
+  fi
+}
+
+refuse_if_merging() {
+  local gd
+  if rebase_in_progress; then
+    die 4 "a rebase is in progress in $CLAUDE_SYNC_DIR. Run git rebase --abort or finish it, then push again."
+  fi
+  gd=$(git -C "$CLAUDE_SYNC_DIR" rev-parse --absolute-git-dir 2>/dev/null || true)
+  if [ -n "$gd" ] && [ -f "$gd/MERGE_HEAD" ]; then
+    die 4 "a merge is in progress in $CLAUDE_SYNC_DIR. Finish or abort the merge, then push again."
+  fi
+  if [ -n "$(git -C "$CLAUDE_SYNC_DIR" ls-files -u 2>/dev/null)" ]; then
+    die 4 "unmerged files are in $CLAUDE_SYNC_DIR. Resolve them, then push again."
+  fi
+}
+
 push_with_one_retry() {
   local status=0 out
   out=$(run_limited "$CLAUDE_SYNC_TIMEOUT" git -C "$CLAUDE_SYNC_DIR" push 2>&1) || status=$?
@@ -354,26 +582,31 @@ push_with_one_retry() {
     return 0
   fi
   if [ "$status" -eq 124 ]; then
+    log_git_detail "$out"
     die 3 "push timed out after ${CLAUDE_SYNC_TIMEOUT}s. Check the network and try again."
   fi
   if ! is_rejected_non_ff "$out"; then
+    log_git_detail "$out"
     die 3 "push failed (git or network). Check the remote and try again."
   fi
   log_line "push rejected; rebasing once"
   status=0
   out=$(run_limited "$CLAUDE_SYNC_TIMEOUT" git -C "$CLAUDE_SYNC_DIR" pull --rebase --autostash 2>&1) || status=$?
-  case "$out" in
-    *CONFLICT*) status=4 ;;
-  esac
-  if rebase_in_progress || [ "$status" -eq 4 ]; then
-    abort_rebase_if_any || die 4 "push not applied. A rebase conflict is still open in $CLAUDE_SYNC_DIR. Run git rebase --abort there if it remains, then fix the conflict. Nothing was force-pushed."
-    die 4 "push not applied. The remote has a conflicting change; the local commit was kept. Fix the conflict in the repo. Nothing was force-pushed."
-  fi
   if [ "$status" -eq 124 ]; then
+    log_git_detail "$out"
     abort_rebase_if_any || true
     die 3 "pull timed out after ${CLAUDE_SYNC_TIMEOUT}s while retrying the push. The local commit was kept. Try again."
   fi
+  if rebase_in_progress || pull_has_conflict "$out"; then
+    log_git_detail "$out"
+    abort_rebase_if_any || die 4 "push not applied. A rebase conflict is still open in $CLAUDE_SYNC_DIR. Run git rebase --abort there if it remains, then fix the conflict. Nothing was force-pushed."
+    if [ -n "$(git -C "$CLAUDE_SYNC_DIR" ls-files -u 2>/dev/null)" ]; then
+      git -C "$CLAUDE_SYNC_DIR" reset --hard HEAD >/dev/null 2>&1 || true
+    fi
+    die 4 "push not applied. The remote has a conflicting change; the local commit was kept. Fix the conflict in the repo. Nothing was force-pushed."
+  fi
   if [ "$status" -ne 0 ]; then
+    log_git_detail "$out"
     abort_rebase_if_any || true
     die 3 "push failed while rebasing onto the remote. The local commit was kept. Try again."
   fi
@@ -383,80 +616,105 @@ push_with_one_retry() {
     return 0
   fi
   if [ "$status" -eq 124 ]; then
+    log_git_detail "$out"
     die 3 "push timed out after ${CLAUDE_SYNC_TIMEOUT}s. The local commit was kept. Try again."
   fi
   if is_rejected_non_ff "$out"; then
+    log_git_detail "$out"
     die 4 "push not applied after one rebase. The local commit was kept. Nothing was force-pushed."
   fi
+  log_git_detail "$out"
   die 3 "push failed (git or network). The local commit was kept. Try again."
 }
 
 sync_pull() {
-  local status=0 out
+  local status=0 out before=""
   begin_sync
+  before=$(git -C "$CLAUDE_SYNC_DIR" rev-parse HEAD 2>/dev/null || true)
   status=0
   out=$(run_limited "$CLAUDE_SYNC_TIMEOUT" git -C "$CLAUDE_SYNC_DIR" pull --rebase --autostash --quiet 2>&1) || status=$?
-  if [ "$status" -ne 0 ]; then
-    case "$out" in
-      *CONFLICT*) status=4 ;;
-    esac
-    if rebase_in_progress || [ "$status" -eq 4 ]; then
+  if [ "$status" -eq 124 ]; then
+    log_git_detail "$out"
+    abort_rebase_if_any || true
+    die 3 "pull timed out after ${CLAUDE_SYNC_TIMEOUT}s. Check the network and try again."
+  fi
+  if pull_has_conflict "$out"; then
+    log_git_detail "$out"
+    if rebase_in_progress; then
       abort_rebase_if_any || die 4 "pull hit a conflict and the rebase could not be aborted. Run git rebase --abort in $CLAUDE_SYNC_DIR, then try again."
       die 4 "pull hit a conflict. The rebase was aborted and your files are unchanged. Fix the conflict in the repo, then pull again."
     fi
-    if [ "$status" -eq 124 ]; then
-      die 3 "pull timed out after ${CLAUDE_SYNC_TIMEOUT}s. Check the network and try again."
-    fi
+    undo_autostash_conflict "$before"
+    die 4 "pull hit a conflict while reapplying local edits. The pull was undone and your files are unchanged. Fix the conflict in the repo, then pull again."
+  fi
+  if [ "$status" -ne 0 ]; then
+    log_git_detail "$out"
     die 3 "pull failed (git or network). Check the remote and try again."
   fi
-  if rebase_in_progress; then
-    abort_rebase_if_any || true
-    die 4 "pull hit a conflict. The rebase was aborted and your files are unchanged. Fix the conflict in the repo, then pull again."
-  fi
-  printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_DIR/last-pull"
+  write_stamp last-pull
   log_line "pull ok"
 }
 
+report_secret_hits() {
+  local hits="$1" first="$2" line
+  if [ "$HOOK" -eq 1 ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -n "$line" ] || continue
+      log_line "secret $line"
+    done <<EOF
+$hits
+EOF
+    die 5 "secret found, nothing committed: $first. Remove it or add claude-sync: allow-secret on that line."
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    note "secret found, nothing committed: $line. Remove it or add claude-sync: allow-secret on that line."
+  done <<EOF
+$hits
+EOF
+  exit 5
+}
+
 sync_push() {
-  local hits first hit_line made_commit=0 scan_status=0
+  local hits first scan_status=0 made_commit=0
   begin_sync
+  refuse_if_merging
   collect_status
   if [ "$HAS_ALLOWLISTED" -eq 1 ]; then
+    if ! shelve_outside_staged; then
+      die 3 "could not read the index in $CLAUDE_SYNC_DIR. Nothing was committed."
+    fi
     stage_allowlist
     if ! git -C "$CLAUDE_SYNC_DIR" diff --cached --quiet; then
       scan_status=0
       hits=$(scan_staged "$CLAUDE_SYNC_DIR") || scan_status=$?
       if [ "$scan_status" -ne 0 ]; then
-        unstage_all
+        abandon_staged_sync
         die 3 "secret scan could not read the staged diff. Nothing was committed."
       fi
       if [ -n "$hits" ]; then
-        unstage_all
         first=$hits
         case "$hits" in
           *$'\n'*) first=${hits%%$'\n'*} ;;
         esac
-        while IFS= read -r hit_line || [ -n "$hit_line" ]; do
-          [ -n "$hit_line" ] || continue
-          log_line "secret $hit_line"
-        done <<EOF
-$hits
-EOF
-        die 5 "secret found, nothing committed: $first. Remove it or add claude-sync: allow-secret on that line."
+        abandon_staged_sync
+        report_secret_hits "$hits" "$first"
       fi
       if ! git -C "$CLAUDE_SYNC_DIR" -c commit.gpgsign=false commit -m "sync: $(uname -n) $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1; then
+        abandon_staged_sync
         die 3 "commit failed in $CLAUDE_SYNC_DIR. Set git user.name and user.email, then try again."
       fi
       made_commit=1
       log_line "committed allowlisted paths"
     fi
+    restore_outside_staged
   fi
   if [ "$made_commit" -eq 1 ] || branch_is_ahead; then
     push_with_one_retry
-    printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_DIR/last-push"
     log_line "push ok"
   else
     log_line "push nothing to send"
   fi
+  write_stamp last-push
   report_untracked
 }

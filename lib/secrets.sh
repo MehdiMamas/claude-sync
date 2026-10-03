@@ -36,8 +36,11 @@ scan_staged() {
   local i regex name
   local diff_text diff_status=0
 
+  # Pin prefixes so diff.noprefix / diff.mnemonicPrefix cannot hide a path.
   # git diff exits 1 when the diff is non-empty. Only a higher status is an error.
-  diff_text=$(git -C "$dir" diff --cached --unified=0 --no-color --no-ext-diff) || diff_status=$?
+  diff_text=$(git -c diff.noprefix=false -c diff.mnemonicPrefix=false -c core.quotePath=false \
+    -C "$dir" diff --cached --src-prefix=a/ --dst-prefix=b/ \
+    --unified=0 --no-color --no-ext-diff --no-textconv --text) || diff_status=$?
   if [ "$diff_status" -gt 1 ]; then
     return 1
   fi
@@ -62,9 +65,11 @@ scan_staged() {
           case "$line" in
             '+++ b/'*)
               file=${line#+++ b/}
+              file=${file%$'\t'}
               ;;
             '+++ "b/'*)
               file=${line#+++ \"b/}
+              file=${file%$'\t'}
               file=${file%\"}
               ;;
             '+++ '*)
@@ -75,7 +80,11 @@ scan_staged() {
         fi
         case "$line" in
           '+'*)
-            [ -n "$file" ] || continue
+            # An added line we cannot attach to a path is a scan failure.
+            # Skipping it would let a secret through.
+            if [ -z "$file" ]; then
+              return 1
+            fi
             content=${line#+}
             if [ "$seen" -eq 0 ]; then
               current=$start

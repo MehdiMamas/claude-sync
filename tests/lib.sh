@@ -10,9 +10,10 @@ export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Test User}"
 export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-test@example.com}"
 export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Test User}"
 export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-test@example.com}"
-export GIT_TERMINAL_PROMPT=0
 
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+# Keep the developer's git config out of the tests. HOME is redirected too.
+export GIT_CONFIG_NOSYSTEM=1
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_TERMINAL_PROMPT
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -63,6 +64,21 @@ EOF
   fi
 }
 
+assert_err_at_most() {
+  local want="$1" n=0 line
+  if [ -n "$RUN_ERR" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -n "$line" ] || continue
+      n=$((n + 1))
+    done <<EOF
+$RUN_ERR
+EOF
+  fi
+  if [ "$n" -gt "$want" ]; then
+    fail "expected at most $want stderr line(s), got $n: [$RUN_ERR]"
+  fi
+}
+
 # Fail if the needle appears in command output. The needle itself is not printed.
 assert_output_lacks() {
   local needle="$1"
@@ -93,6 +109,9 @@ make_work() {
   TEST_WORK=$(mktemp -d)
   CLEAN_PIDS=()
   trap cleanup EXIT
+  XDG_CONFIG_HOME="$TEST_WORK/xdg-config"
+  export XDG_CONFIG_HOME
+  mkdir -p "$XDG_CONFIG_HOME"
   TEST_HOME="$TEST_WORK/home dir"
   mkdir -p "$TEST_HOME/.claude" "$TEST_HOME/.local/state"
   enter_home "$TEST_HOME"
@@ -108,6 +127,9 @@ enter_home() {
   XDG_STATE_HOME="$HOME/.local/state"
   export XDG_STATE_HOME
   mkdir -p "$CLAUDE_HOME" "$XDG_STATE_HOME"
+  # The temp home has no user gitconfig. Name the default branch so init stays quiet.
+  git config --global init.defaultBranch main
+  git config --global advice.defaultBranchName false
 }
 
 file_url() {

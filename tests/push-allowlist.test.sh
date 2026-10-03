@@ -61,6 +61,7 @@ esac
 rm -f "$CLAUDE_SYNC_DIR/agents/helper.md"
 run_sync push
 assert_code 0
+assert_err_lines 0 "untracked files are reported only once"
 if git -C "$CLAUDE_SYNC_DIR" ls-files --error-unmatch -- agents/helper.md >/dev/null 2>&1; then
   fail "deleted allowlisted file is still tracked"
 fi

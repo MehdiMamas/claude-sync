@@ -11,3 +11,6 @@ run_sync push
 assert_code 0
 assert_eq "$(git -C "$CLAUDE_SYNC_DIR" rev-parse HEAD)" "$before" "push with nothing allowlisted made a commit"
 assert_err_lines 0
+if [ ! -s "$XDG_STATE_HOME/claude-sync/last-push" ]; then
+  fail "a push with nothing to send did not write last-push"
+fi

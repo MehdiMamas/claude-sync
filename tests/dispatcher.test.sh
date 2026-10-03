@@ -28,3 +28,17 @@ assert_err_contains "Usage:"
 
 run_sync pull extra
 assert_code 1
+
+run_sync --hook
+assert_code 0 "hook with no command"
+assert_err_lines 1
+assert_err_contains "missing command"
+
+run_sync pull --hook --x
+assert_code 0 "bad argument with --hook"
+assert_err_lines 1
+assert_err_contains "unknown argument"
+
+run_sync --x --hook
+assert_code 0 "bad argument before --hook"
+assert_err_lines 1

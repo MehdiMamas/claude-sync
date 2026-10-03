@@ -38,7 +38,7 @@ todos:
     status: completed
     dependencies: [p01-7-tests-ci]
   - id: p01-9-handoff
-    content: "Record gate evidence in PROGRESS.md, mark Phase 1 complete there, open the PR and run the review loop, then STOP and wait for the user"
+    content: "Record gate evidence in PROGRESS.md, mark Phase 1 complete there, open the PR and run the review loop, then hand off with `next-phase.sh` (new headless session) and stop"
     status: completed
     dependencies: [p01-8-gate]
 ---
@@ -80,14 +80,14 @@ Do not create files, services, stubs, settings or UI that belong to a later phas
 2. pull while offline/unreachable remote: hook mode exits 0 with one stderr line, CLI mode exits 3;
 3. pull hitting a rebase conflict leaves no rebase in progress and the working tree unchanged;
 4. push with no allowlisted changes makes no commit;
-5. push commits only allowlisted paths; an untracked `notes.txt` in the repo root stays untracked;
+5. push commits only allowlisted paths; an untracked or already-staged `notes.txt` stays out of the commit; a rename or copy is committed when either path is allowlisted; a merge, rebase, or unmerged file stops the push with exit 4;
 6. push after the remote moved ahead (non-conflicting) rebases once and succeeds;
 7. push with a real conflict keeps the local commit, never force-pushes (remote head unchanged), CLI exits 4;
 8. each §7 pattern blocks the push, prints file:line:pattern name, never the matched value, leaves nothing staged, CLI exits 5;
 9. the `claude-sync: allow-secret` marker lets that line through;
-10. a held fresh lock makes hook mode skip with exit 0; a stale lock (old or dead pid) is taken over;
+10. a held fresh lock, including an empty lock dir, makes hook mode skip with exit 0; a stale lock (old, dead pid, or an empty dir older than 10 minutes) is taken over;
 11. missing repo dir: hook mode exits 0 silently, CLI exits 2;
-12. git never prompts (a remote needing credentials fails fast, not hangs).
+12. git never prompts: `GIT_TERMINAL_PROMPT` is set even when the caller left it unset, `ssh` gets `-o BatchMode=yes` unless `GIT_SSH_COMMAND` is already set, and a hanging remote hits the timeout.
 
 Prove it: paste `bash tests/run.sh` output (counts and exit code, with the OS) and the CI run URL into `PROGRESS.md`.
 
@@ -95,4 +95,4 @@ Prove it: paste `bash tests/run.sh` output (counts and exit code, with the OS) a
 1. Mark every todo in this file `completed`.
 2. In `PROGRESS.md`: mark Phase 1 done with the date and evidence, and update Active phases and Next from each remaining plan's Depends on.
 3. Commit with a conventional message scoped `phase-01`, push branch `phase-01-sync-engine`, open the PR, and run the review loop in `.cursor/skills/phase/SKILL.md`.
-4. **Stop** after the merge. Report the PR URL. Do not start the next phase.
+4. **Hand off** after the merge: run `bash .cursor/skills/phase/next-phase.sh`, report the PR URL and its `NEXT:` line, and stop. Never start the next phase in the same chat.
