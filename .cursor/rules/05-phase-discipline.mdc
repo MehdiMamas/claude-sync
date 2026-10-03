@@ -27,4 +27,4 @@ Follow `.cursor/skills/phase/SKILL.md`. The user starts a phase with `/phase` (t
 2. In `PROGRESS.md`, mark the phase `completed` with that evidence and the date, and update **Active phases** and **Next** (a phase whose Needs are all met is ready; one with an unmet Needs is `blocked: <that line>`).
 3. Commit on a branch named for that phase, push it, and open a pull request to `main`.
 4. Run the skill's review loop: fix Claude's review until it says **Ready to merge**, then merge. Never merge on any other verdict.
-5. **Stop.** Return the pull request URL and wait for the user. Do not activate or start the next phase yourself unless the user explicitly asks.
+5. **Hand off.** Run `bash .cursor/skills/phase/next-phase.sh`. It starts a new headless Cursor CLI session that runs `/phase`, so the next phase starts with a clean context; its log is in `.git/phase-runs/`. Return the pull request URL and stop. Never start the next phase in the same chat, and never hand off after a review that is not **Ready to merge**.

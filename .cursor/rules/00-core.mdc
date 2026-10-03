@@ -30,5 +30,5 @@ The build is split into one plan per phase: `.cursor/plans/phase-NN-*.plan.md`. 
 - Never auto-resolve conflicts beyond `git pull --rebase`. Never loop retries; §6 allows exactly one rebase retry on push.
 
 ## Workflow
-- Implement only the phase you were given, after checking every Needs line in its plan's Depends on. Meet its **Gate**, record the evidence in `PROGRESS.md`, get the PR through the review loop and merged (see `.cursor/skills/phase/SKILL.md`), then stop and wait for the user.
+- Implement only the phase you were given, after checking every Needs line in its plan's Depends on. Meet its **Gate**, record the evidence in `PROGRESS.md`, get the PR through the review loop and merged (see `.cursor/skills/phase/SKILL.md`), then hand off to a new headless session with `next-phase.sh`.
 - Keep CI green. Add tests alongside each feature (`50-testing.mdc`).

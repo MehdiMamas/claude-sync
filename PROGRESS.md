@@ -26,13 +26,13 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 **Who does what**
 - Cursor: code changes, using `/phase` (next phase), `/phase <N>`, or `/phase resume`.
 - Claude Code: orchestration. Checks PR, CI and review state, decides the next step, and updates this file and the plans.
-- User: approves pushes, posts anything public, decides the name (before Phase 4) and license (before Phase 5), runs the real-machine checks in Phases 4 and 5, and decides when the next phase starts.
+- User: approves pushes, posts anything public, decides the name (before Phase 4) and license (before Phase 5), runs the real-machine checks in Phases 4 and 5, and can stop the automatic hand-off with `PHASE_AUTOCHAIN=0` (after each merge `next-phase.sh` starts the next phase in a new headless Cursor CLI session; log in `.git/phase-runs/`).
 
 **Prompt to give Cursor**
 ```
 /phase 1
 
-Build Phase 1 (sync engine) from .cursor/plans/phase-01-sync-engine.plan.md: bin/claude-sync with pull/push, lib/sync.sh, lib/secrets.sh, the lock and --hook mode, the plain-bash test runner, and the CI workflow (shellcheck + tests on ubuntu, macos, windows). Read SPEC.md §5, §6, §7, §11, §13, §14 and .cursor/rules first. Every test uses a temp HOME and a local bare remote; never touch the real ~/.claude. Run bash tests/run.sh and record the counts, exit code, OS and CI run URL in PROGRESS.md, open the PR, run the review loop until Ready to merge, merge, and stop.
+Build Phase 1 (sync engine) from .cursor/plans/phase-01-sync-engine.plan.md: bin/claude-sync with pull/push, lib/sync.sh, lib/secrets.sh, the lock and --hook mode, the plain-bash test runner, and the CI workflow (shellcheck + tests on ubuntu, macos, windows). Read SPEC.md §5, §6, §7, §11, §13, §14 and .cursor/rules first. Every test uses a temp HOME and a local bare remote; never touch the real ~/.claude. Run bash tests/run.sh and record the counts, exit code, OS and CI run URL in PROGRESS.md, open the PR, run the review loop until Ready to merge, merge, and hand off with next-phase.sh.
 ```
 
 ## Deferred
