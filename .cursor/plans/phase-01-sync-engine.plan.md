@@ -38,7 +38,7 @@ todos:
     status: pending
     dependencies: [p01-7-tests-ci]
   - id: p01-9-handoff
-    content: "Record gate evidence in PROGRESS.md, mark Phase 1 complete there, open the PR and run the review loop, then STOP and wait for the user"
+    content: "Record gate evidence in PROGRESS.md, mark Phase 1 complete there, open the PR and run the review loop, then hand off with `next-phase.sh` (new headless session) and stop"
     status: pending
     dependencies: [p01-8-gate]
 ---
@@ -95,4 +95,4 @@ Prove it: paste `bash tests/run.sh` output (counts and exit code, with the OS) a
 1. Mark every todo in this file `completed`.
 2. In `PROGRESS.md`: mark Phase 1 done with the date and evidence, and update Active phases and Next from each remaining plan's Depends on.
 3. Commit with a conventional message scoped `phase-01`, push branch `phase-01-sync-engine`, open the PR, and run the review loop in `.cursor/skills/phase/SKILL.md`.
-4. **Stop** after the merge. Report the PR URL. Do not start the next phase.
+4. **Hand off** after the merge: run `bash .cursor/skills/phase/next-phase.sh`, report the PR URL and its `NEXT:` line, and stop. Never start the next phase in the same chat.
