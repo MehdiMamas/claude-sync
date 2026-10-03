@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 # Execute one claude-sync phase
 
-Invoked as `/phase`, `/phase <number>`, `/phase resume` or `/phase <number> resume`. Without a number, run the next phase (see **Argument**). One phase per branch and one pull request. Run the review loop below until Claude's review says **Ready to merge**, merge, then stop. Do not start the next phase.
+Invoked as `/phase`, `/phase <number>`, `/phase resume` or `/phase <number> resume`. Without a number, run the next phase (see **Argument**). One phase per branch and one pull request. Run the review loop below until Claude's review says **Ready to merge**, merge, then hand off to a new session (see **Hand off**). Never start the next phase in this chat.
 
 With `resume`, the pull request for this phase already exists: check out its branch, skip to **Review loop**, and start at step 1 for the current head commit.
 
@@ -96,7 +96,7 @@ If the script exits non-zero, stop and tell the user, without merging, with its 
 
 - **Changes needed:** go to **Fixing review feedback**, then back to step 1.
 - **Ready to merge:** go to **Merge**.
-- **Needs user** or **Blocked:** stop. Tell the user the verdict, the open items and the PR URL. Do not merge.
+- **Needs user** or **Blocked:** stop. Tell the user the verdict, the open items and the PR URL. Do not merge and do not hand off.
 
 Do not run more than 4 fix rounds. If the review after your 4th fix push still says **Changes needed**, stop and tell the user.
 
@@ -112,8 +112,16 @@ Merge only when all of these are true. If one is not, stop and tell the user why
 Then:
 
 1. `gh pr merge <n> --merge --delete-branch --match-head-commit <reviewed sha>`.
-2. `git switch main && git pull --ff-only`.
-3. Tell the user: the PR URL, the merge commit, the review's **Follow-ups (not blocking)** list as-is, and that the next phase is ready for `/phase` (or `/phase <next number>`). Then stop. Do not start the next phase.
+2. `git switch main && git pull --ff-only`. If `main` is checked out in another worktree, run `git fetch origin main` instead.
+3. Go to **Hand off**.
+
+## Hand off
+
+Only after a merge. Never after **Needs user**, **Blocked**, a failed review script, or a stopped fix loop.
+
+1. Run `bash .cursor/skills/phase/next-phase.sh`. It reads `PROGRESS.md` on `origin/main`. If a phase is not `completed`, it starts a new headless Cursor CLI session (`agent -p`) in the background that runs `/phase`, so the next phase starts with a clean context and no window or prompt. That session writes its output to `.git/phase-runs/<time>-next.log` in the main repository, and hands off again after its own merge. It starts nothing when every phase is completed, when `PHASE_AUTOCHAIN=0`, after `PHASE_CHAIN_MAX` chained sessions (default 30), or when the `agent` CLI is missing or not logged in. `PHASE_AGENT_MODEL` picks the model.
+2. Tell the user: the PR URL, the merge commit, the review's **Follow-ups (not blocking)** list as-is, and the script's `NEXT:` line.
+3. Stop. Do not start the next phase in this session; the new session gives it a clean context.
 
 ## Fixing review feedback
 

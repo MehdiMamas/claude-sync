@@ -13,4 +13,4 @@ alwaysApply: true
 - Platform claims name the OS that actually ran. A macOS launch is not a Windows or Linux install.
 - One phase, one branch `phase-<NN>-<slug>`, one pull request into `main`. The body uses `.github/pull_request_template.md` and includes the gate output plus a review checklist.
 - Claude reviews the pull request locally (`.cursor/skills/phase/review.sh`). Merge only through the review loop in `.cursor/skills/phase/SKILL.md`: a **Ready to merge** verdict on the head commit, CI green (or no CI checks on the PR), no push after the reviewed commit. Never merge on any other verdict.
-- After the merge, return the pull request URL and stop. The user decides when the next phase starts.
+- After the merge, run `bash .cursor/skills/phase/next-phase.sh`, return the pull request URL and its `NEXT:` line, and stop. The script starts a new headless session that runs `/phase` for the next phase; the next phase never starts in the same chat.
