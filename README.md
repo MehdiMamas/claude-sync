@@ -2,7 +2,7 @@
 
 Keep your Claude Code setup (`CLAUDE.md`, skills, subagents, slash commands, output styles) in a private git repo you own, and have it sync across your Macs, Linux boxes and Windows PCs automatically: pull when a session starts, push when it ends.
 
-**Status: planning.** Nothing is built yet. The design is in [`SPEC.md`](SPEC.md) and the build order in [`PROGRESS.md`](PROGRESS.md).
+**Status: the sync engine (`pull` / `push`) is implemented.** Linking, setup, and the plugin come in later phases. The design is in [`SPEC.md`](SPEC.md) and the build order in [`PROGRESS.md`](PROGRESS.md).
 
 ## Planned usage
 ```

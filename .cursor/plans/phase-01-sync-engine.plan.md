@@ -4,42 +4,42 @@ overview: "Phase 1 of 7. Sync engine: the bash dispatcher, pull/push against the
 todos:
   - id: p01-0-preflight
     content: "Preflight: read PROGRESS.md (no Needs for this phase); read SPEC.md §5, §6, §7, §11, §13, §14 and .cursor/rules/*"
-    status: pending
+    status: completed
   - id: p01-1-repo-hygiene
     content: "Extend .gitattributes (already LF for *.sh) to bin/* and tests/*; add .gitignore"
-    status: pending
+    status: completed
     dependencies: [p01-0-preflight]
   - id: p01-2-test-runner
     content: "tests/run.sh + tests/lib.sh: run every tests/*.test.sh, assertions, temp HOME + bare file:// remote helpers, 'N passed, M failed' summary, non-zero on failure"
-    status: pending
+    status: completed
     dependencies: [p01-0-preflight]
   - id: p01-3-dispatcher
     content: "bin/claude-sync: env defaults (CLAUDE_SYNC_DIR, CLAUDE_HOME, CLAUDE_SYNC_TIMEOUT, state dir), subcommand dispatch for pull, push, --version, --help; exit codes per §11"
-    status: pending
+    status: completed
     dependencies: [p01-0-preflight]
   - id: p01-4-sync
     content: "lib/sync.sh: pull and push per §6, including allowlist staging, rebase abort on failure, one retry on non-fast-forward, never force-push, network time limit, no git prompts"
-    status: pending
+    status: completed
     dependencies: [p01-3-dispatcher]
   - id: p01-5-lock-hook
     content: "Lock (mkdir + pid, stale after 10 min or dead pid) and --hook mode (always exit 0, one stderr line, details in the log)"
-    status: pending
+    status: completed
     dependencies: [p01-4-sync]
   - id: p01-6-secrets
     content: "lib/secrets.sh: scan staged added lines for the §7 patterns, report file:line:pattern-name without the value, honor 'claude-sync: allow-secret'; push aborts and unstages on a hit"
-    status: pending
+    status: completed
     dependencies: [p01-4-sync]
   - id: p01-7-tests-ci
     content: "Tests for every behavior listed under Gate, plus .github/workflows/ci.yml: shellcheck on ubuntu; bash tests/run.sh on ubuntu-latest, macos-latest, windows-latest (shell: bash)"
-    status: pending
+    status: completed
     dependencies: [p01-2-test-runner, p01-5-lock-hook, p01-6-secrets]
   - id: p01-8-gate
     content: "Verify gate: tests pass locally (name the OS) and in CI on all three OSes; shellcheck clean"
-    status: pending
+    status: completed
     dependencies: [p01-7-tests-ci]
   - id: p01-9-handoff
     content: "Record gate evidence in PROGRESS.md, mark Phase 1 complete there, open the PR and run the review loop, then STOP and wait for the user"
-    status: pending
+    status: completed
     dependencies: [p01-8-gate]
 ---
 
