@@ -64,11 +64,31 @@ report_file="$out_dir/pr-$pr-$head_sha.md"
 	echo "- Phase number: $num"
 } > "$prompt_file"
 
-echo "Reviewing PR #$pr ($head_ref @ ${head_sha:0:12}) with Claude locally. This can take a while."
+# Model ids live in ~/.claude/skills/phasing/review-models.env.
+# The last numbered phase plan is the whole-product review.
+selector="${PHASE_REVIEW_SELECTOR:-$HOME/.claude/skills/phasing/review-model.sh}"
+addendum="${PHASE_FINAL_REVIEW_ADDENDUM:-$HOME/.claude/skills/phasing/final-review-addendum.md}"
+if [ ! -f "$selector" ]; then
+	echo "Missing $selector. That file chooses the review model for every project." >&2
+	exit 2
+fi
+model_line=$(bash "$selector" "$num")
+review_model=${model_line%%$'\t'*}
+review_kind=${model_line#*$'\t'}
+if [ -z "$review_model" ] || [ "$review_kind" = "$model_line" ]; then
+	echo "review-model.sh did not return a model and a kind." >&2
+	exit 2
+fi
+if [ "$review_kind" = "final" ] && [ -f "$addendum" ]; then
+	printf '\n' >> "$prompt_file"
+	cat "$addendum" >> "$prompt_file"
+fi
+
+echo "Reviewing PR #$pr ($head_ref @ ${head_sha:0:12}) with $review_model ($review_kind). This can take a while."
 
 # Read-only tools: the review never edits files, comments or merges by itself.
 claude -p \
-	--model claude-opus-5-5 \
+	--model "$review_model" \
 	--max-turns 200 \
 	--output-format text \
 	--allowedTools "Read,Glob,Grep,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(git fetch:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/$repo/pulls/$pr/comments:*),Bash(gh run list:*),Bash(gh run view:*)" \
