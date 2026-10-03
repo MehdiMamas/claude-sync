@@ -7,7 +7,7 @@ Read this file **before** any work. It is the single source of truth for which p
 
 | Phase | Plan | Status | Gate evidence | Date |
 |---|---|---|---|---|
-| 1 | `phase-01-sync-engine.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200 3.6.9): 14 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` exit 0 (shellcheck 0.10.0). CI on ubuntu-latest, macos-latest, and windows-latest: first run failed; this commit fixes bash 3.2 and the shellcheck source paths. | 2026-10-03 |
+| 1 | `phase-01-sync-engine.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200 3.6.9): 14 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` exit 0 (shellcheck 0.10.0). CI success on ubuntu-latest, macos-latest, and windows-latest for `d0c8fff`: https://github.com/MehdiMamas/claude-sync/actions/runs/37106115937 | 2026-10-03 |
 | 2 | `phase-02-link-layer.plan.md` | not started | | |
 | 3 | `phase-03-init-join.plan.md` | blocked: Needs Phase 2 gate passed | | |
 | 4 | `phase-04-plugin.plan.md` | blocked: Needs Phase 3 gate passed; Needs the name decision | | |
@@ -18,6 +18,21 @@ Read this file **before** any work. It is the single source of truth for which p
 Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Needs line from the plan>`. A phase is ready to start when every Needs line in its plan's Depends on is met, whatever its number.
 
 ## Handoff (2026-10-03)
+
+**Paused — resume the review, do not rebuild Phase 1 and do not start Phase 2.**
+
+Stopped 2026-10-03 02:26 America/Chicago, before the first Claude review. Implementation, the pull request, and CI are done. Review rounds used: 0.
+
+- PR: https://github.com/MehdiMamas/claude-sync/pull/1 (open, not a draft, base `main`)
+- Branch: `phase-01-sync-engine`, worktree `C:\Users\Mehdi\Projects\claude-config-sync-plan-phase-01-sync-engine`. Leave `C:\Users\Mehdi\Projects\claude-config-sync-plan` on `plan/initial-phases`.
+- Code head before this pause note: `d0c8fff960c6cbd1661d23c5f1fba752ac427569` (`fix(phase-01): keep the secret scan working on bash 3.2`)
+- CI on that code is green: https://github.com/MehdiMamas/claude-sync/actions/runs/37106115937 (ubuntu, macos, windows). The earlier run https://github.com/MehdiMamas/claude-sync/actions/runs/37105865438 failed and is already fixed in `d0c8fff`.
+- `bash .cursor/skills/phase/review.sh 1` did not review. On Git Bash, `git show origin/main:.cursor/skills/phase/review-prompt.md` is rewritten to `origin\main;.cursor\...` unless `MSYS_NO_PATHCONV=1` is set. With that set, Claude Code returned `You've hit your session limit · resets 4:10am (America/Chicago)` and wrote no report. Do not merge.
+
+**Next session**
+1. Wait until after 4:10am America/Chicago on 2026-10-03 so the Claude Code limit has reset.
+2. In the phase worktree, confirm the tree is clean and `git rev-parse HEAD` equals `gh pr view 1 --json headRefOid`.
+3. Run `MSYS_NO_PATHCONV=1 bash .cursor/skills/phase/review.sh 1`. That is Review loop step 1. Then follow the verdict (max 4 fix rounds). Merge only on **Ready to merge**, green CI, `MERGEABLE`, and the same sha.
 
 **Where we are**
 - Phase 1 (sync engine) is implemented on `phase-01-sync-engine`: `bin/claude-sync`, `lib/sync.sh`, `lib/secrets.sh`, the test runner, and CI. Pull does not call link; that is Phase 3.
@@ -30,7 +45,7 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 
 **Prompt to give Cursor**
 ```
-/phase
+/phase resume
 ```
 
 ## Deferred
