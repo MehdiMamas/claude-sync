@@ -83,6 +83,14 @@ done
 export HOOK
 
 case "$CMD" in
+  link|unlink|status)
+    if [ "$HOOK" -eq 1 ]; then
+      bad_args
+    fi
+    ;;
+esac
+
+case "$CMD" in
   version)
     printf 'claude-sync %s\n' "$VERSION"
     ;;

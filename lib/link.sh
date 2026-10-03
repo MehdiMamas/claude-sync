@@ -209,21 +209,29 @@ remove_dir_link() {
 }
 
 repo_import_prefix() {
-  local repo home repo_c home_c
+  local repo home repo_abs home_abs repo_c home_c
   repo=$(existing_dir "$CLAUDE_SYNC_DIR")
   home=$(existing_dir "$HOME")
-  repo_c=$(canon_path "$repo")
-  home_c=$(canon_path "$home")
+  repo_abs=$(lexical_abs "$repo")
+  home_abs=$(lexical_abs "$home")
+  repo_c=$(fold_path "$repo_abs")
+  home_c=$(fold_path "$home_abs")
   case "$repo_c" in
     "$home_c")
       printf '~'
       ;;
     "$home_c"/*)
+      # Compare case-insensitively on Windows, but keep the repo's own spelling.
       # The tilde is text for Claude's @import line, not a path this shell expands.
-      printf '~%s' "${repo_c:${#home_c}}"
+      printf '~%s' "${repo_abs:${#home_abs}}"
       ;;
     *)
-      printf '%s' "$repo"
+      if on_windows; then
+        # Native Claude Code cannot open an MSYS path such as /d/sync or /tmp.
+        cygpath -m -- "$repo"
+      else
+        printf '%s' "$repo"
+      fi
       ;;
   esac
 }
@@ -240,12 +248,11 @@ first_marker_line() {
   local file="$1" needle="$2" line num=0
   while IFS= read -r line || [ -n "$line" ]; do
     num=$((num + 1))
-    case "$line" in
-      *"$needle"*)
-        printf '%s' "$num"
-        return 0
-        ;;
-    esac
+    line=${line%$'\r'}
+    if [ "$line" = "$needle" ]; then
+      printf '%s' "$num"
+      return 0
+    fi
   done < "$file"
   return 1
 }
@@ -275,18 +282,35 @@ require_repo_dir() {
 }
 
 # Replace dest with the bytes in src. A failed write leaves dest as it was.
+apply_mode() {
+  local src="$1" dest="$2" mode
+  if chmod --reference="$src" "$dest" 2>/dev/null; then
+    return 0
+  fi
+  mode=$(stat -f '%OLp' "$src" 2>/dev/null) || return 0
+  chmod "$mode" "$dest" 2>/dev/null || true
+}
+
 install_file() {
   local dest="$1" src="$2" tmp
   tmp="${dest}.claude-sync-new"
-  rm -f -- "$tmp"
+  rm -f -- "$tmp" || true
   if ! cat -- "$src" > "$tmp"; then
     rm -f -- "$tmp"
-    die 3 "could not update $dest."
+    die 3 "could not update $dest. It was left unchanged."
+  fi
+  if [ -f "$dest" ] && [ ! -L "$dest" ]; then
+    apply_mode "$dest" "$tmp"
   fi
   if ! mv -f -- "$tmp" "$dest"; then
     rm -f -- "$tmp"
-    die 3 "could not update $dest."
+    die 3 "could not update $dest. It was left unchanged."
   fi
+}
+
+fail_block_write() {
+  rm -f -- "${1:-}"
+  die 3 "could not update CLAUDE.md. It was left unchanged."
 }
 
 # Rewrite CLAUDE.md so the managed block is present and points at this repo.
@@ -297,7 +321,7 @@ sync_claude_block() {
     note "conflict: CLAUDE.md is not a regular file. Left it unchanged. Move it aside, then run claude-sync link again."
     return 1
   fi
-  tmp=$(mktemp "${TMPDIR:-/tmp}/claude-sync-block.XXXXXX") || die 3 "could not create a temp file to update CLAUDE.md."
+  tmp=$(mktemp "${TMPDIR:-/tmp}/claude-sync-block.XXXXXX") || die 3 "could not create a temp file to update CLAUDE.md. It was left unchanged."
   if [ -f "$file" ]; then
     if begin_line=$(first_marker_line "$file" "$BLOCK_BEGIN"); then
       if ! end_line=$(first_marker_line "$file" "$BLOCK_END"); then
@@ -311,13 +335,13 @@ sync_claude_block() {
         return 1
       fi
       if [ "$begin_line" -gt 1 ]; then
-        head -n "$((begin_line - 1))" "$file" > "$tmp"
+        head -n "$((begin_line - 1))" "$file" > "$tmp" || fail_block_write "$tmp"
       fi
-      render_block >> "$tmp"
-      tail -n "+$((end_line + 1))" "$file" >> "$tmp"
+      render_block >> "$tmp" || fail_block_write "$tmp"
+      tail -n "+$((end_line + 1))" "$file" >> "$tmp" || fail_block_write "$tmp"
     else
-      render_block > "$tmp"
-      cat -- "$file" >> "$tmp"
+      render_block > "$tmp" || fail_block_write "$tmp"
+      cat -- "$file" >> "$tmp" || fail_block_write "$tmp"
     fi
     if cmp -s "$file" "$tmp"; then
       rm -f "$tmp"
@@ -328,9 +352,9 @@ sync_claude_block() {
     note "updated the managed block in CLAUDE.md."
     return 0
   fi
-  render_block > "$tmp"
+  render_block > "$tmp" || fail_block_write "$tmp"
   install_file "$file" "$tmp"
-  rm -f "$tmp"
+  rm -f "$tmp" || true
   note "created CLAUDE.md with the managed block."
   return 0
 }
@@ -340,23 +364,30 @@ remove_claude_block() {
   if [ ! -f "$file" ] || [ -L "$file" ] || [ -d "$file" ]; then
     return 0
   fi
-  begin_line=$(first_marker_line "$file" "$BLOCK_BEGIN") || return 0
-  end_line=$(first_marker_line "$file" "$BLOCK_END") || return 0
-  if [ "$end_line" -lt "$begin_line" ]; then
+  if ! begin_line=$(first_marker_line "$file" "$BLOCK_BEGIN"); then
     return 0
   fi
-  tmp=$(mktemp "${TMPDIR:-/tmp}/claude-sync-block.XXXXXX") || die 3 "could not create a temp file to update CLAUDE.md."
-  if [ "$begin_line" -gt 1 ]; then
-    head -n "$((begin_line - 1))" "$file" > "$tmp"
+  if ! end_line=$(first_marker_line "$file" "$BLOCK_END"); then
+    note "conflict: CLAUDE.md has a managed-block start without an end. Left it unchanged. Close the block, then run claude-sync link again."
+    return 1
   fi
-  tail -n "+$((end_line + 1))" "$file" >> "$tmp"
+  if [ "$end_line" -lt "$begin_line" ]; then
+    note "conflict: CLAUDE.md managed block is out of order. Left it unchanged."
+    return 1
+  fi
+  tmp=$(mktemp "${TMPDIR:-/tmp}/claude-sync-block.XXXXXX") || die 3 "could not create a temp file to update CLAUDE.md. It was left unchanged."
+  if [ "$begin_line" -gt 1 ]; then
+    head -n "$((begin_line - 1))" "$file" > "$tmp" || fail_block_write "$tmp"
+  fi
+  tail -n "+$((end_line + 1))" "$file" >> "$tmp" || fail_block_write "$tmp"
   if cmp -s "$file" "$tmp"; then
-    rm -f "$tmp"
+    rm -f "$tmp" || true
     return 0
   fi
   install_file "$file" "$tmp"
-  rm -f "$tmp"
+  rm -f "$tmp" || true
   note "removed the managed block from CLAUDE.md."
+  return 0
 }
 
 # Skill names, plus agents, commands and output-styles. Not the skills directory
@@ -489,8 +520,10 @@ cmd_link() {
   if [ -e "$CLAUDE_HOME" ] && [ ! -d "$CLAUDE_HOME" ]; then
     die 2 "CLAUDE_HOME is not a directory: $CLAUDE_HOME"
   fi
-  mkdir -p "$CLAUDE_HOME"
-  sync_claude_block || LINK_CONFLICTS=$((LINK_CONFLICTS + 1))
+  mkdir -p "$CLAUDE_HOME" || die 3 "could not create $CLAUDE_HOME."
+  if ! sync_claude_block; then
+    LINK_CONFLICTS=$((LINK_CONFLICTS + 1))
+  fi
   cleanup_dangling
   link_skills
   link_whole_dirs
@@ -502,7 +535,9 @@ cmd_link() {
 cmd_unlink() {
   require_repo_dir
   remove_our_links
-  remove_claude_block
+  if ! remove_claude_block; then
+    exit 4
+  fi
 }
 
 item_state() {
@@ -589,17 +624,28 @@ read_stamp() {
 }
 
 status_repo() {
-  local branch counts ahead behind dirty
+  local branch counts ahead behind dirty has_head
   if ! git -C "$CLAUDE_SYNC_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     printf 'branch: none\nahead: none\nbehind: none\ndirty: none\n'
     printf 'last-pull: %s\n' "$(read_stamp last-pull)"
     printf 'last-push: %s\n' "$(read_stamp last-push)"
     die 2 "no repo at $CLAUDE_SYNC_DIR. Set CLAUDE_SYNC_DIR to your config repo."
   fi
-  branch=$(git -C "$CLAUDE_SYNC_DIR" rev-parse --abbrev-ref HEAD)
+  if git -C "$CLAUDE_SYNC_DIR" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+    has_head=1
+  else
+    has_head=0
+  fi
+  branch=$(git -C "$CLAUDE_SYNC_DIR" symbolic-ref --short -q HEAD || true)
   branch=${branch%$'\r'}
-  if git -C "$CLAUDE_SYNC_DIR" rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
-    counts=$(git -C "$CLAUDE_SYNC_DIR" rev-list --left-right --count 'HEAD...@{upstream}')
+  if [ -z "$branch" ]; then
+    branch=detached
+  fi
+  if [ "$has_head" -eq 0 ]; then
+    ahead=none
+    behind=none
+  elif git -C "$CLAUDE_SYNC_DIR" rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
+    counts=$(git -C "$CLAUDE_SYNC_DIR" rev-list --left-right --count 'HEAD...@{upstream}') || die 3 "could not read how far $CLAUDE_SYNC_DIR is from upstream."
     ahead=${counts%%$'\t'*}
     behind=${counts#*$'\t'}
     ahead=${ahead%$'\r'}

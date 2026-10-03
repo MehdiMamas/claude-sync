@@ -48,3 +48,18 @@ assert_err_contains "unknown argument"
 run_sync --x --hook
 assert_code 0 "bad argument before --hook"
 assert_err_lines 1
+
+run_sync link --hook
+assert_code 0 "link rejects --hook"
+assert_err_lines 1
+assert_err_contains "unknown argument"
+
+run_sync --hook unlink
+assert_code 0 "unlink rejects --hook"
+assert_err_lines 1
+assert_err_contains "unknown argument"
+
+run_sync status --hook
+assert_code 0 "status rejects --hook"
+assert_err_lines 1
+assert_err_contains "unknown argument"
