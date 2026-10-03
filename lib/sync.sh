@@ -421,7 +421,8 @@ stage_allowlist() {
 # Record one non-allowlisted index entry, then unstage it so the commit cannot include it.
 save_index_entry() {
   local path="$1" line mode sha
-  line=$(git -C "$CLAUDE_SYNC_DIR" ls-files -s -z -- "$path" | tr '\0' '\n' || true)
+  # :(literal) so a path like notes[1].txt is not a glob.
+  line=$(git -C "$CLAUDE_SYNC_DIR" ls-files -s -z -- ":(literal)$path" | tr '\0' '\n' || true)
   line=${line%%$'\n'*}
   if [ -n "$line" ]; then
     mode=${line%% *}
@@ -432,14 +433,15 @@ save_index_entry() {
     printf 'R\0%s\0' "$path" >> "$OUTSIDE_SAVED"
   fi
   if git -C "$CLAUDE_SYNC_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
-    git -C "$CLAUDE_SYNC_DIR" reset -q -- "$path"
+    git -C "$CLAUDE_SYNC_DIR" reset -q -- ":(literal)$path"
   else
-    git -C "$CLAUDE_SYNC_DIR" rm --cached -q -- "$path" >/dev/null 2>&1 || true
+    git -C "$CLAUDE_SYNC_DIR" rm --cached -q -- ":(literal)$path" >/dev/null 2>&1 || true
   fi
 }
 
 # Pull non-allowlisted staged paths out of the index. A rename or copy stays
-# when either side is allowlisted, so the commit records the rename.
+# only when the new path is allowlisted. A rename out of the allowlist commits
+# the deletion and leaves the new path unstaged from this commit.
 shelve_outside_staged() {
   local tmp status path old new
   OUTSIDE_SAVED=$(mktemp)
@@ -456,11 +458,13 @@ shelve_outside_staged() {
         # name-status -z is "R100\0<old>\0<new>\0", unlike porcelain -z.
         IFS= read -r -d '' old || true
         IFS= read -r -d '' new || true
-        if path_allowlisted "$old" || path_allowlisted "$new"; then
+        if path_allowlisted "$new"; then
           continue
         fi
-        save_index_entry "$old"
         save_index_entry "$new"
+        if ! path_allowlisted "$old"; then
+          save_index_entry "$old"
+        fi
         ;;
       *)
         IFS= read -r -d '' path || true
@@ -542,41 +546,47 @@ pull_has_conflict() {
   return 1
 }
 
-# Put back the pre-pull commit and the local edits autostash could not reapply.
+stash_sha() {
+  git -C "$CLAUDE_SYNC_DIR" rev-parse -q --verify refs/stash 2>/dev/null || true
+}
+
+# Returns 0 after putting back the pre-pull commit and the autostash this pull
+# created. Returns 1, and does not touch the tree, when this pull created no stash.
 undo_autostash_conflict() {
-  local before="$1" stash_top
-  if [ -n "$before" ]; then
-    git -C "$CLAUDE_SYNC_DIR" reset --hard "$before" >/dev/null 2>&1 || true
+  local before="$1" stash_before="$2" stash_now
+  stash_now=$(stash_sha)
+  if [ -z "$stash_now" ] || [ "$stash_now" = "$stash_before" ]; then
+    return 1
   fi
-  stash_top=$(git -C "$CLAUDE_SYNC_DIR" stash list 2>/dev/null || true)
-  stash_top=${stash_top%%$'\n'*}
-  case "$stash_top" in
-    *autostash*)
-      git -C "$CLAUDE_SYNC_DIR" stash pop >/dev/null 2>&1 || true
-      ;;
-  esac
+  if [ -n "$before" ]; then
+    git -C "$CLAUDE_SYNC_DIR" reset --hard "$before" >/dev/null 2>&1 || return 1
+  fi
+  git -C "$CLAUDE_SYNC_DIR" stash pop >/dev/null 2>&1 || true
   if [ -n "$(git -C "$CLAUDE_SYNC_DIR" ls-files -u 2>/dev/null)" ] && [ -n "$before" ]; then
     git -C "$CLAUDE_SYNC_DIR" reset --hard "$before" >/dev/null 2>&1 || true
-    git -C "$CLAUDE_SYNC_DIR" stash pop >/dev/null 2>&1 || true
+    if [ -n "$(stash_sha)" ] && [ "$(stash_sha)" != "$stash_before" ]; then
+      git -C "$CLAUDE_SYNC_DIR" stash pop >/dev/null 2>&1 || true
+    fi
   fi
+  return 0
 }
 
 refuse_if_merging() {
   local gd
   if rebase_in_progress; then
-    die 4 "a rebase is in progress in $CLAUDE_SYNC_DIR. Run git rebase --abort or finish it, then push again."
+    die 4 "a rebase is in progress in $CLAUDE_SYNC_DIR. Run git rebase --abort or finish it, then try again."
   fi
   gd=$(git -C "$CLAUDE_SYNC_DIR" rev-parse --absolute-git-dir 2>/dev/null || true)
   if [ -n "$gd" ] && [ -f "$gd/MERGE_HEAD" ]; then
-    die 4 "a merge is in progress in $CLAUDE_SYNC_DIR. Finish or abort the merge, then push again."
+    die 4 "a merge is in progress in $CLAUDE_SYNC_DIR. Finish or abort the merge, then try again."
   fi
   if [ -n "$(git -C "$CLAUDE_SYNC_DIR" ls-files -u 2>/dev/null)" ]; then
-    die 4 "unmerged files are in $CLAUDE_SYNC_DIR. Resolve them, then push again."
+    die 4 "unmerged files are in $CLAUDE_SYNC_DIR. Resolve them, then try again."
   fi
 }
 
 push_with_one_retry() {
-  local status=0 out
+  local status=0 out retry_before="" stash_before=""
   out=$(run_limited "$CLAUDE_SYNC_TIMEOUT" git -C "$CLAUDE_SYNC_DIR" push 2>&1) || status=$?
   if [ "$status" -eq 0 ]; then
     return 0
@@ -590,6 +600,8 @@ push_with_one_retry() {
     die 3 "push failed (git or network). Check the remote and try again."
   fi
   log_line "push rejected; rebasing once"
+  retry_before=$(git -C "$CLAUDE_SYNC_DIR" rev-parse HEAD 2>/dev/null || true)
+  stash_before=$(stash_sha)
   status=0
   out=$(run_limited "$CLAUDE_SYNC_TIMEOUT" git -C "$CLAUDE_SYNC_DIR" pull --rebase --autostash 2>&1) || status=$?
   if [ "$status" -eq 124 ]; then
@@ -597,11 +609,15 @@ push_with_one_retry() {
     abort_rebase_if_any || true
     die 3 "pull timed out after ${CLAUDE_SYNC_TIMEOUT}s while retrying the push. The local commit was kept. Try again."
   fi
-  if rebase_in_progress || pull_has_conflict "$out"; then
+  if rebase_in_progress; then
     log_git_detail "$out"
     abort_rebase_if_any || die 4 "push not applied. A rebase conflict is still open in $CLAUDE_SYNC_DIR. Run git rebase --abort there if it remains, then fix the conflict. Nothing was force-pushed."
-    if [ -n "$(git -C "$CLAUDE_SYNC_DIR" ls-files -u 2>/dev/null)" ]; then
-      git -C "$CLAUDE_SYNC_DIR" reset --hard HEAD >/dev/null 2>&1 || true
+    die 4 "push not applied. The remote has a conflicting change; the local commit was kept. Fix the conflict in the repo. Nothing was force-pushed."
+  fi
+  if pull_has_conflict "$out"; then
+    log_git_detail "$out"
+    if undo_autostash_conflict "$retry_before" "$stash_before"; then
+      die 4 "push not applied. Local edits clashed with the remote while retrying. The local commit was kept and your edits are unchanged. Nothing was force-pushed."
     fi
     die 4 "push not applied. The remote has a conflicting change; the local commit was kept. Fix the conflict in the repo. Nothing was force-pushed."
   fi
@@ -628,9 +644,11 @@ push_with_one_retry() {
 }
 
 sync_pull() {
-  local status=0 out before=""
+  local status=0 out before="" stash_before=""
   begin_sync
+  refuse_if_merging
   before=$(git -C "$CLAUDE_SYNC_DIR" rev-parse HEAD 2>/dev/null || true)
+  stash_before=$(stash_sha)
   status=0
   out=$(run_limited "$CLAUDE_SYNC_TIMEOUT" git -C "$CLAUDE_SYNC_DIR" pull --rebase --autostash --quiet 2>&1) || status=$?
   if [ "$status" -eq 124 ]; then
@@ -644,8 +662,10 @@ sync_pull() {
       abort_rebase_if_any || die 4 "pull hit a conflict and the rebase could not be aborted. Run git rebase --abort in $CLAUDE_SYNC_DIR, then try again."
       die 4 "pull hit a conflict. The rebase was aborted and your files are unchanged. Fix the conflict in the repo, then pull again."
     fi
-    undo_autostash_conflict "$before"
-    die 4 "pull hit a conflict while reapplying local edits. The pull was undone and your files are unchanged. Fix the conflict in the repo, then pull again."
+    if undo_autostash_conflict "$before" "$stash_before"; then
+      die 4 "pull hit a conflict while reapplying local edits. The pull was undone and your files are unchanged. Fix the conflict in the repo, then pull again."
+    fi
+    die 4 "pull hit a conflict. The repo was left as it was. Resolve it, then try again."
   fi
   if [ "$status" -ne 0 ]; then
     log_git_detail "$out"

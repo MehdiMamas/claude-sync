@@ -7,7 +7,7 @@ Read this file **before** any work. It is the single source of truth for which p
 
 | Phase | Plan | Status | Gate evidence | Date |
 |---|---|---|---|---|
-| 1 | `phase-01-sync-engine.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 22 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. Three-OS CI for this commit is the pull request checks (ubuntu-latest, macos-latest, windows-latest). | 2026-10-03 |
+| 1 | `phase-01-sync-engine.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 26 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. Three-OS CI for this commit is the pull request checks (ubuntu-latest, macos-latest, windows-latest). | 2026-10-03 |
 | 2 | `phase-02-link-layer.plan.md` | not started | | |
 | 3 | `phase-03-init-join.plan.md` | blocked: Needs Phase 2 gate passed | | |
 | 4 | `phase-04-plugin.plan.md` | blocked: Needs Phase 3 gate passed; Needs the name decision | | |
@@ -49,7 +49,7 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 - 2026-10-03: `git add` is run per allowlist path. A pathspec that matches nothing is skipped; `git add` would otherwise fail before the paths that do exist are staged.
 - 2026-10-03: Current Git rejects a non-fast-forward with `fetch first`, not only the older `non-fast-forward` wording. Both count as the one allowed rebase retry.
 - 2026-10-03: bash 3.2 (macOS) marks `BASH_REMATCH` readonly, so the secret scan never assigns it. The matched text is not printed.
-- 2026-10-03: A path already staged outside the allowlist stays staged and is not part of the sync commit. A rename or copy is included when either path is allowlisted. Push exits 4 when a merge, rebase, or unmerged index is present. A pull whose autostash reapply conflicts is undone and exits 4.
+- 2026-10-03: A path already staged outside the allowlist stays staged and is not part of the sync commit. A rename or copy is committed only when the new path is allowlisted; a rename out of the allowlist commits the deletion and leaves the new path staged. Push exits 4 when a merge, rebase, or unmerged index is present. Pull does too, and leaves that in-progress state untouched. A pull or push-retry whose autostash reapply conflicts is undone only when that command created the stash, and exits 4.
 - 2026-10-03: Untracked non-allowlisted paths are reported once per path. The state dir file `reported-untracked` remembers them.
 - 2026-10-03: Hook mode sends other stderr to the log (or `/dev/null` if the log cannot be opened), prints at most one line, and exits 0. Git output in the log has credentials stripped from URLs. `GCM_INTERACTIVE=never` is set only in hook mode.
 - 2026-10-03: Phase 1 plan gate items 5, 10, and 12 now name the pre-staged path, empty-lock, and no-prompt cases the tests cover.

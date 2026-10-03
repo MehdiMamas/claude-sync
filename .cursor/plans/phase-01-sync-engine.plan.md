@@ -78,9 +78,9 @@ Do not create files, services, stubs, settings or UI that belong to a later phas
 **`bash tests/run.sh` passes on ubuntu-latest, macos-latest and windows-latest in CI and on the local machine, `shellcheck` reports nothing, and the tests cover at least:**
 1. pull fast-forwards a change pushed by another clone;
 2. pull while offline/unreachable remote: hook mode exits 0 with one stderr line, CLI mode exits 3;
-3. pull hitting a rebase conflict leaves no rebase in progress and the working tree unchanged;
+3. pull hitting a rebase conflict leaves no rebase in progress and the working tree unchanged; a pull while a merge, rebase, or unmerged index is already present exits 4 and leaves that state untouched; an autostash conflict restores the pre-pull HEAD and the user's edits, with no stash left behind;
 4. push with no allowlisted changes makes no commit;
-5. push commits only allowlisted paths; an untracked or already-staged `notes.txt` stays out of the commit; a rename or copy is committed when either path is allowlisted; a merge, rebase, or unmerged file stops the push with exit 4;
+5. push commits only allowlisted paths; an untracked or already-staged `notes.txt` stays out of the commit; a rename or copy is committed when its new path is allowlisted; a merge, rebase, or unmerged file stops the push with exit 4;
 6. push after the remote moved ahead (non-conflicting) rebases once and succeeds;
 7. push with a real conflict keeps the local commit, never force-pushes (remote head unchanged), CLI exits 4;
 8. each §7 pattern blocks the push, prints file:line:pattern name, never the matched value, leaves nothing staged, CLI exits 5;
