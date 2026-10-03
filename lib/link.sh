@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # Sourced by bin/claude-sync. Directory links, the CLAUDE.md block, unlink, status.
 # Platform differences live only in the helpers below.
-# Does not run network git commands. pull calls link in Phase 3.
+# Does not run network git commands. pull calls link after a successful pull.
 
 # Dispatcher exports these before sourcing this file.
 : "${WARNED:=0}"

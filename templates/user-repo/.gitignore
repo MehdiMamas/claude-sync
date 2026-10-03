@@ -1,0 +1,14 @@
+# Never synced. Repeated here so a hand-added copy stays out of this repo.
+.credentials.json
+*.credentials*
+.env*
+settings.json
+settings.local.json
+history*
+projects/
+todos/
+statsig/
+shell-snapshots/
+plugins/
+ide/
+skills/synced/

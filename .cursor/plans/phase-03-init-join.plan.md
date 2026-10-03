@@ -4,42 +4,42 @@ overview: "Phase 3 of 7. init (first machine: create or attach the repo, import 
 todos:
   - id: p03-0-preflight
     content: "Preflight: read PROGRESS.md, confirm Phase 1 and Phase 2 gate evidence; read SPEC.md §3, §4, §7, §8, §9, §11 and .cursor/rules/*"
-    status: pending
+    status: completed
   - id: p03-1-templates
     content: "templates/user-repo/: .gitignore (never-sync list from §4), .gitattributes, README.md (what the repo is, how to join another machine)"
-    status: pending
+    status: completed
     dependencies: [p03-0-preflight]
   - id: p03-2-backup-import
     content: "lib/init.sh backup + import helpers: back up to ~/.claude/.claude-sync-backup/<UTC ts>/ preserving paths, move allowlisted items into the repo (CLAUDE.md body outside the managed block, skills except synced/ and links, agents, commands, output-styles)"
-    status: pending
+    status: completed
     dependencies: [p03-0-preflight]
   - id: p03-3-init
     content: "init per §9: refuse if already set up, --create via gh (private only), --remote, local-only; write templates; import; link; commit 'init: import from <host>'; push if remote"
-    status: pending
+    status: completed
     dependencies: [p03-1-templates, p03-2-backup-import]
   - id: p03-4-join
     content: "join per §9: clone; default stops and lists conflicts before changing anything; --merge; --replace; link; commit merged content; push"
-    status: pending
+    status: completed
     dependencies: [p03-2-backup-import]
   - id: p03-5-visibility
     content: "Public-repo guard (§7): init --create is always private; init --remote and join warn when gh reports the remote is public; skip quietly when gh is absent"
-    status: pending
+    status: completed
     dependencies: [p03-3-init, p03-4-join]
   - id: p03-6-pull-link
     content: "pull runs link after a successful pull (§6 step 4); link errors in hook mode stay one stderr line and exit 0"
-    status: pending
+    status: completed
     dependencies: [p03-0-preflight]
   - id: p03-7-tests
     content: "Tests for every behavior listed under Gate, including the two-machine test; gh is stubbed with a fake on PATH, never called for real"
-    status: pending
+    status: completed
     dependencies: [p03-3-init, p03-4-join, p03-5-visibility, p03-6-pull-link]
   - id: p03-8-gate
     content: "Verify gate: tests pass locally (name the OS) and in CI on all three OSes; shellcheck clean"
-    status: pending
+    status: completed
     dependencies: [p03-7-tests]
   - id: p03-9-handoff
     content: "Record gate evidence in PROGRESS.md, mark Phase 3 complete there, open the PR and run the review loop, then hand off with `next-phase.sh` (new headless session) and stop"
-    status: pending
+    status: completed
     dependencies: [p03-8-gate]
 ---
 
@@ -90,6 +90,6 @@ Prove it: paste the commands and results (counts, exit codes, OS, CI run URL) in
 
 ## When the gate passes
 1. Mark every todo in this file `completed`.
-2. In `PROGRESS.md`: mark Phase 3 done with the date and evidence, and update Active phases and Next from each remaining plan's Depends on (Phases 4, 6 and 7 all become startable).
+2. In `PROGRESS.md`: mark Phase 3 done with the date and evidence, and update Active phases and Next from each remaining plan's Depends on. Phases 6 and 7 become startable. Phase 4 stays blocked on the name decision.
 3. Commit with a conventional message scoped `phase-03`, push branch `phase-03-init-join`, open the PR, and run the review loop in `.cursor/skills/phase/SKILL.md`.
 4. **Hand off** after the merge: run `bash .cursor/skills/phase/next-phase.sh`, report the PR URL and its `NEXT:` line, and stop. Never start the next phase in the same chat.
