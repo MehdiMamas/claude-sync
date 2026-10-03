@@ -26,7 +26,7 @@ todos:
     status: pending
     dependencies: [p07-3-tests, p07-4-docs]
   - id: p07-9-handoff
-    content: "Record gate evidence in PROGRESS.md, mark Phase 7 complete there, open the PR and run the review loop, then STOP and wait for the user"
+    content: "Record gate evidence in PROGRESS.md, mark Phase 7 complete there, open the PR and run the review loop, then hand off with `next-phase.sh` (new headless session) and stop"
     status: pending
     dependencies: [p07-8-gate]
 ---

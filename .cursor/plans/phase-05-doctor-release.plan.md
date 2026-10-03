@@ -30,7 +30,7 @@ todos:
     status: pending
     dependencies: [p05-3-tests, p05-5-version]
   - id: p05-9-handoff
-    content: "Record gate evidence in PROGRESS.md, mark Phase 5 complete there, open the PR and run the review loop, then STOP and wait for the user (the user tags and publishes)"
+    content: "Record gate evidence in PROGRESS.md, mark Phase 5 complete there, open the PR and run the review loop, then hand off with `next-phase.sh` (new headless session) and stop (the user tags and publishes)"
     status: pending
     dependencies: [p05-8-gate]
 ---
