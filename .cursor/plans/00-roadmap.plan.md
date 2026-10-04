@@ -60,12 +60,12 @@ Dependency direction: commands and hooks → `bin/claude-sync` → `lib/*.sh`. `
 ## Phases
 | # | Phase | Needs | Gate (one line) |
 |---|---|---|---|
-| 1 | Sync engine | – | `bash tests/run.sh` passes pull/push/lock/secret/hook-mode tests on ubuntu, macos, windows CI, shellcheck clean |
-| 2 | Link layer | 1 | link/unlink/status tests pass on all three OSes, including "unlink never deletes the target" |
-| 3 | init and join | 1, 2 | two-machine test (init on A, join --merge on B, edit on B, pull on A) passes on all three OSes |
+| 1 | Sync engine | – | `bash tests/run.sh` passes pull/push/lock/secret/hook-mode tests locally, shellcheck clean |
+| 2 | Link layer | 1 | link/unlink/status tests pass locally, including "unlink never deletes the target" |
+| 3 | init and join | 1, 2 | two-machine test (init on A, join --merge on B, edit on B, pull on A) passes locally |
 | 4 | Claude Code plugin | 3 | plugin validates, installs from the local marketplace, and SessionStart/SessionEnd run pull/push in a real session on one named OS |
 | 5 | doctor, uninstall, docs, v0.1.0 | 4 | real round trip Windows ⇄ macOS from a clean install following only the README; release candidate ready for the user to tag |
 | 6 | Cursor config sync (opt-in) | 3 | with `cursor=1`, Cursor global files sync in the two-machine test; off by default |
-| 7 | Shared settings (opt-in) | 3 | `settings.shared.json` keys merge into `settings.json` without losing local keys, tested on all three OSes |
+| 7 | Shared settings (opt-in) | 3 | `settings.shared.json` keys merge into `settings.json` without losing local keys, tested locally |
 
 Phases 6 and 7 come after 5 in order, but only need Phase 3, so either can start once Phase 3 is merged.

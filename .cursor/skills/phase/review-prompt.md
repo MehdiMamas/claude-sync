@@ -34,7 +34,7 @@ Cursor fixes whatever **For Cursor** lists and pushes, and each push gets anothe
 - **Not blocking** (goes in **Follow-ups**, never in **For Cursor**): everything else, including minor problems you missed before. The user decides what to do with them.
 - **From round 3:** an earlier problem that is still not fixed blocks only if it is severe as defined above. Minor ones move to **Follow-ups**.
 - **Round 4 or later:** do not ask Cursor for more fixes. The verdict is **Ready to merge** if nothing severe is open, otherwise **Needs user**, with the open items listed for the user.
-- Never ask for a commit whose only purpose is bookkeeping that changes again with every push, such as the CI run URL of the head commit. Check CI yourself.
+- Never ask for a commit whose only purpose is bookkeeping. Do not require GitHub Actions. The gate is the local test run in `PROGRESS.md`.
 
 If `<reviewed-sha>` is no longer in the history (force-push), treat the run as a first review.
 
@@ -42,7 +42,6 @@ If `<reviewed-sha>` is no longer in the history (force-push), treat the run as a
 
 - `gh pr view <n> --json title,body,headRefName,baseRefName,files,commits`
 - `git diff --stat origin/main...HEAD`, then `git diff origin/main...HEAD -- <path>` for each file you need. Read whole files with Read when a diff lacks context.
-- CI state: `gh run list --branch <head branch> --limit 20`, then `gh run view <id>` (and `gh run view <id> --log-failed` for failures). CI runs only on demand, so there may be no runs; say so instead of treating it as a failure.
 
 ## 4. Check
 
@@ -50,7 +49,7 @@ A. **Scope coverage.** For every todo and Scope bullet: done, partial, or missin
 
 B. **Out of scope.** Flag any file, service, stub, setting, placeholder, TODO comment or UI that belongs to a later phase, naming that phase. Also flag unrelated churn.
 
-C. **Gate.** The phase row in `PROGRESS.md` must hold the gate command and its result (exit code, test counts), not a sentence. A CI run URL is optional and does not need to be for the head commit; you read CI state yourself. Check the claim against the diff and CI. Platform claims must name the OS that actually ran. Anything not run must say so and name the phase that owns it.
+C. **Gate.** The phase row in `PROGRESS.md` must hold the gate command and its result (exit code, test counts), not a sentence. Check the claim against the diff. Platform claims must name the OS that actually ran. Anything not run must say so and name the phase that owns it. Do not require a CI run URL or a GitHub Actions result.
 
 D. **PROGRESS.md bookkeeping.** The phase is marked `completed` with the date; Next is the following phase, `not started`; Deferred items name a later phase; plan/code differences are recorded; the phase plan's todos are marked `completed`.
 
@@ -59,7 +58,7 @@ E. **Rules.** Every rule in `.cursor/rules/*.mdc` that matches the changed files
 F. **String and path changes.** When an identity, path, protocol, mutex, endpoint or URL changed, search for the old value yourself (Grep, no hit cap, including `-dev` and leading-dot siblings) and confirm readers and writers match.
 
 G. **Correctness.** Real bugs only: wrong behavior, crashes, races, leaks, missing disposal, broken layering. Skip style nits and anything the compiler already catches. Go through these sweeps for every changed file, and do all of them; each one has missed a problem in an earlier review:
-   1. **Repo checks that CI does not run.** Read the project lint and hygiene configuration and check each new or changed file against it by hand: headers, disallowed characters, import layering, filename rules. A file that fails `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` and `bash tests/run.sh` is a problem.
+   1. **Repo checks.** Read the project lint and hygiene configuration and check each new or changed file against it by hand: headers, disallowed characters, import layering, filename rules. A file that fails `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` and `bash tests/run.sh` is a problem. Do not ask for a GitHub Actions run.
    2. **State lifecycle.** For every field, `Map`, `Set` or counter the PR adds, list every method that should create, change or clear it (begin, send, interrupt, dispose, error paths), and check each one does. Stale state after interrupt, reuse or dispose is a bug.
    3. **Every public method and event.** For each method or event the plan or interface names: what happens on an unknown id, on a second call, after interrupt, after dispose, and while another operation is in flight. Check the order of events and when they fire relative to the returned promise.
    4. **Timing.** Microtask versus timer versus synchronous: can a caller outside the event listener act between steps? Can an event fire before the caller has what it needs?
@@ -94,7 +93,7 @@ Use this layout:
 |---|---|---|
 
 ### Gate
-<is the evidence real command output? does it match the diff and CI? what was not run?>
+<is the evidence real command output? does it match the diff? what was not run?>
 
 ### Earlier problems
 <re-runs only: each earlier problem with fixed / not fixed / partly fixed, or omit this section on a first review>

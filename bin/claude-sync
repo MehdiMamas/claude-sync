@@ -8,6 +8,8 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$ROOT/lib/sync.sh"
 # shellcheck source=lib/link.sh
 source "$ROOT/lib/link.sh"
+# shellcheck source=lib/init.sh
+source "$ROOT/lib/init.sh"
 
 VERSION="0.0.0"
 
@@ -18,6 +20,8 @@ Usage: claude-sync pull [--hook]
        claude-sync link
        claude-sync unlink
        claude-sync status
+       claude-sync init [--create <name> | --remote <url>] [--dir <path>]
+       claude-sync join <url> [--merge | --replace] [--dir <path>]
        claude-sync --version
        claude-sync --help
 EOF
@@ -74,6 +78,14 @@ while [ $# -gt 0 ]; do
       fi
       CMD=$1
       ;;
+    init|join)
+      if [ -n "$CMD" ]; then
+        bad_args
+      fi
+      CMD=$1
+      shift
+      break
+      ;;
     *)
       bad_args
       ;;
@@ -83,7 +95,7 @@ done
 export HOOK
 
 case "$CMD" in
-  link|unlink|status)
+  link|unlink|status|init|join)
     if [ "$HOOK" -eq 1 ]; then
       bad_args
     fi
@@ -111,6 +123,12 @@ case "$CMD" in
     ;;
   status)
     cmd_status
+    ;;
+  init)
+    cmd_init "$@"
+    ;;
+  join)
+    cmd_join "$@"
     ;;
   *)
     if [ "$HOOK" -eq 1 ]; then

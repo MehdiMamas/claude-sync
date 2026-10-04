@@ -2,31 +2,31 @@
 
 Read this file **before** any work. It is the single source of truth for which phases are active and what blocks the rest. Rules: `.cursor/rules/05-phase-discipline.mdc`. Roadmap: `.cursor/plans/00-roadmap.plan.md`. Spec: `SPEC.md`.
 
-**Active phases:** 3 – Init and join (not started) → `.cursor/plans/phase-03-init-join.plan.md`
-**Next:** 4 – Plugin (blocked: Needs Phase 3 gate passed; Needs the name decision)
+**Active phases:** 6 – Cursor config sync (not started) → `.cursor/plans/phase-06-cursor-sync.plan.md`; 7 – Shared settings (not started) → `.cursor/plans/phase-07-shared-settings.plan.md`
+**Next:** 4 – Plugin (blocked: Needs a decision on the product name)
 
 | Phase | Plan | Status | Gate evidence | Date |
 |---|---|---|---|---|
-| 1 | `phase-01-sync-engine.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 26 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. Three-OS CI for this commit is the pull request checks (ubuntu-latest, macos-latest, windows-latest). | 2026-10-03 |
-| 2 | `phase-02-link-layer.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 35 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. Smoke on that OS: a temp repo's skill `claude-sync-phase2-smoke` was linked into the real `~/.claude/skills/` (`bin/claude-sync link`, exit 0); `claude -p "List the names of the skills available to you, one per line"` exited 0 and its first line was `claude-sync-phase2-smoke`; `unlink` removed that link; `~/.claude/CLAUDE.md` matched a byte copy taken before the smoke (`cmp`). Three-OS CI for this commit is the pull request checks (ubuntu-latest, macos-latest, windows-latest). | 2026-10-03 |
-| 3 | `phase-03-init-join.plan.md` | not started | | |
-| 4 | `phase-04-plugin.plan.md` | blocked: Needs Phase 3 gate passed; Needs the name decision | | |
+| 1 | `phase-01-sync-engine.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 26 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. | 2026-10-03 |
+| 2 | `phase-02-link-layer.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 35 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. Smoke on that OS: a temp repo's skill `claude-sync-phase2-smoke` was linked into the real `~/.claude/skills/` (`bin/claude-sync link`, exit 0); `claude -p "List the names of the skills available to you, one per line"` exited 0 and its first line was `claude-sync-phase2-smoke`; `unlink` removed that link; `~/.claude/CLAUDE.md` matched a byte copy taken before the smoke (`cmp`). | 2026-10-03 |
+| 3 | `phase-03-init-join.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 52 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. | 2026-10-03 |
+| 4 | `phase-04-plugin.plan.md` | blocked: Needs a decision on the product name | | |
 | 5 | `phase-05-doctor-release.plan.md` | blocked: Needs Phase 4 gate passed; Needs the license decision | | |
-| 6 | `phase-06-cursor-sync.plan.md` | blocked: Needs Phase 3 gate passed | | |
-| 7 | `phase-07-shared-settings.plan.md` | blocked: Needs Phase 3 gate passed | | |
+| 6 | `phase-06-cursor-sync.plan.md` | not started | | |
+| 7 | `phase-07-shared-settings.plan.md` | not started | | |
 
 Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Needs line from the plan>`. A phase is ready to start when every Needs line in its plan's Depends on is met, whatever its number.
 
 ## Handoff (2026-10-03)
 
 **Where we are**
-- Phase 2 (link layer) is done on this branch: `lib/link.sh` plus `link`, `unlink` and `status` on `bin/claude-sync`. Pull still does not call link; that is Phase 3.
-- After this pull request merges, Phase 3 (init and join) is next.
+- Phase 3 (init and join) is done on this branch: `lib/init.sh`, `templates/user-repo/`, and `pull` calls `link` after a successful pull.
+- Phases 6 and 7 are ready. Phase 4 stays blocked until the product name is decided (`Name:` in Notes).
 - The private repo is https://github.com/MehdiMamas/claude-sync.
 
 **Who does what**
 - Cursor: code changes, using `/phase` (next phase), `/phase <N>`, or `/phase resume`.
-- Claude Code: orchestration. Checks PR, CI and review state, decides the next step, and updates this file and the plans.
+- Claude Code: orchestration. Checks the PR and the local review, decides the next step, and updates this file and the plans.
 - User: approves pushes, posts anything public, decides the name (before Phase 4) and license (before Phase 5), runs the real-machine checks in Phases 4 and 5, and can stop the automatic hand-off with `PHASE_AUTOCHAIN=0` (after each merge `next-phase.sh` starts the next phase in a new headless Cursor CLI session; log in `.git/phase-runs/`).
 
 **Prompt to give Cursor**
@@ -36,7 +36,6 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 
 ## Deferred
 - `--version` prints `claude-sync 0.0.0`. Phase 5 (doctor and release) owns the real version.
-- `pull` does not call `link` after a successful pull. Phase 3 wires that.
 
 ## Notes / decisions
 - 2026-10-03: The personal PC ⇄ Mac sync plan (`docs/history/personal-sync-plan.md`) became a public tool for anyone. That plan said "no phasing"; superseded now that it is a product.
@@ -58,3 +57,10 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 - 2026-10-03: Dangling-link cleanup looks at direct children of `~/.claude` and at names inside a real `skills/` directory. It does not walk real directories such as `projects/`. A link is removed only when its target path is inside the repo dir and the target is gone.
 - 2026-10-03: On Windows, directory links are junctions: `cmd.exe //c mklink //J`. MSYS rewrites a single `/J` into a drive path before `cmd` sees it, so the bash source uses `//J` and `//c`. Junctions are removed with `cmd.exe //c rmdir`, never `rm`.
 - 2026-10-03: The CLAUDE.md import path is `~/…` when the repo dir is under `$HOME`, keeping the repo directory's own spelling. Outside `$HOME`, Unix writes the absolute `pwd -L` path and Windows writes a drive-letter path from `cygpath -m`, because Claude Code is a native process and cannot open an MSYS path. The tilde is text in the file, not a shell expansion.
+- 2026-10-03: A successful `pull` runs `link`. In hook mode a link error is still one stderr line and exit 0.
+- 2026-10-03: Backup directories are `~/.claude/.claude-sync-backup/YYYYMMDDTHHMMSSZ`. The spec's UTC timestamp cannot contain `:` because Windows directory names cannot.
+- 2026-10-03: `init` with no `--create` or `--remote` makes a local repo and prints how to add a remote. `init --remote` refuses a remote that already has commits. `join` with local content and no flag clones, lists conflicts, changes no local file, and exits 4. `--merge` or `--replace` reuses that clone when the origin URL matches.
+- 2026-10-03: Phase 3's plan said phases 4, 6, and 7 all become startable. Phase 4's Depends on still needs the product name, so only 6 and 7 are ready. The plan file now says that.
+- 2026-10-03: A failed `init` removes the repo directory that run created, so the next `init` is not refused. A failure after files have moved, including a signal, restores them until the setup commit succeeds. `gh repo create` and `gh repo view` use the same time limit as git. There is no `UPSTREAM.md`: this repository is not a fork.
+- 2026-10-03: If a restore step fails, the repo directory that run created stays, and the message names the backup and the repo instead of saying the files were restored. Link cleanup on an empty undo list runs only after this run tried to link, so a second `init` does not unlink a setup that is already in place.
+- 2026-10-03: No GitHub Actions. The workflow file is removed and the Actions workflow is disabled. A phase gate is `bash tests/run.sh` and `shellcheck` on the machine that ran them. Do not add `.github/workflows/ci.yml` back.

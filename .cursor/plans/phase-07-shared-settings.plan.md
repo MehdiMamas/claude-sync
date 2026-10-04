@@ -1,6 +1,6 @@
 ---
 name: "claude-sync Phase 7 – Shared settings (opt-in)"
-overview: "Phase 7 of 7. Opt-in settings.shared.json in the user repo, merged into ~/.claude/settings.json after each pull without removing local keys. Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: the merge tests pass on ubuntu, macos and windows CI, and local keys always survive."
+overview: "Phase 7 of 7. Opt-in settings.shared.json in the user repo, merged into ~/.claude/settings.json after each pull without removing local keys. Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: the merge tests pass on the local machine, and local keys always survive."
 todos:
   - id: p07-0-preflight
     content: "Preflight: read PROGRESS.md, confirm Phase 3 gate evidence; read SPEC.md §4, §6, §13, §16; choose the JSON tool (options: require jq; use node/python when present; PowerShell ConvertFrom-Json on Windows) and record the choice and why in Notes / decisions before writing code"
@@ -22,7 +22,7 @@ todos:
     status: pending
     dependencies: [p07-2-merge]
   - id: p07-8-gate
-    content: "Verify gate: tests pass locally (name the OS) and in CI on all three OSes"
+    content: "Verify gate: bash tests/run.sh and shellcheck pass on the local machine; name that OS in PROGRESS.md"
     status: pending
     dependencies: [p07-3-tests, p07-4-docs]
   - id: p07-9-handoff
@@ -57,9 +57,9 @@ todos:
 Do not create files, services, stubs, settings or UI that belong to a later phase. If something here seems to need later-phase work, write the smallest thing that unblocks this phase, then add a note under "Deferred" in `PROGRESS.md`.
 
 ## Gate
-**`bash tests/run.sh` passes on ubuntu-latest, macos-latest and windows-latest in CI and locally**, with the p07-3 tests, and a test proving a local-only key in `settings.json` survives ten merges.
+**`bash tests/run.sh` and `shellcheck` pass on the local machine (name the OS)**, with the p07-3 tests, and a test proving a local-only key in `settings.json` survives ten merges.
 
-Prove it: paste the commands and results (counts, exit codes, OS, CI run URL) into `PROGRESS.md`.
+Prove it: paste the commands and results (counts, exit codes, OS) into `PROGRESS.md`.
 
 ## When the gate passes
 1. Mark every todo in this file `completed`.

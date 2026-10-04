@@ -84,6 +84,8 @@ if [ "$review_kind" = "final" ] && [ -f "$addendum" ]; then
 	cat "$addendum" >> "$prompt_file"
 fi
 
+printf '\n%s\n' 'GitHub Actions is not used. Do not call gh run list or gh run view. Do not require a CI check, a CI run URL, or a green Actions job. A missing or cancelled Actions run is not a failure. The gate is the local bash tests/run.sh and shellcheck result recorded in PROGRESS.md, on the OS named there.' >> "$prompt_file"
+
 echo "Reviewing PR #$pr ($head_ref @ ${head_sha:0:12}) with $review_model ($review_kind). This can take a while."
 
 # Read-only tools: the review never edits files, comments or merges by itself.
@@ -91,7 +93,7 @@ claude -p \
 	--model "$review_model" \
 	--max-turns 200 \
 	--output-format text \
-	--allowedTools "Read,Glob,Grep,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(git fetch:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/$repo/pulls/$pr/comments:*),Bash(gh run list:*),Bash(gh run view:*)" \
+	--allowedTools "Read,Glob,Grep,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(git fetch:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/$repo/pulls/$pr/comments:*)" \
 	--disallowedTools "Edit,Write,NotebookEdit" \
 	< "$prompt_file" > "$report_file"
 

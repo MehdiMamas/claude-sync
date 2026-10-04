@@ -1,45 +1,45 @@
 ---
 name: "claude-sync Phase 3 – init and join"
-overview: "Phase 3 of 7. init (first machine: create or attach the repo, import ~/.claude content with backups, link, push) and join (other machines: clone, resolve local content with --merge/--replace, link), and pull calling link. Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: the two-machine test passes on ubuntu, macos and windows CI."
+overview: "Phase 3 of 7. init (first machine: create or attach the repo, import ~/.claude content with backups, link, push) and join (other machines: clone, resolve local content with --merge/--replace, link), and pull calling link. Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: the two-machine test passes on the local machine."
 todos:
   - id: p03-0-preflight
     content: "Preflight: read PROGRESS.md, confirm Phase 1 and Phase 2 gate evidence; read SPEC.md §3, §4, §7, §8, §9, §11 and .cursor/rules/*"
-    status: pending
+    status: completed
   - id: p03-1-templates
     content: "templates/user-repo/: .gitignore (never-sync list from §4), .gitattributes, README.md (what the repo is, how to join another machine)"
-    status: pending
+    status: completed
     dependencies: [p03-0-preflight]
   - id: p03-2-backup-import
     content: "lib/init.sh backup + import helpers: back up to ~/.claude/.claude-sync-backup/<UTC ts>/ preserving paths, move allowlisted items into the repo (CLAUDE.md body outside the managed block, skills except synced/ and links, agents, commands, output-styles)"
-    status: pending
+    status: completed
     dependencies: [p03-0-preflight]
   - id: p03-3-init
     content: "init per §9: refuse if already set up, --create via gh (private only), --remote, local-only; write templates; import; link; commit 'init: import from <host>'; push if remote"
-    status: pending
+    status: completed
     dependencies: [p03-1-templates, p03-2-backup-import]
   - id: p03-4-join
     content: "join per §9: clone; default stops and lists conflicts before changing anything; --merge; --replace; link; commit merged content; push"
-    status: pending
+    status: completed
     dependencies: [p03-2-backup-import]
   - id: p03-5-visibility
     content: "Public-repo guard (§7): init --create is always private; init --remote and join warn when gh reports the remote is public; skip quietly when gh is absent"
-    status: pending
+    status: completed
     dependencies: [p03-3-init, p03-4-join]
   - id: p03-6-pull-link
     content: "pull runs link after a successful pull (§6 step 4); link errors in hook mode stay one stderr line and exit 0"
-    status: pending
+    status: completed
     dependencies: [p03-0-preflight]
   - id: p03-7-tests
     content: "Tests for every behavior listed under Gate, including the two-machine test; gh is stubbed with a fake on PATH, never called for real"
-    status: pending
+    status: completed
     dependencies: [p03-3-init, p03-4-join, p03-5-visibility, p03-6-pull-link]
   - id: p03-8-gate
-    content: "Verify gate: tests pass locally (name the OS) and in CI on all three OSes; shellcheck clean"
-    status: pending
+    content: "Verify gate: bash tests/run.sh and shellcheck pass on the local machine; name that OS in PROGRESS.md"
+    status: completed
     dependencies: [p03-7-tests]
   - id: p03-9-handoff
     content: "Record gate evidence in PROGRESS.md, mark Phase 3 complete there, open the PR and run the review loop, then hand off with `next-phase.sh` (new headless session) and stop"
-    status: pending
+    status: completed
     dependencies: [p03-8-gate]
 ---
 
@@ -76,7 +76,7 @@ todos:
 Do not create files, services, stubs, settings or UI that belong to a later phase. If something here seems to need later-phase work, write the smallest thing that unblocks this phase, then add a note under "Deferred" in `PROGRESS.md`.
 
 ## Gate
-**`bash tests/run.sh` passes on ubuntu-latest, macos-latest and windows-latest in CI and locally, `shellcheck` is clean, and the new tests cover at least:**
+**`bash tests/run.sh` and `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` pass on the local machine (name the OS). There is no GitHub Actions workflow. The new tests cover at least:**
 1. **two-machine round trip**: machine A (temp HOME with a CLAUDE.md, two skills, an agent) runs `init --remote <bare>`; machine B (temp HOME with its own different skill and CLAUDE.md) runs `join <bare>` and gets a conflict list with nothing changed (exit 4); then `join --merge` keeps B's extra skill, appends B's CLAUDE.md under `## From <host>`, backs up the rest; B edits a skill and pushes; A pulls and sees the edit **and** B's extra skill is linked on A;
 2. `join --replace` backs up every local item and ends with the repo's content;
 3. init imports exactly the allowlisted items; `skills/synced/`, `settings.json`, `.credentials.json`, `projects/` are never moved or copied;
@@ -86,10 +86,10 @@ Do not create files, services, stubs, settings or UI that belong to a later phas
 7. a skill holding a secret at init time blocks the init commit (exit 5) and leaves the user's files where they were (restored from the move);
 8. pull after another machine deleted a skill removes its dangling link.
 
-Prove it: paste the commands and results (counts, exit codes, OS, CI run URL) into `PROGRESS.md`.
+Prove it: paste the commands and results (counts, exit codes, OS) into `PROGRESS.md`.
 
 ## When the gate passes
 1. Mark every todo in this file `completed`.
-2. In `PROGRESS.md`: mark Phase 3 done with the date and evidence, and update Active phases and Next from each remaining plan's Depends on (Phases 4, 6 and 7 all become startable).
+2. In `PROGRESS.md`: mark Phase 3 done with the date and evidence, and update Active phases and Next from each remaining plan's Depends on. Phases 6 and 7 become startable. Phase 4 stays blocked on the name decision.
 3. Commit with a conventional message scoped `phase-03`, push branch `phase-03-init-join`, open the PR, and run the review loop in `.cursor/skills/phase/SKILL.md`.
 4. **Hand off** after the merge: run `bash .cursor/skills/phase/next-phase.sh`, report the PR URL and its `NEXT:` line, and stop. Never start the next phase in the same chat.

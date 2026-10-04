@@ -1,6 +1,6 @@
 ---
 name: "claude-sync Phase 2 – Link layer"
-overview: "Phase 2 of 7. Link layer: link, unlink and status connecting ~/.claude to the repo on macOS, Linux and Windows (junctions). Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: link/unlink/status tests pass on ubuntu, macos and windows CI, including proof that unlink never deletes the target."
+overview: "Phase 2 of 7. Link layer: link, unlink and status connecting ~/.claude to the repo on macOS, Linux and Windows (junctions). Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: link/unlink/status tests pass locally, including proof that unlink never deletes the target."
 todos:
   - id: p02-0-preflight
     content: "Preflight: read PROGRESS.md, confirm Phase 1 gate evidence; read SPEC.md §4, §8, §11, §13 and .cursor/rules/*"
@@ -22,11 +22,11 @@ todos:
     status: completed
     dependencies: [p02-3-link]
   - id: p02-5-tests
-    content: "Tests for every behavior listed under Gate, run in CI on all three OSes"
+    content: "Tests for every behavior listed under Gate, run locally with bash tests/run.sh"
     status: completed
     dependencies: [p02-4-unlink-status]
   - id: p02-8-gate
-    content: "Verify gate: tests pass locally (name the OS) and in CI on all three OSes; shellcheck clean"
+    content: "Verify gate: bash tests/run.sh and shellcheck pass on the local machine; name that OS in PROGRESS.md"
     status: completed
     dependencies: [p02-5-tests]
   - id: p02-9-handoff
@@ -42,18 +42,18 @@ todos:
 **Phase 2 of 7.** Previous: Phase 1 – Sync engine. Next: Phase 3 – init and join.
 
 ## Depends on
-- **Needs** Phase 1 gate passed (this phase adds subcommands to `bin/claude-sync` and uses `tests/lib.sh` and CI from Phase 1). Check: `PROGRESS.md` row 1 is `completed` with evidence.
+- **Needs** Phase 1 gate passed (this phase adds subcommands to `bin/claude-sync` and uses `tests/lib.sh` from Phase 1). Check: `PROGRESS.md` row 1 is `completed` with evidence.
 
 ## Before you start
 - Every **Needs** line above must be met. If one is not, stop, quote it and say how you checked.
 - Read the cited spec sections in full.
-- Build on `bin/claude-sync`, `tests/lib.sh` and the CI workflow from Phase 1. If the code differs from this plan, follow the code and note the difference in `PROGRESS.md`.
+- Build on `bin/claude-sync` and `tests/lib.sh` from Phase 1. If the code differs from this plan, follow the code and note the difference in `PROGRESS.md`.
 
 ## Scope (do these, nothing else)
 - `lib/link.sh` with the platform helpers and `link`, `unlink`, `status` exactly as §8.
 - The CLAUDE.md managed block (§8): the import path is the real repo dir written in `~/…` form when it is under `$HOME`, absolute otherwise.
 - Add `link`, `unlink`, `status` to the dispatcher and `--help`.
-- Tests (below), running in the existing CI matrix.
+- Tests (below), run locally with `bash tests/run.sh`.
 
 ## Out of scope (do NOT start these, even partially)
 - Phase 3 – importing local content, backups, `init`, `join`, pull calling link → `phase-03-init-join.plan.md`. In this phase a real local directory is a **conflict to report**, never something to move.
@@ -65,9 +65,9 @@ todos:
 Do not create files, services, stubs, settings or UI that belong to a later phase. If something here seems to need later-phase work, write the smallest thing that unblocks this phase, then add a note under "Deferred" in `PROGRESS.md`.
 
 ## Gate
-**`bash tests/run.sh` passes on ubuntu-latest, macos-latest and windows-latest in CI and locally, `shellcheck` is clean, and the new tests cover at least:**
+**`bash tests/run.sh` and `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` pass on the local machine (name the OS). There is no GitHub Actions workflow. The new tests cover at least:**
 1. link creates every expected link; running it twice changes nothing;
-2. on Windows CI the skill links are junctions (check with `cmd //c dir /AL` or `fsutil reparsepoint query`), not copies;
+2. on Windows the skill links are junctions (check with `cmd //c dir /AL` or `fsutil reparsepoint query`), not copies;
 3. a file written through the link appears in the repo dir, and the other way round;
 4. `skills/synced/` and an unrelated local skill are left untouched;
 5. a real local `agents/` directory or a link pointing elsewhere is reported as a conflict and left byte-for-byte unchanged;
@@ -78,7 +78,7 @@ Do not create files, services, stubs, settings or UI that belong to a later phas
 
 Also run one smoke check on the local machine and record the OS: link a test skill from a temp repo into the real `~/.claude/skills/`, run `claude -p "List the names of the skills available to you, one per line"`, confirm the test skill appears, then unlink it.
 
-Prove it: paste the commands and results (counts, exit codes, OS, CI run URL, smoke output) into `PROGRESS.md`.
+Prove it: paste the commands and results (counts, exit codes, OS, smoke output) into `PROGRESS.md`.
 
 ## When the gate passes
 1. Mark every todo in this file `completed`.

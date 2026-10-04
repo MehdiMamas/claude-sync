@@ -12,9 +12,11 @@ assert_out_contains "push"
 assert_out_contains "link"
 assert_out_contains "unlink"
 assert_out_contains "status"
+assert_out_contains "init"
+assert_out_contains "join"
 assert_out_contains "--version"
 case "$RUN_OUT$RUN_ERR" in
-  *init*|*doctor*|*uninstall*) fail "help lists a later-phase command" ;;
+  *doctor*|*uninstall*|*install-cli*) fail "help lists a later-phase command" ;;
 esac
 
 run_sync --version

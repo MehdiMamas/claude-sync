@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # Sourced by bin/claude-sync. Pull, push, the lock, and hook-mode behavior.
-# This is the only file that runs network git commands (pull, push).
-# link is intentionally not called; Phase 3 wires that in after a pull.
+# This is the only file that runs network git commands (pull, push, clone, ls-remote).
+# After a successful pull, link runs so new items appear and removed ones are cleaned up.
 
 # shellcheck source=lib/secrets.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/secrets.sh"
@@ -304,13 +304,17 @@ require_repo() {
   fi
 }
 
-begin_sync() {
+reset_sync_state() {
   LOCK_HELD=0
   WARNED=0
   HAS_ALLOWLISTED=0
   OTHER_UNTRACKED=""
   OUTSIDE_SAVED=""
   HOOK_STDERR=0
+}
+
+begin_sync() {
+  reset_sync_state
   trap finish_sync EXIT
   setup_hook_stdio
   prepare_git
@@ -673,6 +677,8 @@ sync_pull() {
   fi
   write_stamp last-pull
   log_line "pull ok"
+  # link is defined in lib/link.sh, which the dispatcher sources before a command runs.
+  cmd_link
 }
 
 report_secret_hits() {
@@ -737,4 +743,58 @@ sync_push() {
   fi
   write_stamp last-push
   report_untracked
+}
+
+# 0 when the remote has no refs. Dies on a network or timeout failure.
+sync_remote_empty() {
+  local url="$1" status=0 out=""
+  out=$(run_limited "$CLAUDE_SYNC_TIMEOUT" git ls-remote "$url" 2>&1) || status=$?
+  if [ "$status" -eq 124 ]; then
+    log_git_detail "$out"
+    die 3 "timed out contacting the remote after ${CLAUDE_SYNC_TIMEOUT}s. Check the URL and try again."
+  fi
+  if [ "$status" -ne 0 ]; then
+    log_git_detail "$out"
+    die 3 "could not read the remote. Check the URL and try again."
+  fi
+  if [ -n "$out" ]; then
+    return 1
+  fi
+  return 0
+}
+
+sync_clone() {
+  local url="$1" dest="$2" status=0 out=""
+  out=$(run_limited "$CLAUDE_SYNC_TIMEOUT" git -c core.autocrlf=false clone "$url" "$dest" 2>&1) || status=$?
+  if [ "$status" -eq 124 ]; then
+    log_git_detail "$out"
+    die 3 "clone timed out after ${CLAUDE_SYNC_TIMEOUT}s. Check the URL and try again."
+  fi
+  if [ "$status" -ne 0 ]; then
+    log_git_detail "$out"
+    die 3 "clone failed (git or network). Check the URL and try again."
+  fi
+  git -C "$dest" config core.autocrlf false
+  git -C "$dest" config commit.gpgsign false
+}
+
+# First push sets upstream. A later push uses the one allowed rebase retry.
+sync_publish() {
+  local status=0 out=""
+  if git -C "$CLAUDE_SYNC_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+    push_with_one_retry
+    return 0
+  fi
+  out=$(run_limited "$CLAUDE_SYNC_TIMEOUT" git -C "$CLAUDE_SYNC_DIR" push -u origin HEAD 2>&1) || status=$?
+  if [ "$status" -eq 0 ]; then
+    write_stamp last-push
+    log_line "push ok"
+    return 0
+  fi
+  if [ "$status" -eq 124 ]; then
+    log_git_detail "$out"
+    die 3 "push timed out after ${CLAUDE_SYNC_TIMEOUT}s. The local commit was kept. Try again."
+  fi
+  log_git_detail "$out"
+  die 3 "push failed (git or network). The local commit was kept. Try again."
 }

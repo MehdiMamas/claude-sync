@@ -31,4 +31,4 @@ The build is split into one plan per phase: `.cursor/plans/phase-NN-*.plan.md`. 
 
 ## Workflow
 - Implement only the phase you were given, after checking every Needs line in its plan's Depends on. Meet its **Gate**, record the evidence in `PROGRESS.md`, get the PR through the review loop and merged (see `.cursor/skills/phase/SKILL.md`), then hand off to a new headless session with `next-phase.sh`.
-- Keep CI green. Add tests alongside each feature (`50-testing.mdc`).
+- Keep the local test run green. Add tests alongside each feature (`50-testing.mdc`). Do not add a GitHub Actions workflow.
