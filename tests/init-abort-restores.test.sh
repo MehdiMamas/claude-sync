@@ -17,8 +17,13 @@ echo 0 > "$TEST_WORK/mv-count"
 # Exported into the init process. That process calls mv; this shell does not.
 # shellcheck disable=SC2329
 mv() {
-  case "$*" in
-    *skills/*)
+  dest=""
+  for dest in "$@"; do
+    :
+  done
+  # Fail the second move into the repo. The undo moves files back home.
+  case "$dest" in
+    "$HOME/.claude-sync"/*)
       n=$(cat "$TEST_WORK/mv-count")
       n=$((n + 1))
       printf '%s\n' "$n" > "$TEST_WORK/mv-count"

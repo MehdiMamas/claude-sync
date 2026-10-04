@@ -24,6 +24,7 @@ begin_setup() {
   COMMIT_TEMPLATES=0
   SETUP_DONE=0
   UNDONE=0
+  LINK_ATTEMPTED=0
   SETUP_HOST=$(uname -n || true)
   [ -n "$SETUP_HOST" ] || SETUP_HOST=unknown
   SETUP_TMP=$(mktemp -d "${TMPDIR:-/tmp}/claude-sync.XXXXXX")
@@ -211,61 +212,75 @@ each_local_real() {
 }
 
 undo_import() {
-  local kind="" rel="" restored_claude=0
+  local kind="" rel="" restored_claude=0 restore_failed=0
   [ "${UNDONE:-0}" -eq 1 ] && return 0
   UNDONE=1
-  if [ ! -s "${UNDO_FILE:-}" ]; then
-    remove_created_repo
-    return 0
+  # A second init has an empty undo file and has not linked. Do not touch the
+  # setup that is already on this machine.
+  if [ -s "${UNDO_FILE:-}" ] || [ "${LINK_ATTEMPTED:-0}" -eq 1 ]; then
+    remove_our_links || restore_failed=1
+    if [ -s "${UNDO_FILE:-}" ]; then
+      while IFS=$'\t' read -r kind rel || [ -n "$kind" ]; do
+        [ -n "$kind" ] || continue
+        case "$kind" in
+          C|A|L) [ "$rel" = "CLAUDE.md" ] && restored_claude=1 ;;
+        esac
+        case "$kind" in
+          M)
+            clear_home_item "$CLAUDE_HOME/$rel" || restore_failed=1
+            if [ -e "$CLAUDE_SYNC_DIR/$rel" ]; then
+              mkdir -p -- "$(dirname -- "$CLAUDE_HOME/$rel")"
+              mv -- "$CLAUDE_SYNC_DIR/$rel" "$CLAUDE_HOME/$rel" || restore_failed=1
+            fi
+            ;;
+          C)
+            if [ -n "$BACKUP_DIR" ] && [ -f "$BACKUP_DIR/$rel" ]; then
+              if cp "$BACKUP_DIR/$rel" "$CLAUDE_HOME/$rel"; then
+                rm -f -- "$CLAUDE_SYNC_DIR/$rel"
+              else
+                restore_failed=1
+              fi
+            fi
+            ;;
+          A)
+            git -C "$CLAUDE_SYNC_DIR" checkout -q -- "$rel" 2>/dev/null || true
+            if [ -n "$BACKUP_DIR" ] && [ -f "$BACKUP_DIR/$rel" ]; then
+              cp "$BACKUP_DIR/$rel" "$CLAUDE_HOME/$rel" || restore_failed=1
+            fi
+            ;;
+          L)
+            if [ -n "$BACKUP_DIR" ] && [ -e "$BACKUP_DIR/$rel" ]; then
+              clear_home_item "$CLAUDE_HOME/$rel" || restore_failed=1
+              if [ -d "$BACKUP_DIR/$rel" ]; then
+                cp -R "$BACKUP_DIR/$rel" "$CLAUDE_HOME/$rel" || restore_failed=1
+              else
+                cp "$BACKUP_DIR/$rel" "$CLAUDE_HOME/$rel" || restore_failed=1
+              fi
+            fi
+            ;;
+          X)
+            if [ -n "$BACKUP_DIR" ] && [ -e "$BACKUP_DIR/$rel" ]; then
+              mkdir -p -- "$(dirname -- "$CLAUDE_HOME/$rel")"
+              clear_home_item "$CLAUDE_HOME/$rel" || restore_failed=1
+              cp -R "$BACKUP_DIR/$rel" "$CLAUDE_HOME/$rel" || restore_failed=1
+            fi
+            ;;
+        esac
+      done < "$UNDO_FILE"
+    fi
+    if [ "${LINK_CREATED_CLAUDE:-0}" -eq 1 ] && [ "$restored_claude" -eq 0 ]; then
+      rm -f -- "$CLAUDE_HOME/CLAUDE.md" || restore_failed=1
+    fi
+    if repo_is_git; then
+      reset_index || true
+    fi
   fi
-  remove_our_links || true
-  while IFS=$'\t' read -r kind rel || [ -n "$kind" ]; do
-    [ -n "$kind" ] || continue
-    case "$kind" in
-      C|A|L) [ "$rel" = "CLAUDE.md" ] && restored_claude=1 ;;
-    esac
-    case "$kind" in
-      M)
-        clear_home_item "$CLAUDE_HOME/$rel"
-        if [ -e "$CLAUDE_SYNC_DIR/$rel" ]; then
-          mkdir -p -- "$(dirname -- "$CLAUDE_HOME/$rel")"
-          mv -- "$CLAUDE_SYNC_DIR/$rel" "$CLAUDE_HOME/$rel"
-        fi
-        ;;
-      C)
-        if [ -n "$BACKUP_DIR" ] && [ -f "$BACKUP_DIR/$rel" ]; then
-          cp "$BACKUP_DIR/$rel" "$CLAUDE_HOME/$rel"
-        fi
-        rm -f -- "$CLAUDE_SYNC_DIR/$rel"
-        ;;
-      A)
-        git -C "$CLAUDE_SYNC_DIR" checkout -q -- "$rel" 2>/dev/null || true
-        if [ -n "$BACKUP_DIR" ] && [ -f "$BACKUP_DIR/$rel" ]; then
-          cp "$BACKUP_DIR/$rel" "$CLAUDE_HOME/$rel"
-        fi
-        ;;
-      L)
-        if [ -n "$BACKUP_DIR" ] && [ -e "$BACKUP_DIR/$rel" ]; then
-          clear_home_item "$CLAUDE_HOME/$rel"
-          cp "$BACKUP_DIR/$rel" "$CLAUDE_HOME/$rel"
-        fi
-        ;;
-      X)
-        if [ -n "$BACKUP_DIR" ] && [ -e "$BACKUP_DIR/$rel" ]; then
-          mkdir -p -- "$(dirname -- "$CLAUDE_HOME/$rel")"
-          clear_home_item "$CLAUDE_HOME/$rel"
-          cp -R "$BACKUP_DIR/$rel" "$CLAUDE_HOME/$rel"
-        fi
-        ;;
-    esac
-  done < "$UNDO_FILE"
-  if [ "${LINK_CREATED_CLAUDE:-0}" -eq 1 ] && [ "$restored_claude" -eq 0 ]; then
-    rm -f -- "$CLAUDE_HOME/CLAUDE.md"
-  fi
-  if repo_is_git; then
-    reset_index || true
+  if [ "$restore_failed" -eq 1 ]; then
+    note "could not put every file back. Backup: ${BACKUP_DIR:-none}. Repo still at $CLAUDE_SYNC_DIR."
+    return 1
   fi
   remove_created_repo
+  return 0
 }
 
 import_claude_new() {
@@ -381,6 +396,7 @@ collect_linked() {
 
 link_imported() {
   local failed=0 had_claude=0
+  LINK_ATTEMPTED=1
   LINK_CONFLICTS=0
   if [ -e "$CLAUDE_HOME/CLAUDE.md" ]; then
     had_claude=1
@@ -403,8 +419,10 @@ link_imported() {
   link_skills
   link_whole_dirs
   if [ "$LINK_CONFLICTS" -gt 0 ] || [ "$failed" -eq 1 ]; then
-    undo_import
-    die 4 "link conflict during setup. Local files were restored. Move the conflicting path aside and try again."
+    if undo_import; then
+      die 4 "link conflict during setup. Local files were restored. Move the conflicting path aside and try again."
+    fi
+    die 4 "link conflict during setup. Some files could not be put back. Move the conflicting path aside and try again."
   fi
   collect_linked
 }
@@ -424,21 +442,26 @@ commit_imported() {
   fi
   hits=$(scan_staged "$CLAUDE_SYNC_DIR") || scan_status=$?
   if [ "$scan_status" -ne 0 ]; then
-    undo_import
-    die 3 "secret scan could not read the staged diff. Local files were restored. Nothing was committed."
+    if undo_import; then
+      die 3 "secret scan could not read the staged diff. Local files were restored. Nothing was committed."
+    fi
+    die 3 "secret scan could not read the staged diff. Some files could not be put back. Nothing was committed."
   fi
   if [ -n "$hits" ]; then
     first=$hits
     case "$hits" in
       *$'\n'*) first=${hits%%$'\n'*} ;;
     esac
-    undo_import
-    note "local files were restored."
+    if undo_import; then
+      note "local files were restored."
+    fi
     report_secret_hits "$hits" "$first"
   fi
   if ! git -C "$CLAUDE_SYNC_DIR" -c commit.gpgsign=false commit -m "$message" >/dev/null 2>&1; then
-    undo_import
-    die 3 "commit failed in $CLAUDE_SYNC_DIR. Local files were restored. Set git user.name and user.email, then try again."
+    if undo_import; then
+      die 3 "commit failed in $CLAUDE_SYNC_DIR. Local files were restored. Set git user.name and user.email, then try again."
+    fi
+    die 3 "commit failed in $CLAUDE_SYNC_DIR. Some files could not be put back. Set git user.name and user.email, then try again."
   fi
   DID_COMMIT=1
 }
