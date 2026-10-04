@@ -30,7 +30,7 @@ run_sync init --remote "$url"
 assert_code 0 "init --remote warns when public"
 assert_err_contains "public"
 
-make_other_home
+add_second_home
 enter_home "$TEST_HOME_B"
 : > "$TEST_WORK/gh-log"
 run_sync join "$url"

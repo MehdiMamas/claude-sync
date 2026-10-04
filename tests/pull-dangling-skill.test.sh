@@ -12,7 +12,7 @@ run_sync init --remote "$url"
 assert_code 0 "init two skills"
 assert_dir_link "$CLAUDE_HOME/skills/two"
 
-make_other_home
+add_second_home
 enter_home "$TEST_HOME_B"
 run_sync join "$url"
 assert_code 0 "join on an empty machine"

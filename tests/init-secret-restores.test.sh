@@ -27,6 +27,9 @@ if git -C "$CLAUDE_SYNC_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
   fail "secret init created a commit"
 fi
 assert_eq "$(cat "$CLAUDE_HOME/settings.json")" "keep"
-if [ -e "$CLAUDE_HOME/CLAUDE.md" ]; then
-  fail "secret init created CLAUDE.md"
-fi
+[ ! -e "$CLAUDE_SYNC_DIR" ] || fail "secret init left the repo dir"
+
+printf 'clean\n' > "$CLAUDE_HOME/skills/secreted/SKILL.md"
+run_sync init --remote "$url"
+assert_code 0 "init retries after the blocked repo is removed"
+assert_eq "$(cat "$CLAUDE_SYNC_DIR/skills/secreted/SKILL.md")" "clean"

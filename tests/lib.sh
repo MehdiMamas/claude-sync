@@ -180,11 +180,6 @@ prepare_empty_bare() {
   git --git-dir="$TEST_BARE" symbolic-ref HEAD refs/heads/main
 }
 
-make_other_home() {
-  TEST_HOME_B="$TEST_WORK/home b"
-  mkdir -p "$TEST_HOME_B/.claude" "$TEST_HOME_B/.local/state"
-}
-
 add_second_home() {
   TEST_HOME_B="$TEST_WORK/home b"
   mkdir -p "$TEST_HOME_B/.claude" "$TEST_HOME_B/.local/state"
