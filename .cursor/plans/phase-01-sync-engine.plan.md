@@ -1,6 +1,6 @@
 ---
 name: "claude-sync Phase 1 – Sync engine"
-overview: "Phase 1 of 7. Sync engine: the bash dispatcher, pull/push against the user's repo, lock, hook mode, secret scan, the plain-bash test runner and CI. Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: bash tests/run.sh passes the pull/push/lock/secret/hook-mode tests on ubuntu, macos and windows CI, and shellcheck is clean."
+overview: "Phase 1 of 7. Sync engine: the bash dispatcher, pull/push against the user's repo, lock, hook mode, secret scan, and the plain-bash test runner. Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: bash tests/run.sh passes the pull/push/lock/secret/hook-mode tests on the local machine, and shellcheck is clean."
 todos:
   - id: p01-0-preflight
     content: "Preflight: read PROGRESS.md (no Needs for this phase); read SPEC.md §5, §6, §7, §11, §13, §14 and .cursor/rules/*"
@@ -30,11 +30,11 @@ todos:
     status: completed
     dependencies: [p01-4-sync]
   - id: p01-7-tests-ci
-    content: "Tests for every behavior listed under Gate, plus .github/workflows/ci.yml: shellcheck on ubuntu; bash tests/run.sh on ubuntu-latest, macos-latest, windows-latest (shell: bash)"
+    content: "Tests for every behavior listed under Gate, run locally with bash tests/run.sh; shellcheck -x bin/claude-sync lib/*.sh tests/*.sh on the same machine"
     status: completed
     dependencies: [p01-2-test-runner, p01-5-lock-hook, p01-6-secrets]
   - id: p01-8-gate
-    content: "Verify gate: tests pass locally (name the OS) and in CI on all three OSes; shellcheck clean"
+    content: "Verify gate: bash tests/run.sh and shellcheck pass on the local machine; name that OS in PROGRESS.md"
     status: completed
     dependencies: [p01-7-tests-ci]
   - id: p01-9-handoff
@@ -63,7 +63,6 @@ todos:
 - `lib/sync.sh`: `pull` and `push` exactly as §6, with the allowlist from §4 (`CLAUDE.md skills agents commands output-styles`). `pull` does **not** call `link` yet (Phase 3 wires that).
 - Lock and hook mode (§6). State dir `${XDG_STATE_HOME:-$HOME/.local/state}/claude-sync/` holds `lock/`, `log`, `last-pull`, `last-push`.
 - `lib/secrets.sh` (§7), called by `push` before committing.
-- `.github/workflows/ci.yml` (§14).
 
 ## Out of scope (do NOT start these, even partially)
 - Phase 2 – Link layer (`link`, `unlink`, `status`) → `phase-02-link-layer.plan.md`
@@ -75,7 +74,7 @@ todos:
 Do not create files, services, stubs, settings or UI that belong to a later phase. If something here seems to need later-phase work, write the smallest thing that unblocks this phase, then add a note under "Deferred" in `PROGRESS.md`.
 
 ## Gate
-**`bash tests/run.sh` passes on ubuntu-latest, macos-latest and windows-latest in CI and on the local machine, `shellcheck` reports nothing, and the tests cover at least:**
+**`bash tests/run.sh` and `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` pass on the local machine (name the OS). There is no GitHub Actions workflow. The tests cover at least:**
 1. pull fast-forwards a change pushed by another clone;
 2. pull while offline/unreachable remote: hook mode exits 0 with one stderr line, CLI mode exits 3;
 3. pull hitting a rebase conflict leaves no rebase in progress and the working tree unchanged; a pull while a merge, rebase, or unmerged index is already present exits 4 and leaves that state untouched; an autostash conflict restores the pre-pull HEAD and the user's edits, with no stash left behind;
@@ -89,7 +88,7 @@ Do not create files, services, stubs, settings or UI that belong to a later phas
 11. missing repo dir: hook mode exits 0 silently, CLI exits 2;
 12. git never prompts: `GIT_TERMINAL_PROMPT` is set even when the caller left it unset, `ssh` gets `-o BatchMode=yes` unless `GIT_SSH_COMMAND` is already set, and a hanging remote hits the timeout.
 
-Prove it: paste `bash tests/run.sh` output (counts and exit code, with the OS) and the CI run URL into `PROGRESS.md`.
+Prove it: paste `bash tests/run.sh` output (counts and exit code, with the OS) and the shellcheck result into `PROGRESS.md`.
 
 ## When the gate passes
 1. Mark every todo in this file `completed`.

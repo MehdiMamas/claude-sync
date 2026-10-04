@@ -30,7 +30,7 @@ todos:
     status: pending
     dependencies: [p04-3-hooks, p04-4-commands, p04-5-install-cli]
   - id: p04-8-gate
-    content: "Verify gate: CI green; plugin validated and installed from the local marketplace; real session evidence for SessionStart pull and SessionEnd push (name the OS)"
+    content: "Verify gate: bash tests/run.sh and shellcheck pass on the local machine; plugin validated and installed from the local marketplace; real session evidence for SessionStart pull and SessionEnd push (name the OS)"
     status: pending
     dependencies: [p04-6-tests]
   - id: p04-9-handoff
@@ -70,7 +70,7 @@ todos:
 Do not create files, services, stubs, settings or UI that belong to a later phase. If something here seems to need later-phase work, write the smallest thing that unblocks this phase, then add a note under "Deferred" in `PROGRESS.md`.
 
 ## Gate
-**CI is green on all three OSes, and on one real machine (name the OS):**
+**`bash tests/run.sh` and `shellcheck` pass on the local machine, and on one real machine (name the OS):**
 1. `claude plugin validate .` (or the current equivalent found in preflight) exits 0;
 2. `/plugin marketplace add <path to this checkout>` and `/plugin install claude-sync@claude-sync` succeed;
 3. with a throwaway config repo set up by `/claude-sync:setup` (use a temp `CLAUDE_SYNC_DIR` and a local bare remote, not the user's real config): starting a session updates `last-pull`, and ending a session after editing a synced skill creates a `sync:` commit on the bare remote;

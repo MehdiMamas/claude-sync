@@ -10,7 +10,7 @@ printf 'keep\n' > "$CLAUDE_HOME/CLAUDE.md/keep"
 printf 'one\n' > "$CLAUDE_HOME/skills/one/SKILL.md"
 
 # Exported into the init process. That process calls mv; this shell does not.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 mv() {
   dest=""
   for dest in "$@"; do

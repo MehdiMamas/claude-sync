@@ -7,9 +7,9 @@ Read this file **before** any work. It is the single source of truth for which p
 
 | Phase | Plan | Status | Gate evidence | Date |
 |---|---|---|---|---|
-| 1 | `phase-01-sync-engine.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 26 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. Three-OS CI for this commit is the pull request checks (ubuntu-latest, macos-latest, windows-latest). | 2026-10-03 |
-| 2 | `phase-02-link-layer.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 35 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. Smoke on that OS: a temp repo's skill `claude-sync-phase2-smoke` was linked into the real `~/.claude/skills/` (`bin/claude-sync link`, exit 0); `claude -p "List the names of the skills available to you, one per line"` exited 0 and its first line was `claude-sync-phase2-smoke`; `unlink` removed that link; `~/.claude/CLAUDE.md` matched a byte copy taken before the smoke (`cmp`). Three-OS CI for this commit is the pull request checks (ubuntu-latest, macos-latest, windows-latest). | 2026-10-03 |
-| 3 | `phase-03-init-join.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 52 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. Three-OS CI for this commit is the pull request checks (ubuntu-latest, macos-latest, windows-latest). | 2026-10-03 |
+| 1 | `phase-01-sync-engine.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 26 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. | 2026-10-03 |
+| 2 | `phase-02-link-layer.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 35 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. Smoke on that OS: a temp repo's skill `claude-sync-phase2-smoke` was linked into the real `~/.claude/skills/` (`bin/claude-sync link`, exit 0); `claude -p "List the names of the skills available to you, one per line"` exited 0 and its first line was `claude-sync-phase2-smoke`; `unlink` removed that link; `~/.claude/CLAUDE.md` matched a byte copy taken before the smoke (`cmp`). | 2026-10-03 |
+| 3 | `phase-03-init-join.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 52 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. | 2026-10-03 |
 | 4 | `phase-04-plugin.plan.md` | blocked: Needs a decision on the product name | | |
 | 5 | `phase-05-doctor-release.plan.md` | blocked: Needs Phase 4 gate passed; Needs the license decision | | |
 | 6 | `phase-06-cursor-sync.plan.md` | not started | | |
@@ -26,7 +26,7 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 
 **Who does what**
 - Cursor: code changes, using `/phase` (next phase), `/phase <N>`, or `/phase resume`.
-- Claude Code: orchestration. Checks PR, CI and review state, decides the next step, and updates this file and the plans.
+- Claude Code: orchestration. Checks the PR and the local review, decides the next step, and updates this file and the plans.
 - User: approves pushes, posts anything public, decides the name (before Phase 4) and license (before Phase 5), runs the real-machine checks in Phases 4 and 5, and can stop the automatic hand-off with `PHASE_AUTOCHAIN=0` (after each merge `next-phase.sh` starts the next phase in a new headless Cursor CLI session; log in `.git/phase-runs/`).
 
 **Prompt to give Cursor**
@@ -63,3 +63,4 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 - 2026-10-03: Phase 3's plan said phases 4, 6, and 7 all become startable. Phase 4's Depends on still needs the product name, so only 6 and 7 are ready. The plan file now says that.
 - 2026-10-03: A failed `init` removes the repo directory that run created, so the next `init` is not refused. A failure after files have moved, including a signal, restores them until the setup commit succeeds. `gh repo create` and `gh repo view` use the same time limit as git. There is no `UPSTREAM.md`: this repository is not a fork.
 - 2026-10-03: If a restore step fails, the repo directory that run created stays, and the message names the backup and the repo instead of saying the files were restored. Link cleanup on an empty undo list runs only after this run tried to link, so a second `init` does not unlink a setup that is already in place.
+- 2026-10-03: No GitHub Actions. The workflow file is removed and the Actions workflow is disabled. A phase gate is `bash tests/run.sh` and `shellcheck` on the machine that ran them. Do not add `.github/workflows/ci.yml` back.

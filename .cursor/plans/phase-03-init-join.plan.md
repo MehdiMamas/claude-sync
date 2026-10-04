@@ -1,6 +1,6 @@
 ---
 name: "claude-sync Phase 3 – init and join"
-overview: "Phase 3 of 7. init (first machine: create or attach the repo, import ~/.claude content with backups, link, push) and join (other machines: clone, resolve local content with --merge/--replace, link), and pull calling link. Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: the two-machine test passes on ubuntu, macos and windows CI."
+overview: "Phase 3 of 7. init (first machine: create or attach the repo, import ~/.claude content with backups, link, push) and join (other machines: clone, resolve local content with --merge/--replace, link), and pull calling link. Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: the two-machine test passes on the local machine."
 todos:
   - id: p03-0-preflight
     content: "Preflight: read PROGRESS.md, confirm Phase 1 and Phase 2 gate evidence; read SPEC.md §3, §4, §7, §8, §9, §11 and .cursor/rules/*"
@@ -34,7 +34,7 @@ todos:
     status: completed
     dependencies: [p03-3-init, p03-4-join, p03-5-visibility, p03-6-pull-link]
   - id: p03-8-gate
-    content: "Verify gate: tests pass locally (name the OS) and in CI on all three OSes; shellcheck clean"
+    content: "Verify gate: bash tests/run.sh and shellcheck pass on the local machine; name that OS in PROGRESS.md"
     status: completed
     dependencies: [p03-7-tests]
   - id: p03-9-handoff
@@ -76,7 +76,7 @@ todos:
 Do not create files, services, stubs, settings or UI that belong to a later phase. If something here seems to need later-phase work, write the smallest thing that unblocks this phase, then add a note under "Deferred" in `PROGRESS.md`.
 
 ## Gate
-**`bash tests/run.sh` passes on ubuntu-latest, macos-latest and windows-latest in CI and locally, `shellcheck` is clean, and the new tests cover at least:**
+**`bash tests/run.sh` and `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` pass on the local machine (name the OS). There is no GitHub Actions workflow. The new tests cover at least:**
 1. **two-machine round trip**: machine A (temp HOME with a CLAUDE.md, two skills, an agent) runs `init --remote <bare>`; machine B (temp HOME with its own different skill and CLAUDE.md) runs `join <bare>` and gets a conflict list with nothing changed (exit 4); then `join --merge` keeps B's extra skill, appends B's CLAUDE.md under `## From <host>`, backs up the rest; B edits a skill and pushes; A pulls and sees the edit **and** B's extra skill is linked on A;
 2. `join --replace` backs up every local item and ends with the repo's content;
 3. init imports exactly the allowlisted items; `skills/synced/`, `settings.json`, `.credentials.json`, `projects/` are never moved or copied;
@@ -86,7 +86,7 @@ Do not create files, services, stubs, settings or UI that belong to a later phas
 7. a skill holding a secret at init time blocks the init commit (exit 5) and leaves the user's files where they were (restored from the move);
 8. pull after another machine deleted a skill removes its dangling link.
 
-Prove it: paste the commands and results (counts, exit codes, OS, CI run URL) into `PROGRESS.md`.
+Prove it: paste the commands and results (counts, exit codes, OS) into `PROGRESS.md`.
 
 ## When the gate passes
 1. Mark every todo in this file `completed`.

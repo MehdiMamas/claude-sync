@@ -55,7 +55,6 @@ hooks/hooks.json                  # SessionStart / SessionEnd (Phase 4)
 commands/*.md                     # plugin slash commands (Phase 4)
 templates/user-repo/              # .gitignore, .gitattributes, README for the user's repo (Phase 3)
 tests/run.sh, tests/*.test.sh     # plain-bash test runner and tests
-.github/workflows/ci.yml          # shellcheck + tests on ubuntu, macos, windows
 ```
 
 **The user's config repo** (private, created by `init`), cloned to `~/.claude-sync/` by default (override with `CLAUDE_SYNC_DIR`):
@@ -183,11 +182,11 @@ Env: `CLAUDE_SYNC_DIR` (repo dir, default `~/.claude-sync`), `CLAUDE_SYNC_TIMEOU
 - Scripts use `#!/usr/bin/env bash` and `set -euo pipefail`, quote every expansion, and use `$HOME`, never `~`, inside scripts. Every `.sh` and `bin/*` file is LF (`.gitattributes`).
 - Windows paths: convert with `cygpath` only at the `cmd` boundary.
 
-# 14. Testing and CI
+# 14. Testing
 
 - `tests/run.sh` runs every `tests/*.test.sh` and prints `N passed, M failed`, exiting non-zero on any failure. A small `tests/lib.sh` holds assertions. No bats, so it runs anywhere bash does.
 - Each test makes a temp `HOME`, a temp bare repo as the remote (`file://`), and sets `CLAUDE_SYNC_DIR`/`CLAUDE_HOME` into it. Two-machine tests use two temp HOMEs against one bare remote. Tests never touch the real `~/.claude` or the network.
-- CI (`.github/workflows/ci.yml`, on push and pull request): `shellcheck` on ubuntu, and `bash tests/run.sh` on `ubuntu-latest`, `macos-latest` and `windows-latest` (Git Bash). These are light jobs; no Claude jobs run in CI.
+- The gate is local: `bash tests/run.sh` and `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` on the machine doing the work. Name that OS in `PROGRESS.md`. There is no GitHub Actions workflow.
 
 # 15. Cursor config sync (opt-in, Phase 6)
 

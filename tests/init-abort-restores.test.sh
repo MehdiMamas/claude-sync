@@ -15,7 +15,7 @@ cp "$CLAUDE_HOME/skills/two/SKILL.md" "$TEST_WORK/two-before"
 
 echo 0 > "$TEST_WORK/mv-count"
 # Exported into the init process. That process calls mv; this shell does not.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 mv() {
   dest=""
   for dest in "$@"; do

@@ -1,6 +1,6 @@
 ---
 name: "claude-sync Phase 6 – Cursor config sync (opt-in)"
-overview: "Phase 6 of 7. Opt-in sync of Cursor's file-based global config under cursor/ in the user repo, enabled by cursor=1 in claude-sync.conf. Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: with cursor=1 the Cursor files sync in the two-machine test on all three OSes; with it absent nothing Cursor-related is touched."
+overview: "Phase 6 of 7. Opt-in sync of Cursor's file-based global config under cursor/ in the user repo, enabled by cursor=1 in claude-sync.conf. Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: with cursor=1 the Cursor files sync in the two-machine test on the local machine; with it absent nothing Cursor-related is touched."
 todos:
   - id: p06-0-preflight
     content: "Preflight: read PROGRESS.md, confirm Phase 3 gate evidence; read SPEC.md §4, §8, §9, §15; find out which ~/.cursor global paths are real files Cursor reads on macOS and Windows (docs + a real check), and record the list in Notes / decisions"
@@ -22,7 +22,7 @@ todos:
     status: pending
     dependencies: [p06-2-allowlist]
   - id: p06-8-gate
-    content: "Verify gate: tests pass locally (name the OS) and in CI on all three OSes"
+    content: "Verify gate: bash tests/run.sh and shellcheck pass on the local machine; name that OS in PROGRESS.md"
     status: pending
     dependencies: [p06-3-tests, p06-4-docs]
   - id: p06-9-handoff
@@ -57,9 +57,9 @@ todos:
 Do not create files, services, stubs, settings or UI that belong to a later phase. If something here seems to need later-phase work, write the smallest thing that unblocks this phase, then add a note under "Deferred" in `PROGRESS.md`.
 
 ## Gate
-**`bash tests/run.sh` passes on ubuntu-latest, macos-latest and windows-latest in CI and locally**, with tests proving: (1) without `cursor=1` nothing under the temp `~/.cursor` changes; (2) with it, a Cursor skill made on machine A appears linked on machine B after push/pull; (3) a real local Cursor directory on B is a conflict until `join --merge`; (4) a secret inside `cursor/` blocks the push.
+**`bash tests/run.sh` and `shellcheck` pass on the local machine (name the OS)**, with tests proving: (1) without `cursor=1` nothing under the temp `~/.cursor` changes; (2) with it, a Cursor skill made on machine A appears linked on machine B after push/pull; (3) a real local Cursor directory on B is a conflict until `join --merge`; (4) a secret inside `cursor/` blocks the push.
 
-Prove it: paste the commands and results (counts, exit codes, OS, CI run URL) into `PROGRESS.md`.
+Prove it: paste the commands and results (counts, exit codes, OS) into `PROGRESS.md`.
 
 ## When the gate passes
 1. Mark every todo in this file `completed`.

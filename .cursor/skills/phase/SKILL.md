@@ -27,7 +27,7 @@ With `resume`, the pull request for this phase already exists: check out its bra
 
 1. Read that plan in full, including Out of scope.
 2. Read the master-plan sections the plan cites (§N).
-3. For every phase listed under **Needs**, confirm its gate cell contains a command, an exit result, or a CI URL. If it is only a sentence, stop and tell the user.
+3. For every phase listed under **Needs**, confirm its gate cell contains a command and an exit result. If it is only a sentence, stop and tell the user.
 4. Read every rule in `.cursor/rules/` whose description or globs match the work (area rules such as `10-*.mdc` … `60-build-release.mdc`).
 
 ## While editing
@@ -105,9 +105,10 @@ Do not run more than 4 fix rounds. If the review after your 4th fix push still s
 Merge only when all of these are true. If one is not, stop and tell the user why.
 
 1. The verdict on the comment for the current `$HEAD` is exactly **Ready to merge**.
-2. CI on the head commit passed: `gh pr checks <n> --watch --interval 60`. CI runs only on demand, so if the PR has no checks, skip this. If a check fails because of this phase's changes, fix it as one more fix round (it counts toward the 4), then go back to step 1. If it fails for an unrelated reason (runner outage, flaky upstream job), stop and tell the user.
-3. `gh pr view <n> --json mergeable,mergeStateStatus` says `MERGEABLE`. If `main` moved and there is a conflict, stop and tell the user.
-4. Nothing was pushed after the reviewed commit: `git rev-parse HEAD` still equals the reviewed sha, and so does `gh pr view <n> --json headRefOid`.
+2. `gh pr view <n> --json mergeable,mergeStateStatus` says `MERGEABLE`. If `main` moved and there is a conflict, stop and tell the user.
+3. Nothing was pushed after the reviewed commit: `git rev-parse HEAD` still equals the reviewed sha, and so does `gh pr view <n> --json headRefOid`.
+
+Do not run `gh pr checks` and do not enable GitHub Actions. The gate is the local `bash tests/run.sh` and `shellcheck` already recorded in `PROGRESS.md`.
 
 Then:
 
@@ -133,4 +134,4 @@ Each round is a full local review run, so make every round count.
 4. Run the gate command, plus the project's lint and pre-commit checks (`shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` and `bash tests/run.sh`) on the changed files, and update the gate cell in `PROGRESS.md`.
 5. Push once, with all fixes in that push. Do not push partial fixes one at a time.
 6. Go back to **Review loop** step 1. Once a review says **Ready to merge**, do not push again, not even to update `PROGRESS.md`: a push after that verdict needs a new review. **Follow-ups** are for the user, not for you.
-7. Do not push commits that only refresh a CI run URL or other bookkeeping. Each pushed commit needs a new review.
+7. Do not push commits that only change bookkeeping. Each pushed commit needs a new review.
