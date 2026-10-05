@@ -12,7 +12,7 @@ Read this file **before** any work. It is the single source of truth for which p
 | 3 | `phase-03-init-join.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 52 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. | 2026-10-03 |
 | 4 | `phase-04-plugin.plan.md` | blocked: Needs a decision on the product name | | |
 | 5 | `phase-05-doctor-release.plan.md` | blocked: Needs Phase 4 gate passed; Needs the license decision | | |
-| 6 | `phase-06-cursor-sync.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 62 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. macOS and Linux were not run. Phase 5 owns those runs. | 2026-10-05 |
+| 6 | `phase-06-cursor-sync.plan.md` | completed | `bash tests/run.sh` exit 0 on Windows 11 Pro 10.0.26200, 2026-10-05; 62 passed, 0 failed | 2026-10-05 |
 | 7 | `phase-07-shared-settings.plan.md` | not started | | |
 
 Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Needs line from the plan>`. A phase is ready to start when every Needs line in its plan's Depends on is met, whatever its number.
