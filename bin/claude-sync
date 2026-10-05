@@ -8,6 +8,8 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$ROOT/lib/sync.sh"
 # shellcheck source=lib/link.sh
 source "$ROOT/lib/link.sh"
+# shellcheck source=lib/cursor.sh
+source "$ROOT/lib/cursor.sh"
 # shellcheck source=lib/init.sh
 source "$ROOT/lib/init.sh"
 
@@ -29,12 +31,13 @@ EOF
 
 : "${CLAUDE_SYNC_DIR:=$HOME/.claude-sync}"
 : "${CLAUDE_HOME:=$HOME/.claude}"
+: "${CURSOR_HOME:=$HOME/.cursor}"
 : "${CLAUDE_SYNC_TIMEOUT:=20}"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-sync"
 
 # CLAUDE_HOME is the Claude config dir. link, unlink and status use it.
 # shellcheck disable=SC2034
-export CLAUDE_SYNC_DIR CLAUDE_HOME CLAUDE_SYNC_TIMEOUT STATE_DIR
+export CLAUDE_SYNC_DIR CLAUDE_HOME CURSOR_HOME CLAUDE_SYNC_TIMEOUT STATE_DIR
 
 export HOOK=0
 CMD=""

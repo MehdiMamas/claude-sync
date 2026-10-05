@@ -410,6 +410,7 @@ each_managed_link() {
       fi
     done
   fi
+  each_cursor_link
 }
 
 # Managed links, plus any other direct child of ~/.claude that is a link.
@@ -439,7 +440,7 @@ cleanup_dangling() {
       continue
     fi
     remove_dir_link "$path"
-    note "removed dangling link ${path#"$CLAUDE_HOME"/}."
+    note "removed dangling link $(rel_name "$path")."
   done <<EOF
 $(each_dangling_candidate)
 EOF
@@ -452,7 +453,7 @@ remove_our_links() {
     is_link "$path" || continue
     link_points_inside "$path" || continue
     remove_dir_link "$path"
-    note "unlinked ${path#"$CLAUDE_HOME"/}."
+    note "unlinked $(rel_name "$path")."
   done <<EOF
 $(each_managed_link)
 EOF
@@ -460,7 +461,10 @@ EOF
 
 rel_name() {
   local path="$1"
-  printf '%s' "${path#"$CLAUDE_HOME"/}"
+  case "$path" in
+    "$CURSOR_HOME"/*) printf 'cursor/%s' "${path#"$CURSOR_HOME"/}" ;;
+    *) printf '%s' "${path#"$CLAUDE_HOME"/}" ;;
+  esac
 }
 
 link_one() {
@@ -527,6 +531,9 @@ cmd_link() {
   cleanup_dangling
   link_skills
   link_whole_dirs
+  if cursor_enabled; then
+    link_cursor
+  fi
   if [ "$LINK_CONFLICTS" -gt 0 ]; then
     die 4 "$LINK_CONFLICTS conflict(s). Local files were left unchanged. Move them aside, then run claude-sync link again."
   fi
@@ -671,5 +678,6 @@ cmd_status() {
   require_repo_dir
   prepare_git
   status_items
+  cursor_status_items
   status_repo
 }

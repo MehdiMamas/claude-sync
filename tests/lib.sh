@@ -122,6 +122,8 @@ enter_home() {
   export HOME
   CLAUDE_HOME="$HOME/.claude"
   export CLAUDE_HOME
+  CURSOR_HOME="$HOME/.cursor"
+  export CURSOR_HOME
   CLAUDE_SYNC_DIR="$HOME/.claude-sync"
   export CLAUDE_SYNC_DIR
   XDG_STATE_HOME="$HOME/.local/state"
