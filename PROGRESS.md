@@ -2,8 +2,8 @@
 
 Read this file **before** any work. It is the single source of truth for which phases are active and what blocks the rest. Rules: `.cursor/rules/05-phase-discipline.mdc`. Roadmap: `.cursor/plans/00-roadmap.plan.md`. Spec: `SPEC.md`.
 
-**Active phases:** 6 – Cursor config sync (not started) → `.cursor/plans/phase-06-cursor-sync.plan.md`; 7 – Shared settings (not started) → `.cursor/plans/phase-07-shared-settings.plan.md`
-**Next:** 4 – Plugin (blocked: Needs a decision on the product name)
+**Active phases:** 4 – Claude Code plugin; 7 – Shared settings (opt-in) (every Needs met; autopilot runs every ready phase)
+**Next:** 5 – doctor, uninstall, docs, v0.1.0 (needs 4)
 
 | Phase | Plan | Status | Gate evidence | Date |
 |---|---|---|---|---|
@@ -12,7 +12,7 @@ Read this file **before** any work. It is the single source of truth for which p
 | 3 | `phase-03-init-join.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 52 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. | 2026-10-03 |
 | 4 | `phase-04-plugin.plan.md` | blocked: Needs a decision on the product name | | |
 | 5 | `phase-05-doctor-release.plan.md` | blocked: Needs Phase 4 gate passed; Needs the license decision | | |
-| 6 | `phase-06-cursor-sync.plan.md` | not started | | |
+| 6 | `phase-06-cursor-sync.plan.md` | completed | `bash tests/run.sh` exit 0 on Windows 11 Pro 10.0.26200, 2026-10-05; 62 passed, 0 failed | 2026-10-05 |
 | 7 | `phase-07-shared-settings.plan.md` | not started | | |
 
 Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Needs line from the plan>`. A phase is ready to start when every Needs line in its plan's Depends on is met, whatever its number.
@@ -36,6 +36,8 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 
 ## Deferred
 - `--version` prints `claude-sync 0.0.0`. Phase 5 (doctor and release) owns the real version.
+- Phase 5 is not merged (row 5 is blocked on Phase 4 and the license). When Phase 5 adds `doctor`, include the Cursor items (`cursor/skills/<name>`, `cursor/rules`, `cursor/agents`, `cursor/commands`) in its link check only when `cursor=1`. Phase 5 owns that.
+- Phase 6 ran `bash tests/run.sh` and `shellcheck` on Windows only. macOS and Linux were not run. Phase 5 owns those runs. Its written gate names the Mac; Linux has no other phase, so Phase 5 records that run too.
 
 ## Notes / decisions
 - 2026-10-03: The personal PC ⇄ Mac sync plan (`docs/history/personal-sync-plan.md`) became a public tool for anyone. That plan said "no phasing"; superseded now that it is a product.
@@ -64,3 +66,6 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 - 2026-10-03: A failed `init` removes the repo directory that run created, so the next `init` is not refused. A failure after files have moved, including a signal, restores them until the setup commit succeeds. `gh repo create` and `gh repo view` use the same time limit as git. There is no `UPSTREAM.md`: this repository is not a fork.
 - 2026-10-03: If a restore step fails, the repo directory that run created stays, and the message names the backup and the repo instead of saying the files were restored. Link cleanup on an empty undo list runs only after this run tried to link, so a second `init` does not unlink a setup that is already in place.
 - 2026-10-03: No GitHub Actions. The workflow file is removed and the Actions workflow is disabled. A phase gate is `bash tests/run.sh` and `shellcheck` on the machine that ran them. Do not add `.github/workflows/ci.yml` back.
+- 2026-10-04: Phase 6 gate on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): `bash tests/run.sh` — 62 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. macOS and Linux were not run. Phase 5 owns those runs.
+- 2026-10-04: Phase 6 preflight. On this Windows profile (`%USERPROFILE%\.cursor`) the real directories include `skills/`, `rules/`, `agents/`, and `skills-cursor/`. There is no `commands/` directory yet. Cursor's docs (same `~/` paths on macOS; this machine did not run macOS) say it reads `~/.cursor/skills/<name>/SKILL.md`, `~/.cursor/agents/`, and `~/.cursor/commands/`. Help → Rules names `~/.cursor/rules` (`%USERPROFILE%\.cursor\rules` on Windows) as user rule files that stay on the machine. Those four are the allowlist under `cursor/`. Left out: `skills-cursor/` (Cursor's own built-in skills), `plugins/`, `extensions/`, `mcp.json`, `hooks.json`, `cli-config.json`, chats, projects, and account-synced user rules (not files). `~/.agents/skills/` is a second global skills root and is not under `~/.cursor`, so it stays local. Project `.cursor/` folders stay local.
+- 2026-10-04: `claude-sync.conf` is on the push allowlist so the opt-in flag itself syncs. SPEC §4 does not list that file. It is the Phase 6 switch for §15, not a Claude config item, and it stays allowlisted for that reason.

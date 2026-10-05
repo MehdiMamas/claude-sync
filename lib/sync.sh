@@ -331,8 +331,14 @@ begin_sync() {
 
 path_allowlisted() {
   case "$1" in
-    CLAUDE.md|CLAUDE.md/*|skills|skills/*|agents|agents/*|commands|commands/*|output-styles|output-styles/*)
+    CLAUDE.md|CLAUDE.md/*|skills|skills/*|agents|agents/*|commands|commands/*|output-styles|output-styles/*|claude-sync.conf)
       return 0
+      ;;
+    cursor|cursor/*)
+      # Opt-in: only with cursor=1 in claude-sync.conf.
+      if cursor_enabled; then
+        return 0
+      fi
       ;;
   esac
   return 1
@@ -405,7 +411,11 @@ EOF
 
 stage_allowlist() {
   local p err status
-  for p in CLAUDE.md skills agents commands output-styles; do
+  set -- CLAUDE.md skills agents commands output-styles claude-sync.conf
+  if cursor_enabled; then
+    set -- "$@" cursor
+  fi
+  for p in "$@"; do
     if [ ! -e "$CLAUDE_SYNC_DIR/$p" ] && [ -z "$(git -C "$CLAUDE_SYNC_DIR" ls-files -- "$p")" ]; then
       continue
     fi

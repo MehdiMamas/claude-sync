@@ -4,30 +4,30 @@ overview: "Phase 6 of 7. Opt-in sync of Cursor's file-based global config under 
 todos:
   - id: p06-0-preflight
     content: "Preflight: read PROGRESS.md, confirm Phase 3 gate evidence; read SPEC.md §4, §8, §9, §15; find out which ~/.cursor global paths are real files Cursor reads on macOS and Windows (docs + a real check), and record the list in Notes / decisions"
-    status: pending
+    status: completed
   - id: p06-1-conf
     content: "claude-sync.conf in the user repo: key=value parser (no eval), only key cursor for now; missing file means all opt-ins off"
-    status: pending
+    status: completed
     dependencies: [p06-0-preflight]
   - id: p06-2-allowlist
     content: "When cursor=1: add cursor/<item> to the push allowlist, link ~/.cursor/<item> per §8 rules, import in init/join per §9"
-    status: pending
+    status: completed
     dependencies: [p06-1-conf]
   - id: p06-3-tests
     content: "Tests: off by default (nothing under ~/.cursor touched); on: two-machine round trip of a Cursor skill; conflict handling matches §8; secret scan covers cursor/"
-    status: pending
+    status: completed
     dependencies: [p06-2-allowlist]
   - id: p06-4-docs
     content: "README section: enabling Cursor sync"
-    status: pending
+    status: completed
     dependencies: [p06-2-allowlist]
   - id: p06-8-gate
     content: "Verify gate: bash tests/run.sh and shellcheck pass on the local machine; name that OS in PROGRESS.md"
-    status: pending
+    status: completed
     dependencies: [p06-3-tests, p06-4-docs]
   - id: p06-9-handoff
     content: "Record gate evidence in PROGRESS.md, mark Phase 6 complete there, open the PR and run the review loop, then hand off with `next-phase.sh` (new headless session) and stop"
-    status: pending
+    status: completed
     dependencies: [p06-8-gate]
 ---
 
@@ -47,7 +47,7 @@ todos:
 
 ## Scope (do these, nothing else)
 - `claude-sync.conf` parsing (only the `cursor` key).
-- Cursor paths in allowlist, link, import, status.
+- Cursor paths in allowlist, link, import, status. Preflight (2026-10-04) confirmed these plain-file paths: `~/.cursor/skills/<name>/` (one link per skill), and `~/.cursor/rules/`, `~/.cursor/agents/`, `~/.cursor/commands/` (one link each). Repo paths are `cursor/skills/<name>/`, `cursor/rules/`, `cursor/agents/`, `cursor/commands/`.
 - README section.
 
 ## Out of scope (do NOT start these, even partially)

@@ -128,8 +128,9 @@ ensure_backup() {
 
 backup_item() {
   local rel="$1"
-  local src="$CLAUDE_HOME/$rel"
+  local src=""
   local dest=""
+  src=$(local_path_of "$rel")
   ensure_backup
   dest="$BACKUP_DIR/$rel"
   mkdir -p -- "$(dirname -- "$dest")"
@@ -209,6 +210,9 @@ each_local_real() {
       printf '%s\n' "$name"
     fi
   done
+  if cursor_enabled; then
+    each_cursor_local_real
+  fi
 }
 
 undo_import() {
@@ -227,10 +231,10 @@ undo_import() {
         esac
         case "$kind" in
           M)
-            clear_home_item "$CLAUDE_HOME/$rel" || restore_failed=1
+            clear_home_item "$(local_path_of "$rel")" || restore_failed=1
             if [ -e "$CLAUDE_SYNC_DIR/$rel" ]; then
-              mkdir -p -- "$(dirname -- "$CLAUDE_HOME/$rel")"
-              mv -- "$CLAUDE_SYNC_DIR/$rel" "$CLAUDE_HOME/$rel" || restore_failed=1
+              mkdir -p -- "$(dirname -- "$(local_path_of "$rel")")"
+              mv -- "$CLAUDE_SYNC_DIR/$rel" "$(local_path_of "$rel")" || restore_failed=1
             fi
             ;;
           C)
@@ -260,9 +264,9 @@ undo_import() {
             ;;
           X)
             if [ -n "$BACKUP_DIR" ] && [ -e "$BACKUP_DIR/$rel" ]; then
-              mkdir -p -- "$(dirname -- "$CLAUDE_HOME/$rel")"
-              clear_home_item "$CLAUDE_HOME/$rel" || restore_failed=1
-              cp -R "$BACKUP_DIR/$rel" "$CLAUDE_HOME/$rel" || restore_failed=1
+              mkdir -p -- "$(dirname -- "$(local_path_of "$rel")")"
+              clear_home_item "$(local_path_of "$rel")" || restore_failed=1
+              cp -R "$BACKUP_DIR/$rel" "$(local_path_of "$rel")" || restore_failed=1
             fi
             ;;
         esac
@@ -314,7 +318,7 @@ import_move() {
   local dest="$CLAUDE_SYNC_DIR/$rel"
   backup_item "$rel"
   mkdir -p -- "$(dirname -- "$dest")"
-  mv -- "$CLAUDE_HOME/$rel" "$dest"
+  mv -- "$(local_path_of "$rel")" "$dest"
   record_undo M "$rel"
   remember imported "$rel"
 }
@@ -326,7 +330,7 @@ drop_local() {
     : > "$CLAUDE_HOME/CLAUDE.md"
     record_undo L CLAUDE.md
   else
-    remove_real_tree "$CLAUDE_HOME/$rel"
+    remove_real_tree "$(local_path_of "$rel")"
     record_undo X "$rel"
   fi
 }
@@ -392,6 +396,14 @@ collect_linked() {
       remember linked "$name"
     fi
   done
+  if cursor_enabled; then
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      remember linked "$(rel_name "$path")"
+    done <<EOF
+$(each_cursor_link)
+EOF
+  fi
 }
 
 link_imported() {
@@ -418,6 +430,9 @@ link_imported() {
   cleanup_dangling
   link_skills
   link_whole_dirs
+  if cursor_enabled; then
+    link_cursor
+  fi
   if [ "$LINK_CONFLICTS" -gt 0 ] || [ "$failed" -eq 1 ]; then
     if undo_import; then
       die 4 "link conflict during setup. Local files were restored. Move the conflicting path aside and try again."

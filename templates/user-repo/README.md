@@ -13,3 +13,8 @@ Install claude-sync, then:
 
 If that machine already has local Claude config, join lists it and changes nothing.
 Re-run with `--merge` or `--replace` after you choose which copy to keep.
+
+## Cursor (optional)
+
+Cursor skills, rules, agents, and commands stay on the machine until this repo
+contains `claude-sync.conf` with `cursor=1` (`#` starts a comment). Then they sync under `cursor/`.
