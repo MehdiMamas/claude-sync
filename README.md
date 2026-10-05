@@ -14,7 +14,7 @@ Run the same three steps on every other machine and point it at the same repo.
 
 ## Cursor sync
 
-Cursor sync is off until the config repo has a `claude-sync.conf` file whose line is `cursor=1`. Anything else, including a missing file or `cursor=0`, leaves `~/.cursor` unchanged.
+Cursor sync is off until the config repo has a `claude-sync.conf` file whose `cursor` value is `1`. The file is lines of `key=value`. Blank lines are ignored. `#` starts a comment, on its own line or after a value (`cursor=1 # on`). Spaces around `=` are ignored, and a repeated key uses the last value. Anything other than `cursor=1`, including a missing file or `cursor=0`, does not link `~/.cursor`. `unlink` still removes Cursor links that point into the repo.
 
 With `cursor=1`, claude-sync links these directories and no others:
 

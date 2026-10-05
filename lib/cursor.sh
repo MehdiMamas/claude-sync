@@ -3,13 +3,17 @@
 # cursor/ items (skills/<name>, rules, agents, commands). Uses link_one and item_state
 # from lib/link.sh. Does not run network git commands.
 
-# Value of KEY in the repo's claude-sync.conf, or nothing. Lines are key=value;
-# blank lines and lines starting with # are skipped. The file is never evaluated.
+# Value of KEY in the repo's claude-sync.conf, or nothing. Lines are key=value.
+# A '#' starts a comment through the end of the line, on its own line or after
+# a value, so a value cannot contain '#'. Blank lines are skipped. Spaces
+# around the key and the value are ignored. A repeated key keeps the last
+# value. The file is never evaluated.
 conf_value() {
   local key="$1" file="$CLAUDE_SYNC_DIR/claude-sync.conf" line k v val=""
   [ -f "$file" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     line=${line%$'\r'}
+    line=${line%%#*}
     case "$line" in
       *=*) ;;
       *) continue ;;
@@ -47,10 +51,10 @@ local_path_of() {
   esac
 }
 
-# Cursor links that exist locally. The callers keep only links that point into the repo.
+# Cursor links that exist locally, including after cursor=1 is removed.
+# Callers that unlink or clean up keep only links that point into the repo.
 each_cursor_link() {
   local path name
-  cursor_enabled || return 0
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     path="$CURSOR_HOME/$name"
