@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # Sourced by bin/claude-sync. Pull, push, the lock, and hook-mode behavior.
 # This is the only file that runs network git commands (pull, push, clone, ls-remote).
-# After a successful pull, link runs so new items appear and removed ones are cleaned up.
+# After a successful pull, the opt-in settings merge runs, then link, so new items
+# appear and removed ones are cleaned up.
 
 # shellcheck source=lib/secrets.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/secrets.sh"
@@ -102,6 +103,8 @@ finish_sync() {
   local status=$?
   # Any exit path puts the user's non-allowlisted staging back.
   restore_outside_staged || true
+  # settings_cleanup is in lib/settings.sh. It removes a merge's temp files.
+  settings_cleanup || true
   release_lock || true
   if [ "${HOOK:-0}" -eq 1 ]; then
     exit 0
@@ -340,6 +343,12 @@ path_allowlisted() {
         return 0
       fi
       ;;
+    settings.shared.json)
+      # Opt-in: only with settings=1. settings.json itself is never allowlisted.
+      if settings_enabled; then
+        return 0
+      fi
+      ;;
   esac
   return 1
 }
@@ -414,6 +423,9 @@ stage_allowlist() {
   set -- CLAUDE.md skills agents commands output-styles claude-sync.conf
   if cursor_enabled; then
     set -- "$@" cursor
+  fi
+  if settings_enabled; then
+    set -- "$@" settings.shared.json
   fi
   for p in "$@"; do
     if [ ! -e "$CLAUDE_SYNC_DIR/$p" ] && [ -z "$(git -C "$CLAUDE_SYNC_DIR" ls-files -- "$p")" ]; then
@@ -658,7 +670,7 @@ push_with_one_retry() {
 }
 
 sync_pull() {
-  local status=0 out before="" stash_before=""
+  local status=0 out before="" stash_before="" settings_status=0
   begin_sync
   refuse_if_merging
   before=$(git -C "$CLAUDE_SYNC_DIR" rev-parse HEAD 2>/dev/null || true)
@@ -687,8 +699,15 @@ sync_pull() {
   fi
   write_stamp last-pull
   log_line "pull ok"
+  # settings_merge is in lib/settings.sh. It runs before link so a link conflict
+  # does not hold back the merge, and its failure does not hold back link.
+  settings_status=0
+  settings_merge || settings_status=$?
   # link is defined in lib/link.sh, which the dispatcher sources before a command runs.
   cmd_link
+  if [ "$settings_status" -ne 0 ]; then
+    exit "$settings_status"
+  fi
 }
 
 report_secret_hits() {

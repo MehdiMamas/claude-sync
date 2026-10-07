@@ -4,30 +4,30 @@ overview: "Phase 7 of 7. Opt-in settings.shared.json in the user repo, merged in
 todos:
   - id: p07-0-preflight
     content: "Preflight: read PROGRESS.md, confirm Phase 3 gate evidence; read SPEC.md §4, §6, §13, §16; choose the JSON tool (options: require jq; use node/python when present; PowerShell ConvertFrom-Json on Windows) and record the choice and why in Notes / decisions before writing code"
-    status: pending
+    status: completed
   - id: p07-1-conf
     content: "claude-sync.conf key settings=1 (reuse the Phase 6 parser if merged, else add a key=value parser with no eval)"
-    status: pending
+    status: completed
     dependencies: [p07-0-preflight]
   - id: p07-2-merge
     content: "lib/settings.sh: after a successful pull with settings=1, deep-merge settings.shared.json into ~/.claude/settings.json (objects merged, arrays union without duplicates, shared wins on scalar conflicts, local-only keys never removed); back up settings.json first; invalid JSON on either side aborts with no write"
-    status: pending
+    status: completed
     dependencies: [p07-1-conf]
   - id: p07-3-tests
     content: "Tests: off by default; merge cases (new key, nested object, array union, scalar conflict, local-only key kept); invalid JSON leaves settings.json byte-identical; the JSON tool missing gives one clear message and no write"
-    status: pending
+    status: completed
     dependencies: [p07-2-merge]
   - id: p07-4-docs
     content: "README section: sharing settings, which keys make sense to share, and that settings.json itself never syncs"
-    status: pending
+    status: completed
     dependencies: [p07-2-merge]
   - id: p07-8-gate
     content: "Verify gate: bash tests/run.sh and shellcheck pass on the local machine; name that OS in PROGRESS.md"
-    status: pending
+    status: completed
     dependencies: [p07-3-tests, p07-4-docs]
   - id: p07-9-handoff
     content: "Record gate evidence in PROGRESS.md, mark Phase 7 complete there, open the PR and run the review loop, then hand off with `next-phase.sh` (new headless session) and stop"
-    status: pending
+    status: completed
     dependencies: [p07-8-gate]
 ---
 

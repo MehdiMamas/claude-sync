@@ -178,7 +178,7 @@ Env: `CLAUDE_SYNC_DIR` (repo dir, default `~/.claude-sync`), `CLAUDE_SYNC_TIMEOU
 # 13. Platforms and dependencies
 
 - Runtime: bash (3.2-compatible; Git Bash on Windows), git ≥ 2.30, coreutils that exist on macOS, Linux and Git for Windows. `gh` only for `init --create` and the visibility check.
-- **No jq, Python or Node.** Nothing in v1 needs to edit JSON.
+- **No jq, Python or Node.** Nothing in v1 needs to edit JSON. One exception: the opt-in shared settings merge (§16, `settings=1`) needs jq. Without it, pull and link still work and only the merge is skipped.
 - Scripts use `#!/usr/bin/env bash` and `set -euo pipefail`, quote every expansion, and use `$HOME`, never `~`, inside scripts. Every `.sh` and `bin/*` file is LF (`.gitattributes`).
 - Windows paths: convert with `cygpath` only at the `cmd` boundary.
 
@@ -194,7 +194,7 @@ Optionally sync Cursor's file-based global config (for example `~/.cursor/skills
 
 # 16. Shared settings (opt-in, Phase 7)
 
-`settings.json` is machine-specific (paths, local permissions), so it never syncs whole. Optionally, a `settings.shared.json` in the user repo holds selected keys (for example `permissions.allow`, `env`, `model`) and is merged into `~/.claude/settings.json` after each pull, never removing local keys. This is the first feature that edits JSON; Phase 7 chooses the JSON tool and records why.
+`settings.json` is machine-specific (paths, local permissions), so it never syncs whole. Optionally, a `settings.shared.json` in the user repo holds selected keys (for example `permissions.allow`, `env`, `model`) and is merged into `~/.claude/settings.json` after each pull, never removing local keys. This is the first feature that edits JSON; Phase 7 chose jq (`CLAUDE_SYNC_JQ` overrides the path) and recorded why in `PROGRESS.md` Notes.
 
 # 17. Open questions
 

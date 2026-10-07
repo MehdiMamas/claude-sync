@@ -291,3 +291,34 @@ snapshot_repo() {
     git -C "$dir" hash-object -- "$dir/CLAUDE.md"
   } 2>/dev/null || true
 }
+
+# The shared-settings tests read results with the same jq that claude-sync uses.
+# Without it they fail with this message: install jq or set CLAUDE_SYNC_JQ.
+need_jq() {
+  TEST_JQ="${CLAUDE_SYNC_JQ:-jq}"
+  if ! command -v "$TEST_JQ" >/dev/null 2>&1; then
+    fail "jq is not on PATH. The shared-settings tests need it: install jq or set CLAUDE_SYNC_JQ."
+  fi
+}
+
+# One jq query against a JSON file, compact, with Windows line ends removed.
+json_get() {
+  "$TEST_JQ" -c "$2" < "$1" | tr -d '\r'
+}
+
+# settings=1 plus a settings.shared.json, committed in the clone (not pushed).
+enable_shared_settings() {
+  printf 'settings=1\n' > "$CLAUDE_SYNC_DIR/claude-sync.conf"
+  printf '%s\n' "$1" > "$CLAUDE_SYNC_DIR/settings.shared.json"
+  git -C "$CLAUDE_SYNC_DIR" add claude-sync.conf settings.shared.json
+  git -C "$CLAUDE_SYNC_DIR" commit -qm "shared settings"
+}
+
+count_backups() {
+  local n=0 d
+  for d in "$CLAUDE_HOME/.claude-sync-backup"/*/settings.json; do
+    [ -f "$d" ] || continue
+    n=$((n + 1))
+  done
+  printf '%s' "$n"
+}
