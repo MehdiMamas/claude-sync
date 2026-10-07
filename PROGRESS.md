@@ -2,7 +2,7 @@
 
 Read this file **before** any work. It is the single source of truth for which phases are active and what blocks the rest. Rules: `.cursor/rules/05-phase-discipline.mdc`. Roadmap: `.cursor/plans/00-roadmap.plan.md`. Spec: `SPEC.md`.
 
-**Active phases:** 4 – Claude Code plugin; 7 – Shared settings (opt-in) (every Needs met; autopilot runs every ready phase)
+**Active phases:** 4 – Claude Code plugin (every Needs met)
 **Next:** 5 – doctor, uninstall, docs, v0.1.0 (needs 4)
 
 | Phase | Plan | Status | Gate evidence | Date |
@@ -10,24 +10,24 @@ Read this file **before** any work. It is the single source of truth for which p
 | 1 | `phase-01-sync-engine.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 26 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. | 2026-10-03 |
 | 2 | `phase-02-link-layer.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 35 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. Smoke on that OS: a temp repo's skill `claude-sync-phase2-smoke` was linked into the real `~/.claude/skills/` (`bin/claude-sync link`, exit 0); `claude -p "List the names of the skills available to you, one per line"` exited 0 and its first line was `claude-sync-phase2-smoke`; `unlink` removed that link; `~/.claude/CLAUDE.md` matched a byte copy taken before the smoke (`cmp`). | 2026-10-03 |
 | 3 | `phase-03-init-join.plan.md` | completed | `bash tests/run.sh` on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): 52 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. | 2026-10-03 |
-| 4 | `phase-04-plugin.plan.md` | blocked: Needs a decision on the product name | | |
-| 5 | `phase-05-doctor-release.plan.md` | blocked: Needs Phase 4 gate passed; Needs the license decision | | |
+| 4 | `phase-04-plugin.plan.md` | not started | | |
+| 5 | `phase-05-doctor-release.plan.md` | blocked: Needs Phase 4 gate passed | | |
 | 6 | `phase-06-cursor-sync.plan.md` | completed | `bash tests/run.sh` exit 0 on Windows 11 Pro 10.0.26200, 2026-10-05; 62 passed, 0 failed | 2026-10-05 |
-| 7 | `phase-07-shared-settings.plan.md` | not started | | |
+| 7 | `phase-07-shared-settings.plan.md` | completed | `bash tests/run.sh` on Windows 11 Pro 10.0.26200, Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64), with jq 1.8.2 on PATH: 68 passed, 0 failed, exit 0 (1356 s). That includes the six `settings-*` tests; `settings-ten-merges` proves a local-only key survives ten merges. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. macOS and Linux were not run; Phase 5 owns those runs. | 2026-10-06 |
 
 Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Needs line from the plan>`. A phase is ready to start when every Needs line in its plan's Depends on is met, whatever its number.
 
-## Handoff (2026-10-03)
+## Handoff (2026-10-06)
 
 **Where we are**
-- Phase 3 (init and join) is done on this branch: `lib/init.sh`, `templates/user-repo/`, and `pull` calls `link` after a successful pull.
-- Phases 6 and 7 are ready. Phase 4 stays blocked until the product name is decided (`Name:` in Notes).
+- Phases 1, 2, 3, 6 and 7 are done. Phase 7 added the opt-in `settings=1` merge of `settings.shared.json` (needs jq).
+- The name (claude-sync) and license (MIT) are decided, so Phase 4 is ready. Phase 5 waits for the Phase 4 gate.
 - The private repo is https://github.com/MehdiMamas/claude-sync.
 
 **Who does what**
 - Cursor: code changes, using `/phase` (next phase), `/phase <N>`, or `/phase resume`.
 - Claude Code: orchestration. Checks the PR and the local review, decides the next step, and updates this file and the plans.
-- User: approves pushes, posts anything public, decides the name (before Phase 4) and license (before Phase 5), runs the real-machine checks in Phases 4 and 5, and can stop the automatic hand-off with `PHASE_AUTOCHAIN=0` (after each merge `next-phase.sh` starts the next phase in a new headless Cursor CLI session; log in `.git/phase-runs/`).
+- User: approves pushes, posts anything public, runs the real-machine checks in Phases 4 and 5, and can stop the automatic hand-off with `PHASE_AUTOCHAIN=0` (after each merge `next-phase.sh` starts the next phase in a new headless Cursor CLI session; log in `.git/phase-runs/`).
 
 **Prompt to give Cursor**
 ```
@@ -69,3 +69,10 @@ Status is `not started`, `in progress`, `completed`, or `blocked: <the unmet Nee
 - 2026-10-04: Phase 6 gate on Windows Git Bash (MINGW64_NT-10.0-26200, uname -r 3.6.9-b4195d69.x86_64): `bash tests/run.sh` — 62 passed, 0 failed, exit 0. `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` with shellcheck 0.11.0 on that same machine: exit 0, no findings. macOS and Linux were not run. Phase 5 owns those runs.
 - 2026-10-04: Phase 6 preflight. On this Windows profile (`%USERPROFILE%\.cursor`) the real directories include `skills/`, `rules/`, `agents/`, and `skills-cursor/`. There is no `commands/` directory yet. Cursor's docs (same `~/` paths on macOS; this machine did not run macOS) say it reads `~/.cursor/skills/<name>/SKILL.md`, `~/.cursor/agents/`, and `~/.cursor/commands/`. Help → Rules names `~/.cursor/rules` (`%USERPROFILE%\.cursor\rules` on Windows) as user rule files that stay on the machine. Those four are the allowlist under `cursor/`. Left out: `skills-cursor/` (Cursor's own built-in skills), `plugins/`, `extensions/`, `mcp.json`, `hooks.json`, `cli-config.json`, chats, projects, and account-synced user rules (not files). `~/.agents/skills/` is a second global skills root and is not under `~/.cursor`, so it stays local. Project `.cursor/` folders stay local.
 - 2026-10-04: `claude-sync.conf` is on the push allowlist so the opt-in flag itself syncs. SPEC §4 does not list that file. It is the Phase 6 switch for §15, not a Claude config item, and it stays allowlisted for that reason.
+- 2026-10-06: Name: claude-sync (kept; picked by the orchestrator after the user said "cook for me"; can still be renamed before anything is published). This meets Phase 4's name Needs line.
+- 2026-10-06: License: MIT. This meets Phase 5's license Needs line; Phase 5 still needs the Phase 4 gate.
+- 2026-10-06: Phase 7 JSON tool: jq only (`CLAUDE_SYNC_JQ`, default `jq`). One implementation that behaves the same on every OS. macOS 15 and later ship `/usr/bin/jq`, Linux has it one package away, and Windows has `winget install jqlang.jq`. Node and Python are not guaranteed: Claude Code's native installer brings no node, and `python3` on Windows is often the Store stub. PowerShell 5.1 `ConvertFrom-Json`/`ConvertTo-Json` cap depth, unwrap one-item arrays and have no ordered hashtables, so a round trip changes the file. This is the one departure from §13's "no jq, Python or Node": only `settings=1` needs jq, and without it `pull` still pulls and links, prints one line, exits 2 (hook mode 0) and leaves `settings.json` alone. jq.exe on Windows writes CRLF, so its output goes through `tr -d '
+'`; jq reads files from stdin, so MSYS path conversion never touches a path. The tests fail, not skip, when jq is missing (rule 50 allows OS skips only).
+- 2026-10-06: Merge rules (`lib/settings.sh`): objects merge recursively; arrays keep local items in order and append missing shared items (no duplicates added); shared wins on scalar conflicts, including a shared object or array over a local scalar; a shared value of another type over a local object or array is an error naming the key path, with no write. A missing `settings.json` is `{}`. Either side not exactly one JSON object aborts with no write. No change means no write and no backup. Otherwise the old file goes to `~/.claude/.claude-sync-backup/<stamp>/settings.json` (`-N` suffix if the stamp exists), then the new file is written beside it and moved over it with the old mode. A `settings.json` that is a link or not a regular file is not touched. The merge runs after `pull ok` and before `link`; a merge failure still lets `link` run, then `pull` exits 2 (3 for a backup or write failure). Values are never logged.
+- 2026-10-06: `conf_value` moved from `lib/cursor.sh` to `lib/conf.sh` unchanged, since `cursor=1` and `settings=1` both read it. `settings.shared.json` is on the push allowlist only with `settings=1`; repo-root `settings.json` and `settings.local.json` are never allowlisted.
+- 2026-10-06: Allowlist check for the user's own setup: `agents/` is synced as a whole directory link (push allowlist, `link`, `init` import), and `skills/<name>/` covers every skill with its files, including `agents.env`/`review-models.env` inside a skill dir (the template `.gitignore` `.env*` pattern does not match those names). No Phase 4 or 5 scope change is needed. Caveat: the template `.gitignore` patterns `settings.json`, `history*`, `projects/`, `plugins/` and `ide/` are not anchored, so they would also ignore files of those names inside a skill or agent dir. Nothing in the current skills matches.

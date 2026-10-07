@@ -8,8 +8,12 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$ROOT/lib/sync.sh"
 # shellcheck source=lib/link.sh
 source "$ROOT/lib/link.sh"
+# shellcheck source=lib/conf.sh
+source "$ROOT/lib/conf.sh"
 # shellcheck source=lib/cursor.sh
 source "$ROOT/lib/cursor.sh"
+# shellcheck source=lib/settings.sh
+source "$ROOT/lib/settings.sh"
 # shellcheck source=lib/init.sh
 source "$ROOT/lib/init.sh"
 
