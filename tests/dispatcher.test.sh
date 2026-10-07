@@ -15,8 +15,10 @@ assert_out_contains "status"
 assert_out_contains "init"
 assert_out_contains "join"
 assert_out_contains "--version"
+assert_out_contains "install-cli"
+assert_out_contains "push [--hook [--detach]]"
 case "$RUN_OUT$RUN_ERR" in
-  *doctor*|*uninstall*|*install-cli*) fail "help lists a later-phase command" ;;
+  *doctor*|*uninstall*) fail "help lists a later-phase command" ;;
 esac
 
 run_sync --version
@@ -65,3 +67,15 @@ run_sync status --hook
 assert_code 0 "status rejects --hook"
 assert_err_lines 1
 assert_err_contains "unknown argument"
+
+run_sync push --detach
+assert_code 1 "--detach without --hook"
+assert_err_contains "Usage:"
+
+run_sync pull --hook --detach
+assert_code 0 "--detach with pull in hook mode"
+assert_err_lines 1
+assert_err_contains "unknown argument"
+
+run_sync install-cli extra
+assert_code 1 "install-cli takes no arguments"

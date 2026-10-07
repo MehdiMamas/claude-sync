@@ -2,15 +2,34 @@
 
 Keep your Claude Code setup (`CLAUDE.md`, skills, subagents, slash commands, output styles) in a private git repo you own, and have it sync across your Macs, Linux boxes and Windows PCs automatically: pull when a session starts, push when it ends.
 
-**Status: the sync engine (`pull` / `push`) is implemented.** Linking, setup, and the plugin come in later phases. The design is in [`SPEC.md`](SPEC.md) and the build order in [`PROGRESS.md`](PROGRESS.md).
+**Status: the sync engine, linking, setup and the Claude Code plugin are implemented.** `doctor`, `uninstall` and the first release come in Phase 5. The design is in [`SPEC.md`](SPEC.md) and the build order in [`PROGRESS.md`](PROGRESS.md).
 
-## Planned usage
+## Install
+In Claude Code:
 ```
 /plugin marketplace add <owner>/claude-sync
 /plugin install config-sync@config-sync-marketplace
 /config-sync:setup
 ```
-Run the same three steps on every other machine and point it at the same repo.
+The plugin is called `config-sync` because Claude Code reserves plugin names that start with `claude-`. Everything else is still claude-sync: the CLI, the `CLAUDE_SYNC_*` variables and `~/.claude-sync`.
+
+`/config-sync:setup` asks whether to create a new private GitHub repo (needs `gh` logged in) or use a repo you already have, then runs `claude-sync init` or `claude-sync join`. If your machine and the repo both have an item, it shows the conflict list and asks before merging or replacing. Run the same three steps on every other machine and give it the same repo URL.
+
+Other commands:
+- `/config-sync:status` shows what is linked, what is ahead or behind, and the last sync times.
+- `/config-sync:sync` pulls, then pushes, now.
+
+## What happens in a session
+- **Session start** (new session, resume or `/clear`): `claude-sync pull --hook` pulls and links. It prints nothing to the session, at most one line to the transcript, and always exits 0. The hook allows 120 seconds; the git step stops after `CLAUDE_SYNC_TIMEOUT` seconds (default 20).
+- **Session end**: `claude-sync push --hook --detach` starts the push in the background and returns at once, because Claude Code stops a session-end hook after about 1.5 seconds. The push keeps running after Claude Code exits, and writes what it did to the log in the state dir (`$XDG_STATE_HOME/claude-sync/log`, default `~/.local/state/claude-sync/log`).
+- With no repo set up, both hooks do nothing and print nothing.
+
+## Terminal use
+`claude-sync install-cli` writes `~/.local/bin/claude-sync`, a small script that runs the plugin's `bin/claude-sync`. Run it once from the plugin:
+```
+bash ~/.claude/plugins/cache/config-sync-marketplace/config-sync/*/bin/claude-sync install-cli
+```
+If `~/.local/bin` is not on your `PATH`, it prints the line to add to your shell profile. When the plugin updates and its old copy is removed, the script runs the newest copy in the plugin cache. It never overwrites a file it did not write. On Windows, use it from Git Bash.
 
 ## Cursor sync
 

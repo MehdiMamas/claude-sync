@@ -1,0 +1,11 @@
+{
+  "name": "config-sync",
+  "version": "0.0.0",
+  "description": "Sync your Claude Code setup (CLAUDE.md, skills, agents, commands, output styles) through a private git repo you own: pull when a session starts, push when it ends.",
+  "author": {
+    "name": "Mehdi"
+  },
+  "repository": "https://github.com/MehdiMamas/claude-sync",
+  "license": "MIT",
+  "keywords": ["sync", "dotfiles", "git", "skills", "config"]
+}

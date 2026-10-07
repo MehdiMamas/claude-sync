@@ -1,0 +1,15 @@
+{
+  "name": "config-sync-marketplace",
+  "description": "The config-sync plugin: keep your Claude Code setup in a private git repo and sync it between machines.",
+  "owner": {
+    "name": "Mehdi"
+  },
+  "plugins": [
+    {
+      "name": "config-sync",
+      "source": "./",
+      "description": "Sync your Claude Code setup through a private git repo you own.",
+      "version": "0.0.0"
+    }
+  ]
+}

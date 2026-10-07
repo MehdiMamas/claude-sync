@@ -16,18 +16,21 @@ source "$ROOT/lib/cursor.sh"
 source "$ROOT/lib/settings.sh"
 # shellcheck source=lib/init.sh
 source "$ROOT/lib/init.sh"
+# shellcheck source=lib/plugin.sh
+source "$ROOT/lib/plugin.sh"
 
 VERSION="0.0.0"
 
 usage() {
   cat <<'EOF'
 Usage: claude-sync pull [--hook]
-       claude-sync push [--hook]
+       claude-sync push [--hook [--detach]]
        claude-sync link
        claude-sync unlink
        claude-sync status
        claude-sync init [--create <name> | --remote <url>] [--dir <path>]
        claude-sync join <url> [--merge | --replace] [--dir <path>]
+       claude-sync install-cli
        claude-sync --version
        claude-sync --help
 EOF
@@ -44,6 +47,7 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-sync"
 export CLAUDE_SYNC_DIR CLAUDE_HOME CURSOR_HOME CLAUDE_SYNC_TIMEOUT STATE_DIR
 
 export HOOK=0
+DETACH=0
 CMD=""
 
 # --hook anywhere in the arguments means a bad invocation still exits 0.
@@ -67,6 +71,9 @@ while [ $# -gt 0 ]; do
     --hook)
       HOOK=1
       ;;
+    --detach)
+      DETACH=1
+      ;;
     --version)
       if [ -n "$CMD" ]; then
         bad_args
@@ -79,7 +86,7 @@ while [ $# -gt 0 ]; do
       fi
       CMD=help
       ;;
-    pull|push|link|unlink|status)
+    pull|push|link|unlink|status|install-cli)
       if [ -n "$CMD" ]; then
         bad_args
       fi
@@ -102,12 +109,19 @@ done
 export HOOK
 
 case "$CMD" in
-  link|unlink|status|init|join)
+  link|unlink|status|init|join|install-cli)
     if [ "$HOOK" -eq 1 ]; then
       bad_args
     fi
     ;;
 esac
+
+# --detach is only for the SessionEnd hook: push --hook --detach.
+if [ "$DETACH" -eq 1 ]; then
+  if [ "$CMD" != push ] || [ "$HOOK" -ne 1 ]; then
+    bad_args
+  fi
+fi
 
 case "$CMD" in
   version)
@@ -120,6 +134,9 @@ case "$CMD" in
     sync_pull
     ;;
   push)
+    if [ "$DETACH" -eq 1 ]; then
+      detach_push
+    fi
     sync_push
     ;;
   link)
@@ -136,6 +153,9 @@ case "$CMD" in
     ;;
   join)
     cmd_join "$@"
+    ;;
+  install-cli)
+    cmd_install_cli
     ;;
   *)
     if [ "$HOOK" -eq 1 ]; then
