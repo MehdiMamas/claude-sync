@@ -46,9 +46,7 @@ Keys that make sense to share are the ones that are the same on every machine: `
 The merge needs [jq](https://jqlang.org/). macOS 15 and later ship it as `/usr/bin/jq`. On Linux install the `jq` package. On Windows run `winget install jqlang.jq`, or set `CLAUDE_SYNC_JQ` to the path of a `jq` binary. Without jq, `pull` still pulls and links, prints one line saying jq is needed, exits 2, and does not touch `settings.json`. A session-start hook still exits 0. `settings=1` is the only feature that needs a tool other than bash and git.
 
 ## How this repo is built
-Numbered phases, one PR each:
 - `SPEC.md`: the design, in numbered sections cited as §N.
-- `.cursor/plans/`: the roadmap and one plan per phase.
-- `PROGRESS.md`: phase status, gate evidence, handoff, deferred items and decisions.
 - `.cursor/rules/`: binding rules for every change.
-- `.cursor/skills/phase/`: the `/phase` runbook and the local review script.
+- `.cursor/plans/` and `PROGRESS.md`: the phase roadmap, plans and status, used only by the Phase Autopilot dashboard.
+- `docs/archive/phasing/`: the old `/phase` runbook, review script, phase rules and PR template (archived 2026-10-06).

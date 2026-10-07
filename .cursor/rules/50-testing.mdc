@@ -8,6 +8,6 @@ alwaysApply: false
 
 - Plain bash tests: `tests/*.test.sh`, run by `tests/run.sh` (§14). No bats or other installed framework.
 - Each test uses a fresh temp `HOME` (with a space in its path) and sets `CLAUDE_HOME` and `CLAUDE_SYNC_DIR` inside it. Remotes are local bare repos via `file://`. Tests never touch the real `~/.claude`, the real `~/.claude-sync`, or the network. External tools that would hit the network (`gh`) are replaced by fakes on `PATH`.
-- Every behavior listed in a phase's Scope or Gate has a test named after it. A changed behavior gets a new or updated test in the same PR.
+- Every new behavior has a test named after it. A changed behavior gets a new or updated test in the same PR.
 - Tests clean up their temp dirs, including on failure (`trap`).
-- Tests run locally: `bash tests/run.sh` and `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` on the machine doing the phase. Name that OS in `PROGRESS.md`. There is no GitHub Actions workflow. A test may be skipped on one OS only with a printed reason, and the skip counts in the summary.
+- Tests run locally: `bash tests/run.sh` and `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` on the machine doing the work. Name that OS in the PR. There is no GitHub Actions workflow. A test may be skipped on one OS only with a printed reason, and the skip counts in the summary.

@@ -1,12 +1,12 @@
 ---
-description: claude-sync core product contract, architecture boundaries and phase workflow
+description: claude-sync core product contract and architecture boundaries
 globs:
 alwaysApply: true
 ---
 
 # claude-sync – core rules
 
-The build is split into one plan per phase: `.cursor/plans/phase-NN-*.plan.md`. `.cursor/plans/00-roadmap.plan.md` is the index, and `PROGRESS.md` names the active phases. Phase discipline is defined in `05-phase-discipline.mdc`. The long-form spec is `SPEC.md`, and plan items cite it as §N. Read the cited sections before implementing a phase.
+The long-form spec is `SPEC.md`, cited as §N. Read the relevant sections before changing behavior. `.cursor/plans/` and `PROGRESS.md` are data for the Phase Autopilot dashboard only; chats don't run or follow the phase workflow (the old skill and rules are in `docs/archive/phasing/`).
 
 ## Product contract
 - claude-sync syncs one person's Claude Code setup (`~/.claude/CLAUDE.md`, skills, agents, commands, output styles) through a git repo **they** own. It is used by people other than the author: nothing may assume a username, a machine, a path under a particular home dir, or a GitHub account.
@@ -30,5 +30,4 @@ The build is split into one plan per phase: `.cursor/plans/phase-NN-*.plan.md`. 
 - Never auto-resolve conflicts beyond `git pull --rebase`. Never loop retries; §6 allows exactly one rebase retry on push.
 
 ## Workflow
-- Implement only the phase you were given, after checking every Needs line in its plan's Depends on. Meet its **Gate**, record the evidence in `PROGRESS.md`, get the PR through the review loop and merged (see `.cursor/skills/phase/SKILL.md`), then hand off to a new headless session with `next-phase.sh`.
 - Keep the local test run green. Add tests alongside each feature (`50-testing.mdc`). Do not add a GitHub Actions workflow.
