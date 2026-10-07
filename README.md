@@ -37,6 +37,8 @@ After each successful `pull`, claude-sync merges `settings.shared.json` into tha
 - Keys that only `settings.json` has are always kept. The merge never removes a key.
 - If `settings.shared.json` has a value of another type where `settings.json` has an object or array, nothing is merged and the message names the key.
 - If either file is not one valid JSON object, nothing is merged. `settings.json` is left byte for byte as it was.
+- If `settings.json` is a link (for example from a dotfiles manager), nothing is merged and every `pull` says so. Merge by hand or make it a regular file.
+- A merge rewrites the whole file in jq's layout (two-space indent).
 - When the merge changes something, the old file is copied to `~/.claude/.claude-sync-backup/<UTC time>/settings.json` first. A merge that changes nothing writes nothing. A machine with no `settings.json` gets one with the shared keys.
 
 Keys that make sense to share are the ones that are the same on every machine: `permissions.allow` and `permissions.deny` lists, `env` values that are not secrets, and `model`. Keep machine-specific paths, `apiKeyHelper`, and hooks with local paths in `settings.json`. Values in `settings.shared.json` are committed to your config repo. The secret scan checks it before every push and blocks the push if it finds a token, but do not put secrets there.

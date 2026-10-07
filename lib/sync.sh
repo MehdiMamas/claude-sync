@@ -103,6 +103,8 @@ finish_sync() {
   local status=$?
   # Any exit path puts the user's non-allowlisted staging back.
   restore_outside_staged || true
+  # settings_cleanup is in lib/settings.sh. It removes a merge's temp files.
+  settings_cleanup || true
   release_lock || true
   if [ "${HOOK:-0}" -eq 1 ]; then
     exit 0

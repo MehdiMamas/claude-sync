@@ -63,5 +63,5 @@ rm -f "$s"
 mkdir "$s"
 run_sync pull
 assert_code 2 "settings.json is a directory"
-assert_err_contains "settings.json is not a regular file"
+assert_err_contains "settings.json is a link or not a regular file"
 [ -d "$s" ] || fail "settings.json directory was replaced"

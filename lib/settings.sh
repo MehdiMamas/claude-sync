@@ -42,13 +42,30 @@ settings_is_object() {
   [ "$out" = "true" ]
 }
 
+# The merge's temp dir and the settings.json.claude-sync-new file, while they
+# exist. finish_sync (lib/sync.sh) removes them if the pull exits or is stopped
+# by a signal in the middle of the merge.
+SETTINGS_WORK=""
+SETTINGS_TMP=""
+
+settings_cleanup() {
+  if [ -n "$SETTINGS_TMP" ]; then
+    rm -f -- "$SETTINGS_TMP" 2>/dev/null || true
+    SETTINGS_TMP=""
+  fi
+  if [ -n "$SETTINGS_WORK" ]; then
+    rm -rf -- "$SETTINGS_WORK" 2>/dev/null || true
+    SETTINGS_WORK=""
+  fi
+}
+
 # Merge after a successful pull. Prints one note on a change or a problem.
-# Returns 0 (merged, or nothing to do), 2 (jq missing, invalid JSON, or a type
-# conflict; settings.json unchanged) or 3 (a file could not be written;
-# settings.json unchanged).
+# Returns 0 (merged, or nothing to do), 2 (jq missing, invalid JSON, a type
+# conflict, or settings.json is a link or not a regular file; settings.json
+# unchanged) or 3 (a file could not be read or written; settings.json unchanged).
 settings_merge() {
   local jq_bin="${CLAUDE_SYNC_JQ:-jq}" shared="$CLAUDE_SYNC_DIR/$SETTINGS_SHARED_NAME"
-  local file="$CLAUDE_HOME/settings.json" work err status=0 key backup stamp n=0 tmp
+  local file="$CLAUDE_HOME/settings.json" err status=0 key backup stamp n=0
   settings_enabled || return 0
   if [ ! -f "$shared" ]; then
     log_line "settings=1 but $SETTINGS_SHARED_NAME is not in the repo; nothing to merge"
@@ -58,43 +75,54 @@ settings_merge() {
     note "settings=1 needs jq to merge $SETTINGS_SHARED_NAME, and $jq_bin was not found. Install jq or set CLAUDE_SYNC_JQ, then pull again. settings.json was not changed."
     return 2
   fi
-  if [ -e "$file" ] && { [ -L "$file" ] || [ ! -f "$file" ]; }; then
-    note "settings.json is not a regular file, so $SETTINGS_SHARED_NAME was not merged. settings.json was not changed."
+  # -L first: a dangling link fails -e, and it must never be replaced either.
+  if [ -L "$file" ] || { [ -e "$file" ] && [ ! -f "$file" ]; }; then
+    note "settings.json is a link or not a regular file, so $SETTINGS_SHARED_NAME was not merged. settings.json was not changed."
     return 2
   fi
-  work=$(mktemp -d "${TMPDIR:-/tmp}/claude-sync-settings.XXXXXX") || {
+  # link creates the Claude dir too, but the merge runs before link.
+  if ! mkdir -p -- "$CLAUDE_HOME" 2>/dev/null; then
+    note "could not create $CLAUDE_HOME, so $SETTINGS_SHARED_NAME was not merged. settings.json was not changed."
+    return 3
+  fi
+  SETTINGS_WORK=$(mktemp -d "${TMPDIR:-/tmp}/claude-sync-settings.XXXXXX" 2>/dev/null) || {
+    SETTINGS_WORK=""
     note "could not create a temp dir to merge $SETTINGS_SHARED_NAME. settings.json was not changed."
     return 3
   }
   if [ -f "$file" ]; then
-    if ! cat -- "$file" > "$work/local.json"; then
-      rm -rf -- "$work"
+    if ! { cat -- "$file" > "$SETTINGS_WORK/local.json"; } 2>/dev/null; then
+      settings_cleanup
       note "could not read settings.json, so $SETTINGS_SHARED_NAME was not merged. settings.json was not changed."
       return 3
     fi
   else
-    printf '{}\n' > "$work/local.json"
+    if ! { printf '{}\n' > "$SETTINGS_WORK/local.json"; } 2>/dev/null; then
+      settings_cleanup
+      note "could not prepare the merge of $SETTINGS_SHARED_NAME. settings.json was not changed."
+      return 3
+    fi
   fi
-  if ! settings_is_object "$jq_bin" "$work/local.json"; then
-    rm -rf -- "$work"
+  if ! settings_is_object "$jq_bin" "$SETTINGS_WORK/local.json"; then
+    settings_cleanup
     note "settings.json is not one valid JSON object, so $SETTINGS_SHARED_NAME was not merged. Fix settings.json, then pull again. settings.json was not changed."
     return 2
   fi
   if ! settings_is_object "$jq_bin" "$shared"; then
-    rm -rf -- "$work"
+    settings_cleanup
     note "$SETTINGS_SHARED_NAME is not one valid JSON object, so it was not merged. Fix it in the repo, then pull again. settings.json was not changed."
     return 2
   fi
-  { cat -- "$work/local.json"; printf '\n'; cat -- "$shared"; } > "$work/both.json" || {
-    rm -rf -- "$work"
+  if ! { cat -- "$SETTINGS_WORK/local.json"; printf '\n'; cat -- "$shared"; } > "$SETTINGS_WORK/both.json" 2>/dev/null; then
+    settings_cleanup
     note "could not prepare the merge of $SETTINGS_SHARED_NAME. settings.json was not changed."
     return 3
-  }
+  fi
   status=0
-  "$jq_bin" -s "$SETTINGS_MERGE_JQ" < "$work/both.json" > "$work/merged.raw" 2> "$work/err" || status=$?
+  "$jq_bin" -s "$SETTINGS_MERGE_JQ" < "$SETTINGS_WORK/both.json" > "$SETTINGS_WORK/merged.raw" 2> "$SETTINGS_WORK/err" || status=$?
   if [ "$status" -ne 0 ]; then
-    err=$(tr -d '\r' < "$work/err")
-    rm -rf -- "$work"
+    err=$(tr -d '\r' < "$SETTINGS_WORK/err" 2>/dev/null) || err=""
+    settings_cleanup
     case "$err" in
       *claude-sync-type-conflict:*)
         key=${err#*claude-sync-type-conflict:}
@@ -110,14 +138,18 @@ settings_merge() {
     return 2
   fi
   # A native jq.exe writes CRLF. JSON strings escape a carriage return, so only line ends lose one.
-  tr -d '\r' < "$work/merged.raw" > "$work/merged.json"
-  if [ ! -s "$work/merged.json" ]; then
-    rm -rf -- "$work"
+  if ! { tr -d '\r' < "$SETTINGS_WORK/merged.raw" > "$SETTINGS_WORK/merged.json"; } 2>/dev/null; then
+    settings_cleanup
+    note "could not prepare the merge of $SETTINGS_SHARED_NAME. settings.json was not changed."
+    return 3
+  fi
+  if [ ! -s "$SETTINGS_WORK/merged.json" ]; then
+    settings_cleanup
     log_line "settings already include $SETTINGS_SHARED_NAME"
     return 0
   fi
-  if ! settings_is_object "$jq_bin" "$work/merged.json"; then
-    rm -rf -- "$work"
+  if ! settings_is_object "$jq_bin" "$SETTINGS_WORK/merged.json"; then
+    settings_cleanup
     note "jq did not return one JSON object for the merge of $SETTINGS_SHARED_NAME. settings.json was not changed."
     return 2
   fi
@@ -130,31 +162,30 @@ settings_merge() {
       n=$((n + 1))
       backup="${stamp}-${n}"
     done
-    if ! mkdir -p -- "$backup" || ! cp -p -- "$file" "$backup/settings.json"; then
-      rm -rf -- "$work"
+    if ! mkdir -p -- "$backup" 2>/dev/null || ! cp -p -- "$file" "$backup/settings.json" 2>/dev/null; then
+      settings_cleanup
       note "could not back up settings.json, so $SETTINGS_SHARED_NAME was not merged. settings.json was not changed."
       return 3
     fi
   fi
-  tmp="$file.claude-sync-new"
-  rm -f -- "$tmp" || true
-  if ! cat -- "$work/merged.json" > "$tmp"; then
-    rm -f -- "$tmp" || true
-    rm -rf -- "$work"
+  SETTINGS_TMP="$file.claude-sync-new"
+  rm -f -- "$SETTINGS_TMP" 2>/dev/null || true
+  if ! { cat -- "$SETTINGS_WORK/merged.json" > "$SETTINGS_TMP"; } 2>/dev/null; then
+    settings_cleanup
     note "could not write settings.json, so it was not changed."
     return 3
   fi
   if [ -f "$file" ]; then
     # apply_mode is in lib/link.sh. The merged file keeps the old file's mode.
-    apply_mode "$file" "$tmp"
+    apply_mode "$file" "$SETTINGS_TMP"
   fi
-  if ! mv -f -- "$tmp" "$file"; then
-    rm -f -- "$tmp" || true
-    rm -rf -- "$work"
+  if ! mv -f -- "$SETTINGS_TMP" "$file" 2>/dev/null; then
+    settings_cleanup
     note "could not write settings.json, so it was not changed."
     return 3
   fi
-  rm -rf -- "$work"
+  SETTINGS_TMP=""
+  settings_cleanup
   if [ -n "$backup" ]; then
     note "merged $SETTINGS_SHARED_NAME into settings.json. Backup: $backup/settings.json"
   else

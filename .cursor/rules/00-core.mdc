@@ -19,7 +19,7 @@ The build is split into one plan per phase: `.cursor/plans/phase-NN-*.plan.md`. 
 - Entry points (plugin hooks, plugin commands, the CLI shim) → `bin/claude-sync` → `lib/*.sh`. Commands and hooks contain no logic beyond calling `bin/claude-sync`.
 - `lib/sync.sh` is the only file that runs network git commands (`pull`, `push`, `clone`, `ls-remote`). `lib/init.sh` may call sync and link; sync and link never call init.
 - Platform differences (links, paths) live only in `lib/link.sh` platform helpers.
-- Core runtime is bash 3.2+ and git. No jq, Python or Node in the core (§13).
+- Core runtime is bash 3.2+ and git. No jq, Python or Node in the core (§13). Only the opt-in `settings=1` merge (`lib/settings.sh`) uses jq.
 
 ## Hygiene
 - New behavior goes in new files under `lib/`. Keep `bin/claude-sync` a thin dispatcher.
