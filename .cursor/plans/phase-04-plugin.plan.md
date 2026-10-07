@@ -1,6 +1,6 @@
 ---
 name: "claude-sync Phase 4 – Claude Code plugin"
-overview: "Phase 4 of 7. Package claude-sync as a Claude Code plugin with its own marketplace: SessionStart/SessionEnd hooks, /claude-sync:setup, :status and :sync commands, and install-cli. Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: the plugin validates, installs from the local marketplace, and its hooks run pull/push in a real Claude Code session on one named OS."
+overview: "Phase 4 of 7. Package claude-sync as a Claude Code plugin with its own marketplace: SessionStart/SessionEnd hooks, /config-sync:setup, :status and :sync commands (the plugin is named config-sync because Claude Code reserves claude-* plugin names), and install-cli. Scope is limited to this phase; finish when the gate passes, record evidence in PROGRESS.md and stop. Gate: the plugin validates, installs from the local marketplace, and its hooks run pull/push in a real Claude Code session on one named OS."
 todos:
   - id: p04-0-preflight
     content: "Preflight: read PROGRESS.md, confirm Phase 3 gate evidence; read SPEC.md §3, §10, §11, §17; check the current Claude Code plugin docs (manifest, marketplace.json, hooks location, ${CLAUDE_PLUGIN_ROOT}, how hooks run on Windows, hook timeouts) and record any difference from §10 in Notes / decisions"
@@ -14,7 +14,7 @@ todos:
     status: pending
     dependencies: [p04-1-name]
   - id: p04-3-hooks
-    content: "hooks/hooks.json: SessionStart → pull --hook, SessionEnd → push --hook, via bash \"${CLAUDE_PLUGIN_ROOT}/bin/claude-sync\"; a timeout that covers CLAUDE_SYNC_TIMEOUT; silent when not set up"
+    content: "hooks/hooks.json: SessionStart → pull --hook, SessionEnd → push --hook --detach (SessionEnd hooks are cancelled after about 1.5 s, so the push runs on in the background), via bash \"${CLAUDE_PLUGIN_ROOT}/bin/claude-sync\"; a SessionStart timeout that covers CLAUDE_SYNC_TIMEOUT; silent when not set up"
     status: pending
     dependencies: [p04-2-manifest]
   - id: p04-4-commands
@@ -46,19 +46,20 @@ todos:
 **Phase 4 of 7.** Previous: Phase 3 – init and join. Next: Phase 5 – doctor, uninstall, docs, v0.1.0.
 
 ## Depends on
-- **Needs** Phase 3 gate passed (`/claude-sync:setup` runs `init`/`join`; hooks rely on pull calling link). Check: `PROGRESS.md` row 3.
+- **Needs** Phase 3 gate passed (`/config-sync:setup` runs `init`/`join`; hooks rely on pull calling link). Check: `PROGRESS.md` row 3.
 - **Needs** a decision on the product name (§17), recorded in `PROGRESS.md` Notes / decisions. Check: search Notes for "Name:". If it is missing, stop and ask the user.
 
 ## Before you start
 - Every **Needs** line above must be met. If one is not, stop, quote it and say how you checked.
 - Read the cited spec sections in full, and the current plugin docs (preflight todo).
-- If the name changes from `claude-sync`, rename it everywhere first in its own commit, following `07-complete-search.mdc` (binary, env vars `CLAUDE_SYNC_*`, state dir, default repo dir `~/.claude-sync`, managed-block markers, backup dir, docs).
+- The plugin and marketplace are named `config-sync` and `config-sync-marketplace` (decided 2026-10-06, see `PROGRESS.md` Notes); the CLI, env vars, state dir, repo dir and repo keep `claude-sync`. If the product name itself ever changes from `claude-sync`, rename it everywhere first in its own commit, following `07-complete-search.mdc` (binary, env vars `CLAUDE_SYNC_*`, state dir, default repo dir `~/.claude-sync`, managed-block markers, backup dir, docs).
 
 ## Scope (do these, nothing else)
 - `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`.
 - `hooks/hooks.json` (§10).
 - `commands/setup.md`, `commands/status.md`, `commands/sync.md` (§10). They tell Claude which exact `claude-sync` command to run via `${CLAUDE_PLUGIN_ROOT}`; they must never tell Claude to edit `~/.claude` files directly.
 - `install-cli` subcommand and its entry in `--help`.
+- `push --hook --detach` (the SessionEnd hook runs it), and its entry in `--help`.
 - Tests listed in the p04-6 todo.
 
 ## Out of scope (do NOT start these, even partially)
@@ -72,8 +73,8 @@ Do not create files, services, stubs, settings or UI that belong to a later phas
 ## Gate
 **`bash tests/run.sh` and `shellcheck` pass on the local machine, and on one real machine (name the OS):**
 1. `claude plugin validate .` (or the current equivalent found in preflight) exits 0;
-2. `/plugin marketplace add <path to this checkout>` and `/plugin install claude-sync@claude-sync` succeed;
-3. with a throwaway config repo set up by `/claude-sync:setup` (use a temp `CLAUDE_SYNC_DIR` and a local bare remote, not the user's real config): starting a session updates `last-pull`, and ending a session after editing a synced skill creates a `sync:` commit on the bare remote;
+2. `/plugin marketplace add <path to this checkout>` and `/plugin install config-sync@config-sync-marketplace` (or `claude plugin marketplace add` / `claude plugin install`) succeed;
+3. with a throwaway config repo set up by `/config-sync:setup` (use a temp `CLAUDE_SYNC_DIR` and a local bare remote, not the user's real config): starting a session updates `last-pull`, and ending a session after editing a synced skill creates a `sync:` commit on the bare remote;
 4. with no config repo, starting and ending a session prints nothing from claude-sync.
 
 Record the timestamps, `git log -1` from the bare remote, and the OS in `PROGRESS.md`. Steps that need an interactive Claude Code session are done by the user if Cursor cannot run them; say who ran them.

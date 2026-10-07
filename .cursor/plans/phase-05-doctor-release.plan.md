@@ -63,7 +63,7 @@ todos:
 Do not create files, services, stubs, settings or UI that belong to a later phase. If something here seems to need later-phase work, write the smallest thing that unblocks this phase, then add a note under "Deferred" in `PROGRESS.md`.
 
 ## Gate
-**`bash tests/run.sh` and `shellcheck` pass on the local machine, and a real round trip passes on the user's Windows PC and Mac following only the README**: install the plugin from this branch's marketplace, `/claude-sync:setup` creates a fresh private test repo on Windows, the Mac joins it, an edit to a synced skill on the Mac appears on Windows after one session end + one session start, and `claude-sync doctor` exits 0 on both. Afterwards `claude-sync uninstall` on both leaves `~/.claude` working and the test repo intact.
+**`bash tests/run.sh` and `shellcheck` pass on the local machine, and a real round trip passes on the user's Windows PC and Mac following only the README**: install the plugin from this branch's marketplace, `/config-sync:setup` creates a fresh private test repo on Windows, the Mac joins it, an edit to a synced skill on the Mac appears on Windows after one session end + one session start, and `claude-sync doctor` exits 0 on both. Afterwards `claude-sync uninstall` on both leaves `~/.claude` working and the test repo intact.
 
 The user runs the real-machine steps. Record who ran each step, both OS versions, the test repo name, and the `sync:` commit sha in `PROGRESS.md`.
 

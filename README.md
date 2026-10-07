@@ -7,8 +7,8 @@ Keep your Claude Code setup (`CLAUDE.md`, skills, subagents, slash commands, out
 ## Planned usage
 ```
 /plugin marketplace add <owner>/claude-sync
-/plugin install claude-sync@claude-sync
-/claude-sync:setup
+/plugin install config-sync@config-sync-marketplace
+/config-sync:setup
 ```
 Run the same three steps on every other machine and point it at the same repo.
 

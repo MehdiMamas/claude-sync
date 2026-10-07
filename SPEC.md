@@ -23,11 +23,11 @@ Goals:
 
 # 3. User flows
 
-**First machine (`init`).** Install the plugin, run `/claude-sync:setup`. Claude asks whether to create a new private repo (needs `gh`) or use an existing remote URL, then runs `claude-sync init`. Existing `~/.claude` content is imported into the repo, backed up, linked back, and pushed.
+**First machine (`init`).** Install the plugin, run `/config-sync:setup`. Claude asks whether to create a new private repo (needs `gh`) or use an existing remote URL, then runs `claude-sync init`. Existing `~/.claude` content is imported into the repo, backed up, linked back, and pushed.
 
-**Another machine (`join`).** Install the plugin, run `/claude-sync:setup`, give the same repo. `claude-sync join <url>` clones it, deals with any local content already present (§9), links, done.
+**Another machine (`join`).** Install the plugin, run `/config-sync:setup`, give the same repo. `claude-sync join <url>` clones it, deals with any local content already present (§9), links, done.
 
-**Every day.** Nothing. SessionStart pulls (and links anything new), SessionEnd commits and pushes. `/claude-sync:status` shows state; `/claude-sync:sync` forces a round trip; `claude-sync doctor` explains problems.
+**Every day.** Nothing. SessionStart pulls (and links anything new), SessionEnd commits and pushes. `/config-sync:status` shows state; `/config-sync:sync` forces a round trip; `claude-sync doctor` explains problems.
 
 # 4. What syncs
 
@@ -138,17 +138,18 @@ The path written is the actual repo dir in `~/` form. Content outside the block 
    - `--replace`: back up all local items, then use the repo's.
 3. Link, commit any merged content, push.
 
-Both commands print a short summary: what was imported, backed up (with the path), linked, and pushed. Interactive prompts appear only when stdin is a TTY; every choice also has a flag, because `/claude-sync:setup` runs them through Claude.
+Both commands print a short summary: what was imported, backed up (with the path), linked, and pushed. Interactive prompts appear only when stdin is a TTY; every choice also has a flag, because `/config-sync:setup` runs them through Claude.
 
 # 10. Plugin packaging and hooks
 
 claude-sync ships as a Claude Code **plugin**, and this repo is also its marketplace:
 ```
 /plugin marketplace add <owner>/claude-sync
-/plugin install claude-sync@claude-sync
-/claude-sync:setup
+/plugin install config-sync@config-sync-marketplace
+/config-sync:setup
 ```
-- `hooks/hooks.json`: `SessionStart` → `bash "${CLAUDE_PLUGIN_ROOT}/bin/claude-sync" pull --hook`; `SessionEnd` → `... push --hook`. Plugin hooks need no edits to `~/.claude/settings.json`, so no JSON tooling is needed to install.
+- **Plugin name.** The plugin is `config-sync` and its marketplace is `config-sync-marketplace`, so its commands are `/config-sync:setup`, `/config-sync:status` and `/config-sync:sync`. Claude Code reserves plugin names that start with `claude-` (Phase 4 found this; see `PROGRESS.md` Notes). Everything else keeps the name claude-sync: the repo, the `claude-sync` CLI, the `CLAUDE_SYNC_*` variables, `~/.claude-sync` and the state dir.
+- `hooks/hooks.json`: `SessionStart` (matcher `startup|resume|clear`) → `bash "${CLAUDE_PLUGIN_ROOT}/bin/claude-sync" pull --hook`; `SessionEnd` → `... push --hook --detach`. Claude Code cancels a SessionEnd hook after about 1.5 seconds whatever its `timeout` says, so `--detach` starts the push in the background, detached from the hook (no stdin, stdout or stderr, `SIGHUP` ignored), and returns at once. The push itself is the ordinary hook-mode push: it takes the lock, logs to the state dir, and exits 0. Plugin hooks need no edits to `~/.claude/settings.json`, so no JSON tooling is needed to install.
 - `commands/setup.md`: instructs Claude to check prerequisites (`git`, `gh` optional), ask new-or-existing repo, run `init` or `join` with explicit flags, show the summary, and stop. It must show the user any conflict list and ask before `--merge`/`--replace`.
 - `commands/status.md`, `commands/sync.md`: run `status`, or `pull` then `push`, and show the output.
 - Terminal use: `claude-sync install-cli` writes a small shim to `~/.local/bin/claude-sync` that execs the installed plugin's `bin/claude-sync`.
@@ -158,7 +159,7 @@ claude-sync ships as a Claude Code **plugin**, and this repo is also its marketp
 
 ```
 claude-sync pull   [--hook]
-claude-sync push   [--hook]
+claude-sync push   [--hook [--detach]]
 claude-sync link | unlink | status
 claude-sync init   [--create <name> | --remote <url>] [--dir <path>]
 claude-sync join   <url> [--merge | --replace] [--dir <path>]
@@ -198,6 +199,6 @@ Optionally sync Cursor's file-based global config (for example `~/.cursor/skills
 
 # 17. Open questions
 
-- **Name.** `claude-sync` is a working name. Check for collisions on GitHub and the plugin marketplaces before Phase 4 publishes the manifest; renaming after release is costly (rule 07).
+- **Name.** Decided in Phase 4: the product, repo and CLI stay `claude-sync`, and the plugin is `config-sync` because Claude Code reserves `claude-*` plugin names (§10).
 - **License.** MIT is assumed for the public repo; confirm before Phase 5.
 - **User-level memory.** Not synced in v1 (§2). Revisit after release if users ask.
