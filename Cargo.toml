@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core"]
+members = ["crates/core", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,3 +17,11 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tracing = "0.1"
 async-trait = "0.1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+# Must stay "unwind": the app catches panics from the engine (std::panic::catch_unwind).
+panic = "unwind"
