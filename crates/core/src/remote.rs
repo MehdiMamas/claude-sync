@@ -1,11 +1,38 @@
 //! The engine's only view of a group repo (§6). `GitHubRepo` talks to the REST API;
 //! `fake::FakeRepo` is in-memory for tests (and is public so the app's tests can use it).
+use crate::engine::CommitInfo;
+use crate::github::{GitHub, Invitation};
+use crate::{Error, FileSet, GroupId};
 use async_trait::async_trait;
+use base64::Engine as _;
+use reqwest::Method;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
+
+pub mod fake;
+
+/// `Commit` changes: path -> new content, `None` = delete.
+pub type Changes = BTreeMap<String, Option<Vec<u8>>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Head {
     pub commit: String,
     pub tree: String,
+}
+
+impl Head {
+    /// The head of a repo with no commits yet.
+    pub fn empty() -> Self {
+        Self {
+            commit: String::new(),
+            tree: String::new(),
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.commit.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,11 +46,13 @@ pub trait RemoteRepo: Send + Sync {
     fn id(&self) -> &crate::GroupId;
     /// `None` when unchanged since the last call (ETag `304`).
     async fn head_if_changed(&self) -> crate::Result<Option<Head>>;
+    /// `Head::empty()` for a repo with no commits.
     async fn head(&self) -> crate::Result<Head>;
     /// All allowlisted files at a commit.
     async fn files_at(&self, commit: &str) -> crate::Result<crate::FileSet>;
     /// Commit `changes` (`None` = delete) on top of `parent` and move the branch,
     /// never forcing. `Err(Error::PushRace)` when the branch moved.
+    /// `parent` may be `Head::empty()` to make the first commit of an empty repo.
     async fn commit(
         &self,
         parent: &Head,
@@ -36,13 +65,856 @@ pub trait RemoteRepo: Send + Sync {
     async fn invite(&self, login: &str) -> crate::Result<()>;
     async fn remove_collaborator(&self, login: &str) -> crate::Result<()>;
     async fn cancel_invitation(&self, invitation_id: u64) -> crate::Result<()>;
+    /// Newest first.
+    async fn recent_commits(&self, _limit: usize) -> crate::Result<Vec<CommitInfo>> {
+        Ok(Vec::new())
+    }
+}
+
+/// Account-level calls and a way to open repos: what the engine needs beyond one repo.
+/// `GitHubRemotes` in the app, `fake::FakeAccount` in tests.
+#[async_trait]
+pub trait RemoteFactory: Send + Sync {
+    /// The same repo object for the same id, so ETag state survives between passes.
+    fn open(&self, id: &GroupId) -> Arc<dyn RemoteRepo>;
+    /// An empty private repo with the group topic on the signed-in account.
+    async fn create_repo(&self, name: &str) -> crate::Result<GroupId>;
+    /// Pending invitations to group repos.
+    async fn invitations(&self) -> crate::Result<Vec<Invitation>>;
+    /// Accept; returns the repo.
+    async fn accept_invitation(&self, id: u64) -> crate::Result<GroupId>;
+    /// Group repos this user can access.
+    async fn group_repos(&self) -> crate::Result<Vec<GroupId>>;
+}
+
+pub struct GitHubRemotes {
+    gh: GitHub,
+    repos: Mutex<HashMap<GroupId, Arc<GitHubRepo>>>,
+}
+
+impl GitHubRemotes {
+    pub fn new(gh: GitHub) -> Self {
+        Self {
+            gh,
+            repos: Mutex::default(),
+        }
+    }
+}
+
+#[async_trait]
+impl RemoteFactory for GitHubRemotes {
+    fn open(&self, id: &GroupId) -> Arc<dyn RemoteRepo> {
+        let mut repos = self.repos.lock().unwrap();
+        repos
+            .entry(id.clone())
+            .or_insert_with(|| Arc::new(GitHubRepo::new(self.gh.clone(), id.clone())))
+            .clone()
+    }
+    async fn create_repo(&self, name: &str) -> crate::Result<GroupId> {
+        self.gh.create_group_repo(name).await
+    }
+    async fn invitations(&self) -> crate::Result<Vec<Invitation>> {
+        self.gh.invitations().await
+    }
+    async fn accept_invitation(&self, id: u64) -> crate::Result<GroupId> {
+        self.gh.accept_invitation(id).await
+    }
+    async fn group_repos(&self) -> crate::Result<Vec<GroupId>> {
+        self.gh.group_repos().await
+    }
 }
 
 pub struct GitHubRepo {
     pub gh: crate::github::GitHub,
     pub id: crate::GroupId,
+    info: Mutex<Option<RepoInfo>>,
+    etag: Mutex<Option<String>>,
+    last_head: Mutex<Option<Head>>,
+    /// Blob contents by SHA; blobs never change, so this only grows with the repo.
+    blobs: Mutex<HashMap<String, Vec<u8>>>,
 }
 
-pub mod fake {
-    //! In-memory `RemoteRepo`.
+#[derive(Debug, Clone, Deserialize)]
+struct RepoInfo {
+    default_branch: String,
+    private: bool,
+    owner: Owner,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Owner {
+    login: String,
+}
+
+#[derive(Deserialize)]
+struct Sha {
+    sha: String,
+}
+
+#[derive(Deserialize)]
+struct CommitReply {
+    sha: String,
+    commit: CommitBody,
+}
+
+#[derive(Deserialize)]
+struct CommitBody {
+    tree: Sha,
+}
+
+fn b64() -> base64::engine::GeneralPurpose {
+    base64::engine::general_purpose::STANDARD
+}
+
+/// GitHub answers `409 Git Repository is empty` for commits and refs of an empty repo.
+fn is_empty_repo(e: &Error) -> bool {
+    matches!(e, Error::GitHub { status: 409, .. })
+}
+
+impl GitHubRepo {
+    pub fn new(gh: GitHub, id: GroupId) -> Self {
+        Self {
+            gh,
+            id,
+            info: Mutex::default(),
+            etag: Mutex::default(),
+            last_head: Mutex::default(),
+            blobs: Mutex::default(),
+        }
+    }
+
+    fn path(&self, rest: &str) -> String {
+        format!("/repos/{}/{}{rest}", self.id.owner, self.id.repo)
+    }
+
+    async fn info(&self) -> crate::Result<RepoInfo> {
+        if let Some(info) = self.info.lock().unwrap().clone() {
+            return Ok(info);
+        }
+        let info: RepoInfo = self.gh.get(&self.path("")).await?;
+        *self.info.lock().unwrap() = Some(info.clone());
+        Ok(info)
+    }
+
+    fn remember(&self, head: &Head) {
+        *self.last_head.lock().unwrap() = Some(head.clone());
+    }
+
+    async fn tree_of(&self, commit: &str) -> crate::Result<String> {
+        if let Some(h) = self
+            .last_head
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|h| h.commit == commit)
+        {
+            return Ok(h.tree.clone());
+        }
+        let c: CommitBody = self
+            .gh
+            .get(&self.path(&format!("/git/commits/{commit}")))
+            .await?;
+        Ok(c.tree.sha)
+    }
+
+    async fn blob(&self, sha: &str) -> crate::Result<Vec<u8>> {
+        if let Some(b) = self.blobs.lock().unwrap().get(sha) {
+            return Ok(b.clone());
+        }
+        #[derive(Deserialize)]
+        struct Blob {
+            content: String,
+            encoding: String,
+        }
+        let blob: Blob = self
+            .gh
+            .get(&self.path(&format!("/git/blobs/{sha}")))
+            .await?;
+        let bytes = match blob.encoding.as_str() {
+            "base64" => {
+                let clean: String = blob
+                    .content
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                b64()
+                    .decode(clean)
+                    .map_err(|e| Error::Invalid(format!("blob {sha}: {e}")))?
+            }
+            _ => blob.content.into_bytes(),
+        };
+        self.blobs.lock().unwrap().insert(sha.into(), bytes.clone());
+        Ok(bytes)
+    }
+
+    /// First commit of an empty repo. The Git Data API refuses to create blobs until the repo
+    /// has a commit, so one file goes through the Contents API.
+    async fn first_commit(&self, path: &str, content: &[u8], message: &str) -> crate::Result<Head> {
+        #[derive(Deserialize)]
+        struct Reply {
+            commit: CommitReply,
+        }
+        let body = json!({ "message": message, "content": b64().encode(content) });
+        let reply: Reply = match self
+            .gh
+            .send(Method::PUT, &self.path(&format!("/contents/{path}")), &body)
+            .await
+        {
+            // The file exists: someone else made the first commit.
+            Err(Error::GitHub {
+                status: 409 | 422, ..
+            }) => return Err(Error::PushRace),
+            r => r?,
+        };
+        Ok(Head {
+            commit: reply.commit.sha,
+            tree: reply.commit.commit.tree.sha,
+        })
+    }
+}
+
+#[async_trait]
+impl RemoteRepo for GitHubRepo {
+    fn id(&self) -> &GroupId {
+        &self.id
+    }
+
+    async fn head_if_changed(&self) -> crate::Result<Option<Head>> {
+        let branch = self.info().await?.default_branch;
+        let etag = self.etag.lock().unwrap().clone();
+        let path = self.path(&format!("/commits/{branch}"));
+        match self
+            .gh
+            .get_if_changed::<CommitReply>(&path, etag.as_deref())
+            .await
+        {
+            Ok(crate::github::Conditional::NotModified) => Ok(None),
+            Ok(crate::github::Conditional::Modified { value, etag }) => {
+                *self.etag.lock().unwrap() = etag;
+                let head = Head {
+                    commit: value.sha,
+                    tree: value.commit.tree.sha,
+                };
+                self.remember(&head);
+                Ok(Some(head))
+            }
+            Err(e) if is_empty_repo(&e) => {
+                let was_empty = self
+                    .last_head
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(Head::is_empty);
+                self.remember(&Head::empty());
+                Ok((!was_empty).then(Head::empty))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn head(&self) -> crate::Result<Head> {
+        let branch = self.info().await?.default_branch;
+        let head = match self
+            .gh
+            .get::<CommitReply>(&self.path(&format!("/commits/{branch}")))
+            .await
+        {
+            Ok(c) => Head {
+                commit: c.sha,
+                tree: c.commit.tree.sha,
+            },
+            Err(e) if is_empty_repo(&e) => Head::empty(),
+            Err(e) => return Err(e),
+        };
+        self.remember(&head);
+        Ok(head)
+    }
+
+    async fn files_at(&self, commit: &str) -> crate::Result<FileSet> {
+        if commit.is_empty() {
+            return Ok(FileSet::new());
+        }
+        #[derive(Deserialize)]
+        struct Entry {
+            path: String,
+            #[serde(rename = "type")]
+            kind: String,
+            sha: String,
+        }
+        #[derive(Deserialize)]
+        struct Tree {
+            tree: Vec<Entry>,
+            #[serde(default)]
+            truncated: bool,
+        }
+        let tree_sha = self.tree_of(commit).await?;
+        let tree: Tree = self
+            .gh
+            .get(&self.path(&format!("/git/trees/{tree_sha}?recursive=1")))
+            .await?;
+        if tree.truncated {
+            return Err(Error::Invalid(format!("{} is too large to sync", self.id)));
+        }
+        let mut files = FileSet::new();
+        for e in tree.tree {
+            if e.kind == "blob" && crate::group::is_allowlisted(&e.path) {
+                let bytes = self.blob(&e.sha).await?;
+                files.insert(e.path, bytes);
+            }
+        }
+        Ok(files)
+    }
+
+    async fn commit(&self, parent: &Head, changes: &Changes, message: &str) -> crate::Result<Head> {
+        let mut parent = parent.clone();
+        let mut changes = changes.clone();
+        if parent.is_empty() {
+            let first = changes
+                .iter()
+                .find_map(|(p, c)| c.as_ref().map(|c| (p.clone(), c.clone())));
+            let Some((path, content)) = first else {
+                return Err(Error::Invalid(
+                    "the first commit of a repo needs a file".into(),
+                ));
+            };
+            parent = self.first_commit(&path, &content, message).await?;
+            changes.remove(&path);
+            changes.retain(|_, c| c.is_some());
+            self.remember(&parent);
+            if changes.is_empty() {
+                return Ok(parent);
+            }
+        }
+        let mut entries = Vec::new();
+        for (path, content) in &changes {
+            let sha = match content {
+                Some(bytes) => {
+                    let body = json!({ "content": b64().encode(bytes), "encoding": "base64" });
+                    let blob: Sha = self
+                        .gh
+                        .send(Method::POST, &self.path("/git/blobs"), &body)
+                        .await?;
+                    self.blobs
+                        .lock()
+                        .unwrap()
+                        .insert(blob.sha.clone(), bytes.clone());
+                    Value::String(blob.sha)
+                }
+                None => Value::Null,
+            };
+            entries.push(json!({ "path": path, "mode": "100644", "type": "blob", "sha": sha }));
+        }
+        let tree: Sha = self
+            .gh
+            .send(
+                Method::POST,
+                &self.path("/git/trees"),
+                &json!({ "base_tree": parent.tree, "tree": entries }),
+            )
+            .await?;
+        let body = json!({ "message": message, "tree": tree.sha, "parents": [parent.commit] });
+        let commit: Sha = self
+            .gh
+            .send(Method::POST, &self.path("/git/commits"), &body)
+            .await?;
+        let branch = self.info().await?.default_branch;
+        let body = json!({ "sha": commit.sha, "force": false });
+        match self
+            .gh
+            .call(
+                Method::PATCH,
+                &self.path(&format!("/git/refs/heads/{branch}")),
+                Some(&body),
+            )
+            .await
+        {
+            Err(Error::GitHub {
+                status: 422,
+                message,
+            }) if message.to_ascii_lowercase().contains("fast") => return Err(Error::PushRace),
+            r => r?,
+        }
+        let head = Head {
+            commit: commit.sha,
+            tree: tree.sha,
+        };
+        self.remember(&head);
+        Ok(head)
+    }
+
+    async fn is_private(&self) -> crate::Result<bool> {
+        Ok(self.info().await?.private)
+    }
+
+    async fn owner_login(&self) -> crate::Result<String> {
+        Ok(self.info().await?.owner.login)
+    }
+
+    async fn collaborators(&self) -> crate::Result<Vec<Collaborator>> {
+        #[derive(Deserialize)]
+        struct Inv {
+            id: u64,
+            invitee: Option<Owner>,
+        }
+        let members: Vec<Owner> = self
+            .gh
+            .get_pages(&self.path("/collaborators?per_page=100"))
+            .await?;
+        let invites: Vec<Inv> = self
+            .gh
+            .get_pages(&self.path("/invitations?per_page=100"))
+            .await?;
+        Ok(members
+            .into_iter()
+            .map(|m| Collaborator::Member(m.login))
+            .chain(invites.into_iter().filter_map(|i| {
+                Some(Collaborator::Invited {
+                    login: i.invitee?.login,
+                    invitation_id: i.id,
+                })
+            }))
+            .collect())
+    }
+
+    async fn invite(&self, login: &str) -> crate::Result<()> {
+        let body = json!({ "permission": "push" });
+        self.gh
+            .call(
+                Method::PUT,
+                &self.path(&format!("/collaborators/{login}")),
+                Some(&body),
+            )
+            .await
+    }
+
+    async fn remove_collaborator(&self, login: &str) -> crate::Result<()> {
+        self.gh
+            .call(
+                Method::DELETE,
+                &self.path(&format!("/collaborators/{login}")),
+                None,
+            )
+            .await
+    }
+
+    async fn cancel_invitation(&self, invitation_id: u64) -> crate::Result<()> {
+        self.gh
+            .call(
+                Method::DELETE,
+                &self.path(&format!("/invitations/{invitation_id}")),
+                None,
+            )
+            .await
+    }
+
+    async fn recent_commits(&self, limit: usize) -> crate::Result<Vec<CommitInfo>> {
+        #[derive(Deserialize)]
+        struct Item {
+            sha: String,
+            commit: Detail,
+            author: Option<Owner>,
+        }
+        #[derive(Deserialize)]
+        struct Detail {
+            message: String,
+            author: Option<Person>,
+        }
+        #[derive(Deserialize)]
+        struct Person {
+            name: Option<String>,
+            date: Option<String>,
+        }
+        let branch = self.info().await?.default_branch;
+        let path = self.path(&format!(
+            "/commits?sha={branch}&per_page={}",
+            limit.clamp(1, 100)
+        ));
+        let items: Vec<Item> = match self.gh.get(&path).await {
+            Err(e) if is_empty_repo(&e) => return Ok(Vec::new()),
+            r => r?,
+        };
+        Ok(items
+            .into_iter()
+            .map(|i| {
+                let person = i.commit.author;
+                CommitInfo {
+                    sha: i.sha,
+                    message: i.commit.message,
+                    author: i
+                        .author
+                        .map(|a| a.login)
+                        .or_else(|| person.as_ref().and_then(|p| p.name.clone()))
+                        .unwrap_or_default(),
+                    at_unix: person
+                        .and_then(|p| p.date)
+                        .and_then(|d| crate::state::parse_rfc3339(&d))
+                        .unwrap_or(0),
+                }
+            })
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use wiremock::matchers::{body_json, body_partial_json, header, header_exists, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    async fn setup() -> (MockServer, GitHubRepo) {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "default_branch": "main", "private": true, "owner": {"login": "o"}
+            })))
+            .mount(&server)
+            .await;
+        let gh =
+            GitHub::with_api("tok".into(), server.uri()).with_retry_delay(Duration::from_millis(1));
+        let repo = GitHubRepo::new(gh, GroupId::new("o", "r"));
+        (server, repo)
+    }
+
+    fn commit_json(sha: &str, tree: &str) -> Value {
+        json!({ "sha": sha, "commit": { "tree": { "sha": tree } } })
+    }
+
+    fn head(c: &str, t: &str) -> Head {
+        Head {
+            commit: c.into(),
+            tree: t.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn head_uses_etags() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/commits/main"))
+            .and(header("if-none-match", "\"e1\""))
+            .respond_with(ResponseTemplate::new(304))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/commits/main"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("etag", "\"e1\"")
+                    .set_body_json(commit_json("c1", "t1")),
+            )
+            .mount(&server)
+            .await;
+        assert_eq!(
+            repo.head_if_changed().await.unwrap(),
+            Some(head("c1", "t1"))
+        );
+        assert_eq!(repo.head_if_changed().await.unwrap(), None);
+        assert_eq!(repo.head().await.unwrap(), head("c1", "t1"));
+        assert!(repo.is_private().await.unwrap());
+        assert_eq!(repo.owner_login().await.unwrap(), "o");
+    }
+
+    #[tokio::test]
+    async fn empty_repo_has_an_empty_head() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/commits/main"))
+            .respond_with(
+                ResponseTemplate::new(409)
+                    .set_body_json(json!({"message": "Git Repository is empty."})),
+            )
+            .mount(&server)
+            .await;
+        assert_eq!(repo.head_if_changed().await.unwrap(), Some(Head::empty()));
+        assert_eq!(repo.head_if_changed().await.unwrap(), None);
+        assert_eq!(repo.head().await.unwrap(), Head::empty());
+        assert!(repo.files_at("").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn lost_access_is_a_404() {
+        let (server, _) = setup().await;
+        let gh = GitHub::with_api("tok".into(), server.uri());
+        let gone = GitHubRepo::new(gh, GroupId::new("o", "gone"));
+        assert!(matches!(
+            gone.head().await,
+            Err(Error::GitHub { status: 404, .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn files_at_reads_allowlisted_blobs_once() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/git/commits/c1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"sha": "c1", "tree": {"sha": "t1"}})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/git/trees/t1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "truncated": false,
+                "tree": [
+                    {"path": "CLAUDE.md", "type": "blob", "sha": "b1"},
+                    {"path": "README.md", "type": "blob", "sha": "b2"},
+                    {"path": "skills", "type": "tree", "sha": "t2"},
+                    {"path": "skills/x/SKILL.md", "type": "blob", "sha": "b1"},
+                    {"path": ".github/workflows/x.yml", "type": "blob", "sha": "b3"},
+                ]
+            })))
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/git/blobs/b1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"content": "aGVs\nbG8=\n", "encoding": "base64"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let want = FileSet::from([
+            ("CLAUDE.md".to_string(), b"hello".to_vec()),
+            ("skills/x/SKILL.md".to_string(), b"hello".to_vec()),
+        ]);
+        assert_eq!(repo.files_at("c1").await.unwrap(), want);
+        assert_eq!(repo.files_at("c1").await.unwrap(), want);
+    }
+
+    #[tokio::test]
+    async fn truncated_trees_are_refused() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/git/commits/c1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"sha": "c1", "tree": {"sha": "t1"}})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/git/trees/t1"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"truncated": true, "tree": []})),
+            )
+            .mount(&server)
+            .await;
+        assert!(matches!(repo.files_at("c1").await, Err(Error::Invalid(_))));
+    }
+
+    async fn mount_commit_steps(server: &MockServer, parent: &Head) {
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/git/blobs"))
+            .and(body_json(json!({"content": "bmV3", "encoding": "base64"})))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"sha": "b9"})))
+            .mount(server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/git/trees"))
+            .and(body_json(json!({
+                "base_tree": parent.tree,
+                "tree": [
+                    {"path": "CLAUDE.md", "mode": "100644", "type": "blob", "sha": "b9"},
+                    {"path": "agents/old.md", "mode": "100644", "type": "blob", "sha": null},
+                ]
+            })))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"sha": "t9"})))
+            .mount(server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/git/commits"))
+            .and(body_json(json!({"message": "me@pc: update CLAUDE.md", "tree": "t9", "parents": [parent.commit]})))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"sha": "c9"})))
+            .mount(server)
+            .await;
+    }
+
+    fn changes() -> Changes {
+        BTreeMap::from([
+            ("CLAUDE.md".into(), Some(b"new".to_vec())),
+            ("agents/old.md".into(), None),
+        ])
+    }
+
+    #[tokio::test]
+    async fn commit_moves_the_branch_without_force() {
+        let (server, repo) = setup().await;
+        let parent = head("c1", "t1");
+        mount_commit_steps(&server, &parent).await;
+        Mock::given(method("PATCH"))
+            .and(path("/repos/o/r/git/refs/heads/main"))
+            .and(body_json(json!({"sha": "c9", "force": false})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"ref": "refs/heads/main"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let new = repo
+            .commit(&parent, &changes(), "me@pc: update CLAUDE.md")
+            .await
+            .unwrap();
+        assert_eq!(new, head("c9", "t9"));
+    }
+
+    #[tokio::test]
+    async fn non_fast_forward_is_a_push_race() {
+        let (server, repo) = setup().await;
+        let parent = head("c1", "t1");
+        mount_commit_steps(&server, &parent).await;
+        Mock::given(method("PATCH"))
+            .and(path("/repos/o/r/git/refs/heads/main"))
+            .respond_with(
+                ResponseTemplate::new(422)
+                    .set_body_json(json!({"message": "Update is not a fast forward"})),
+            )
+            .mount(&server)
+            .await;
+        let err = repo
+            .commit(&parent, &changes(), "me@pc: update CLAUDE.md")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::PushRace));
+    }
+
+    #[tokio::test]
+    async fn first_commit_of_an_empty_repo_goes_through_contents() {
+        let (server, repo) = setup().await;
+        Mock::given(method("PUT"))
+            .and(path("/repos/o/r/contents/CLAUDE.md"))
+            .and(body_partial_json(json!({"content": "aGk="})))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_json(json!({"commit": commit_json("c1", "t1")})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/git/blobs"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"sha": "b2"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/git/trees"))
+            .and(body_partial_json(json!({"base_tree": "t1"})))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"sha": "t2"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/git/commits"))
+            .and(body_partial_json(json!({"parents": ["c1"]})))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"sha": "c2"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/repos/o/r/git/refs/heads/main"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+        let changes = BTreeMap::from([
+            ("CLAUDE.md".into(), Some(b"hi".to_vec())),
+            ("claude-sync.json".into(), Some(b"{}".to_vec())),
+        ]);
+        assert_eq!(
+            repo.commit(&Head::empty(), &changes, "init").await.unwrap(),
+            head("c2", "t2")
+        );
+
+        // Someone else made the first commit meanwhile.
+        server.reset().await;
+        Mock::given(method("PUT"))
+            .respond_with(
+                ResponseTemplate::new(422).set_body_json(json!({"message": "sha wasn't supplied"})),
+            )
+            .mount(&server)
+            .await;
+        let one = BTreeMap::from([("CLAUDE.md".into(), Some(b"hi".to_vec()))]);
+        assert!(matches!(
+            repo.commit(&Head::empty(), &one, "init").await,
+            Err(Error::PushRace)
+        ));
+    }
+
+    #[tokio::test]
+    async fn members_and_invitations() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/collaborators"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!([{"login": "o"}, {"login": "f"}])),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/invitations"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([{"id": 7, "invitee": {"login": "p"}}])),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/repos/o/r/collaborators/q"))
+            .and(body_json(json!({"permission": "push"})))
+            .and(header_exists("authorization"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": 8})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/repos/o/r/collaborators/f"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/repos/o/r/invitations/7"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert_eq!(
+            repo.collaborators().await.unwrap(),
+            [
+                Collaborator::Member("o".into()),
+                Collaborator::Member("f".into()),
+                Collaborator::Invited {
+                    login: "p".into(),
+                    invitation_id: 7
+                },
+            ]
+        );
+        repo.invite("q").await.unwrap();
+        repo.remove_collaborator("f").await.unwrap();
+        repo.cancel_invitation(7).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recent_commits_newest_first() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/commits"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"sha": "c2", "author": {"login": "f"},
+                 "commit": {"message": "f@mac: update CLAUDE.md", "author": {"name": "F", "date": "2026-10-13T09:45:01Z"}}},
+                {"sha": "c1", "author": null,
+                 "commit": {"message": "init", "author": {"name": "Someone", "date": "bad"}}},
+            ])))
+            .mount(&server)
+            .await;
+        let got = repo.recent_commits(10).await.unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(
+            (got[0].author.as_str(), got[0].at_unix),
+            ("f", 1_791_884_701)
+        );
+        assert_eq!((got[1].author.as_str(), got[1].at_unix), ("Someone", 0));
+    }
 }
