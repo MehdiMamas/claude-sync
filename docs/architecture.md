@@ -153,7 +153,7 @@ Plain TypeScript functions, no framework. Env:
 
 | Name | What |
 |---|---|
-| `RELAY_GITHUB_TOKEN` | Fine-grained PAT on `MehdiMamas/claude-sync`: Contents read/write, Issues read/write, Metadata read. Plus Administration read on group repos listed in `GROUP_REPOS`, for collaborator checks. |
+| `RELAY_GITHUB_TOKEN` | Fine-grained PAT on `MehdiMamas/claude-sync` and the repos in `GROUP_REPOS`: Contents read/write, Issues read/write, Metadata read. Metadata read is enough for the collaborator check (`GET /repos/{owner}/{repo}/collaborators/{username}`); Administration is not needed. |
 | `RELEASES_REPO` | `MehdiMamas/claude-sync` |
 | `ALLOWED_GITHUB_USERS` | Comma-separated logins always allowed |
 | `GROUP_REPOS` | Comma-separated `owner/repo` (starts as `MehdiMamas/claude-sync-data`); their collaborators are allowed |
