@@ -6,6 +6,7 @@ use crate::ctx::{lock, Ctx, Status};
 use crate::feedback::{self, FeedbackInput, FeedbackResult, Screenshot};
 use crate::guard::{self, Error};
 use crate::updates::{self, UpdateInfo};
+use claude_sync_core::apply::Manifest;
 use claude_sync_core::engine::{CommitInfo, GroupStatus, SyncReport};
 use claude_sync_core::github::Invitation;
 use claude_sync_core::watch::{EditAction, LocalEdit};
@@ -217,19 +218,33 @@ pub async fn resolve_edit(
     Ok(())
 }
 
-/// Skill folders in `~/.claude/skills`, for the "Share a skill" picker.
+/// The user's own skill folders in `~/.claude/skills`, for the "Share a skill" picker.
+/// Skills a group put there are left out: they are shared already.
 #[tauri::command]
-pub fn local_skills(ctx: CtxState) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(ctx.paths.claude_home.join("skills"))
-        .map(|rd| {
-            rd.flatten()
-                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-                .filter_map(|e| e.file_name().into_string().ok())
-                .collect()
-        })
-        .unwrap_or_default();
+pub fn local_skills(ctx: CtxState) -> Res<Vec<String>> {
+    let manifest = Manifest::load(&ctx.paths).map_err(guard::logged("read the manifest"))?;
+    let rd = match std::fs::read_dir(ctx.paths.claude_home.join("skills")) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("could not list the skills: {e}")),
+    };
+    let mut names: Vec<String> = rd
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| !n.starts_with('.') && !group_managed(&manifest, n))
+        .collect();
     names.sort();
-    names
+    Ok(names)
+}
+
+fn group_managed(manifest: &Manifest, skill: &str) -> bool {
+    let prefix = format!("skills/{skill}/");
+    manifest
+        .files
+        .range(prefix.clone()..)
+        .next()
+        .is_some_and(|(path, _)| path.starts_with(&prefix))
 }
 
 #[tauri::command]
@@ -411,7 +426,9 @@ pub fn open_path(app: AppHandle, ctx: CtxState, path: String, reveal: Option<boo
 
 #[cfg(test)]
 mod tests {
-    use super::valid_login;
+    use super::{group_managed, valid_login};
+    use claude_sync_core::apply::{ManagedFile, Manifest};
+    use claude_sync_core::GroupId;
 
     #[test]
     fn logins() {
@@ -420,5 +437,23 @@ mod tests {
         assert!(valid_login("-x").is_err());
         assert!(valid_login("").is_err());
         assert!(valid_login(&"a".repeat(40)).is_err());
+    }
+
+    #[test]
+    fn group_skills_are_not_offered_for_sharing() {
+        let mut m = Manifest::default();
+        let owner = ManagedFile {
+            group: GroupId {
+                owner: "o".into(),
+                repo: "r".into(),
+            },
+            sha256: String::new(),
+        };
+        m.files.insert("skills/team/SKILL.md".into(), owner.clone());
+        m.files.insert("skills/team-b/x.md".into(), owner);
+        assert!(group_managed(&m, "team"));
+        assert!(group_managed(&m, "team-b"));
+        assert!(!group_managed(&m, "tea"));
+        assert!(!group_managed(&m, "mine"));
     }
 }
