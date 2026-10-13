@@ -36,11 +36,9 @@ pub async fn start(app: &AppHandle) -> Result<DeviceCodeView, Error> {
     }
     let ctx = app.state::<Arc<Ctx>>().inner().clone();
     let gen = ctx.next_sign_in_gen();
-    let code = guard::call_async(
-        "start sign-in",
-        github::start_device_flow(config::GITHUB_CLIENT_ID),
-    )
-    .await?;
+    let code = github::start_device_flow(config::GITHUB_CLIENT_ID)
+        .await
+        .map_err(guard::logged("start sign-in"))?;
     if let Err(e) = app.opener().open_url(&code.verification_uri, None::<&str>) {
         tracing::warn!("could not open the browser: {e}");
     }
@@ -101,22 +99,21 @@ async fn poll(
         if Instant::now() > deadline {
             return Err("The code expired. Start again.".into());
         }
-        match guard::call_async(
-            "sign-in",
-            github::poll_device_flow(config::GITHUB_CLIENT_ID, device_code),
-        )
-        .await?
+        match github::poll_device_flow(config::GITHUB_CLIENT_ID, device_code)
+            .await
+            .map_err(guard::logged("sign-in"))?
         {
             DevicePoll::Pending => {}
             DevicePoll::SlowDown(s) => every = Duration::from_secs(s.max(every.as_secs() + 5)),
             DevicePoll::Expired => return Err("The code expired. Start again.".into()),
             DevicePoll::Denied => return Err("Sign-in was cancelled on GitHub.".into()),
             DevicePoll::Token(token) => {
-                let user =
-                    guard::call_async("GitHub user", GitHub::new(token.clone()).user()).await?;
-                guard::call("save token", || {
-                    github::token_store::save(&user.login, &token)
-                })?;
+                let user = GitHub::new(token.clone())
+                    .user()
+                    .await
+                    .map_err(guard::logged("GitHub user"))?;
+                github::token_store::save(&user.login, &token)
+                    .map_err(guard::logged("save token"))?;
                 ctx.set_auth(Some(Auth {
                     login: user.login.clone(),
                     token,
@@ -132,6 +129,42 @@ async fn poll(
     }
 }
 
+/// Debug builds only: `CLAUDE_SYNC_DEV_TOKEN` signs in with that token so the app can be
+/// tried without a GitHub OAuth App. The token stays in memory: it is never written to
+/// the keychain, and signing out leaves the keychain alone.
+#[cfg(debug_assertions)]
+pub fn dev_token() -> Option<String> {
+    std::env::var("CLAUDE_SYNC_DEV_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
+#[cfg(debug_assertions)]
+pub fn sign_in_with_dev_token(app: &AppHandle, token: String) {
+    let a = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let ctx = a.state::<Arc<Ctx>>().inner().clone();
+        let user = match GitHub::new(token.clone()).user().await {
+            Ok(u) => u,
+            Err(e) => {
+                tracing::warn!("CLAUDE_SYNC_DEV_TOKEN was not accepted: {e}");
+                return;
+            }
+        };
+        tracing::info!("signed in as {} with CLAUDE_SYNC_DEV_TOKEN", user.login);
+        ctx.set_auth(Some(Auth {
+            login: user.login.clone(),
+            token,
+        }));
+        let login = user.login.clone();
+        let _ = ctx.update_state(|s| s.login = Some(login));
+        let _ = a.emit("signed-in", SignedIn { login: user.login });
+        background::refresh_status(&a);
+        background::sync_soon(&a, true);
+    });
+}
+
 pub fn cancel(ctx: &Ctx) {
     ctx.next_sign_in_gen();
 }
@@ -139,7 +172,14 @@ pub fn cancel(ctx: &Ctx) {
 pub fn sign_out(app: &AppHandle) -> Result<(), Error> {
     let ctx = app.state::<Arc<Ctx>>();
     cancel(&ctx);
-    let deleted = guard::call("delete token", github::token_store::delete);
+    #[cfg(debug_assertions)]
+    let deleted = if dev_token().is_some() {
+        Ok(())
+    } else {
+        github::token_store::delete().map_err(guard::logged("delete token"))
+    };
+    #[cfg(not(debug_assertions))]
+    let deleted = github::token_store::delete().map_err(guard::logged("delete token"));
     ctx.set_auth(None);
     let _ = ctx.update_state(|s| s.login = None);
     background::refresh_status(app);

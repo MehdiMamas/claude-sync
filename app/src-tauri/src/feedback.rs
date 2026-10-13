@@ -62,9 +62,9 @@ struct Payload {
 }
 
 pub fn logs(ctx: &Ctx) -> Result<String, Error> {
-    guard::call("logging::tail", || {
-        claude_sync_core::logging::tail(&ctx.paths, config::FEEDBACK_LOG_BYTES)
-    })
+    // Capped well under the relay's 4.5 MB body limit (§12).
+    claude_sync_core::logging::tail(&ctx.paths, config::FEEDBACK_LOG_BYTES)
+        .map_err(guard::logged("read the log"))
 }
 
 /// Hide the window, capture the primary monitor, show the window again.

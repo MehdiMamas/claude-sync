@@ -3,8 +3,9 @@
 use crate::config;
 use crate::ctx::{lock, now_unix, Ctx, Status};
 use crate::guard::{self, Error};
-use crate::{feedback, notify, tray, updates, watcher};
+use crate::{feedback, notify, tray, updates};
 use claude_sync_core::engine::SyncReport;
+use claude_sync_core::watch::WatchHandle;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -80,6 +81,7 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
     };
     match &result {
         Ok(report) => {
+            refresh_watcher(app);
             let _ = app.emit("sync-report", report);
             let errors: Vec<_> = report
                 .groups
@@ -257,23 +259,22 @@ async fn update_loop(app: AppHandle) {
     }
 }
 
+/// Watch `~/.claude` and the groups for hand edits (2 s debounce, §7). Without a watcher
+/// the sync loop still checks on every tick.
 fn start_watcher(app: &AppHandle) {
     let ctx = app.state::<Arc<Ctx>>();
-    let home = &ctx.paths.claude_home;
-    let paths = [
-        "skills",
-        "agents",
-        "commands",
-        "output-styles",
-        "CLAUDE.md",
-        "settings.json",
-    ]
-    .iter()
-    .map(|p| home.join(p))
-    .collect();
     let a = app.clone();
-    let handle = watcher::spawn_watcher(paths, move || check_local_edits(&a));
-    if let Some(h) = handle {
-        app.manage(h);
+    match claude_sync_core::watch::spawn_watcher(&ctx.paths, move || check_local_edits(&a)) {
+        Ok(h) => {
+            app.manage(h);
+        }
+        Err(e) => tracing::warn!("file watcher not started: {e}"),
+    }
+}
+
+/// Folders created by a sync are watched from now on.
+fn refresh_watcher(app: &AppHandle) {
+    if let Some(h) = app.try_state::<WatchHandle>() {
+        h.refresh();
     }
 }

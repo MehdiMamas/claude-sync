@@ -82,7 +82,7 @@ pub fn status(ctx: CtxState) -> Status {
 #[tauri::command]
 pub async fn groups(ctx: CtxState<'_>) -> Res<Vec<GroupStatus>> {
     let e = ctx.engine()?;
-    guard::call_async("groups", e.groups()).await
+    e.groups().await.map_err(guard::logged("groups"))
 }
 
 #[tauri::command]
@@ -101,7 +101,10 @@ pub async fn create_group(
         .filter(|r| !r.is_empty())
         .unwrap_or_else(|| group::DEFAULT_REPO.into());
     let e = ctx.engine()?;
-    let g = guard::call_async("create group", e.create_group(name, &repo)).await?;
+    let g = e
+        .create_group(name, &repo)
+        .await
+        .map_err(guard::logged("create group"))?;
     background::sync_soon(&app, true);
     Ok(g)
 }
@@ -114,7 +117,10 @@ pub async fn invitations(app: AppHandle) -> Res<Vec<Invitation>> {
 #[tauri::command]
 pub async fn accept_invitation(app: AppHandle, ctx: CtxState<'_>, id: u64) -> Res<GroupStatus> {
     let e = ctx.engine()?;
-    let g = guard::call_async("accept invitation", e.accept_invitation(id)).await?;
+    let g = e
+        .accept_invitation(id)
+        .await
+        .map_err(guard::logged("accept invitation"))?;
     lock(&ctx.known_invitations).retain(|i| *i != id);
     background::sync_soon(&app, true);
     Ok(g)
@@ -123,13 +129,13 @@ pub async fn accept_invitation(app: AppHandle, ctx: CtxState<'_>, id: u64) -> Re
 #[tauri::command]
 pub async fn discover(ctx: CtxState<'_>) -> Res<Vec<GroupId>> {
     let e = ctx.engine()?;
-    guard::call_async("discover groups", e.discover()).await
+    e.discover().await.map_err(guard::logged("discover groups"))
 }
 
 #[tauri::command]
 pub async fn join(app: AppHandle, ctx: CtxState<'_>, group: GroupId) -> Res<GroupStatus> {
     let e = ctx.engine()?;
-    let g = guard::call_async("join group", e.join(&group)).await?;
+    let g = e.join(&group).await.map_err(guard::logged("join group"))?;
     background::sync_soon(&app, true);
     Ok(g)
 }
@@ -154,7 +160,9 @@ pub async fn add_member(
 ) -> Res<()> {
     let login = valid_login(&login)?;
     let e = ctx.engine()?;
-    guard::call_async("add member", e.add_member(&group, login)).await?;
+    e.add_member(&group, login)
+        .await
+        .map_err(guard::logged("add member"))?;
     background::sync_soon(&app, true);
     Ok(())
 }
@@ -168,7 +176,9 @@ pub async fn remove_member(
 ) -> Res<()> {
     let login = valid_login(&login)?;
     let e = ctx.engine()?;
-    guard::call_async("remove member", e.remove_member(&group, login)).await?;
+    e.remove_member(&group, login)
+        .await
+        .map_err(guard::logged("remove member"))?;
     background::sync_soon(&app, true);
     Ok(())
 }
@@ -176,13 +186,13 @@ pub async fn remove_member(
 #[tauri::command]
 pub async fn leave_group(ctx: CtxState<'_>, group: GroupId) -> Res<()> {
     let e = ctx.engine()?;
-    guard::call_async("leave group", e.leave(&group)).await
+    e.leave(&group).await.map_err(guard::logged("leave group"))
 }
 
 #[tauri::command]
 pub fn local_edits(ctx: CtxState) -> Res<Vec<LocalEdit>> {
     let e = ctx.engine()?;
-    let edits = guard::call("local edits", || e.local_edits())?;
+    let edits = e.local_edits().map_err(guard::logged("local edits"))?;
     *lock(&ctx.last_edits) = edits.clone();
     Ok(edits)
 }
@@ -195,7 +205,9 @@ pub async fn resolve_edit(
     action: EditAction,
 ) -> Res<()> {
     let e = ctx.engine()?;
-    guard::call_async("resolve edit", e.resolve_edit(&edit, action)).await?;
+    e.resolve_edit(&edit, action)
+        .await
+        .map_err(guard::logged("resolve edit"))?;
     let remaining = {
         let mut last = lock(&ctx.last_edits);
         last.retain(|x| *x != edit);
@@ -231,7 +243,9 @@ pub async fn share_skill(
         return Err("not a skill folder name".into());
     }
     let e = ctx.engine()?;
-    guard::call_async("share skill", e.share_skill(&group, &skill)).await?;
+    e.share_skill(&group, &skill)
+        .await
+        .map_err(guard::logged("share skill"))?;
     background::sync_soon(&app, true);
     Ok(())
 }
@@ -243,11 +257,9 @@ pub async fn recent_commits(
     limit: Option<usize>,
 ) -> Res<Vec<CommitInfo>> {
     let e = ctx.engine()?;
-    guard::call_async(
-        "recent changes",
-        e.recent_commits(&group, limit.unwrap_or(20).min(100)),
-    )
-    .await
+    e.recent_commits(&group, limit.unwrap_or(20).min(100))
+        .await
+        .map_err(guard::logged("recent changes"))
 }
 
 #[tauri::command]
