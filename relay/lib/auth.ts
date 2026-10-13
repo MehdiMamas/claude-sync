@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { env } from "./env.ts";
-import { github, repoPath } from "./github.ts";
+import { discard, github, repoPath } from "./github.ts";
 import { HttpError, logWarn } from "./http.ts";
 
 export const AUTH_CACHE_MS = 10 * 60 * 1000;
@@ -40,11 +40,11 @@ function bearer(req: Request): string {
 async function loginFor(token: string): Promise<string> {
   const res = await github("/user", { token });
   if (res.status === 401) {
-    await res.body?.cancel();
+    discard(res);
     throw new HttpError(401, "invalid GitHub token", { "www-authenticate": "Bearer" });
   }
   if (!res.ok) {
-    await res.body?.cancel();
+    discard(res);
     logWarn(`GET /user returned ${res.status}`);
     throw new HttpError(502, "GitHub is unavailable");
   }
@@ -63,7 +63,7 @@ async function isGroupCollaborator(login: string): Promise<boolean> {
   const results = await Promise.all(
     repos.map(async (repo) => {
       const res = await github(`${repoPath(repo)}/collaborators/${encodeURIComponent(login)}`, { token });
-      await res.body?.cancel();
+      discard(res);
       if (res.status === 204) return "yes" as const;
       if (res.status === 404) return "no" as const;
       logWarn(`collaborator check on ${repo} returned ${res.status}`);

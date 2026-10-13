@@ -1,6 +1,8 @@
 // Minimal GitHub REST client on the global fetch. Tokens are passed per call and
 // never logged.
 
+import { HttpError } from "./http.ts";
+
 export const GITHUB_API = "https://api.github.com";
 
 export interface GitHubRequest {
@@ -27,19 +29,24 @@ export async function github(path: string, opts: GitHubRequest): Promise<Respons
   return fetch(`${GITHUB_API}${path}`, init);
 }
 
-/** Error for an unexpected GitHub status. The message names the call, never a token. */
-export class GitHubError extends Error {
-  readonly status: number;
+/** Drops an unread body. Not awaited: a cancel can wait on the other branch of a teed stream. */
+export function discard(res: Response): void {
+  res.body?.cancel().catch(() => {});
+}
+
+/** An unexpected GitHub status, answered as 502. The message names the call, never a token. */
+export class GitHubError extends HttpError {
+  readonly githubStatus: number;
   constructor(what: string, status: number) {
-    super(`GitHub ${what} returned ${status}`);
-    this.status = status;
+    super(502, `GitHub ${what} returned ${status}`);
+    this.githubStatus = status;
   }
 }
 
 export async function githubJson<T>(what: string, path: string, opts: GitHubRequest): Promise<T> {
   const res = await github(path, opts);
   if (!res.ok) {
-    await res.body?.cancel();
+    discard(res);
     throw new GitHubError(what, res.status);
   }
   return (await res.json()) as T;

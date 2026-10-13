@@ -44,6 +44,7 @@ export function handler(name: string, fn: (req: Request) => Promise<Response>): 
       return await fn(req);
     } catch (err) {
       if (err instanceof HttpError) {
+        if (err.status >= 500) logError(name, err);
         return json(err.status, { error: err.message }, err.headers);
       }
       logError(name, err);
