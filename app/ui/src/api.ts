@@ -31,6 +31,7 @@ export interface ApplyReport {
   removed: string[];
   collisions: Collision[];
   settingsSkipped: string[];
+  kept: string[];
 }
 export interface GroupSyncReport {
   id: GroupId;
