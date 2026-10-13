@@ -1,0 +1,17 @@
+{
+  "name": "claude-sync-relay",
+  "private": true,
+  "type": "module",
+  "description": "Vercel functions for claude-sync: updates, private release downloads and feedback.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/node": "24.x",
+    "typescript": "7.0.2"
+  }
+}
