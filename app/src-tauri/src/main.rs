@@ -16,7 +16,7 @@ mod window;
 
 use ctx::Ctx;
 use std::sync::Arc;
-use tauri::RunEvent;
+use tauri::{RunEvent, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 fn init_logging(ctx: &Ctx) {
@@ -118,19 +118,24 @@ fn main() {
             background::start(&handle);
             if !background_start || ctx.auth().is_none() {
                 window::open(&handle, None);
+            } else {
+                window::closed(&handle);
             }
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building the app");
 
-    app.run(|_app, event| {
+    app.run(|app, event| match event {
         // Closing the window must not quit: the app lives in the tray. Quit calls exit(0).
-        if let RunEvent::ExitRequested {
+        RunEvent::ExitRequested {
             api, code: None, ..
-        } = event
-        {
-            api.prevent_exit();
-        }
+        } => api.prevent_exit(),
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::Destroyed,
+            ..
+        } if label == window::LABEL => window::closed(app),
+        _ => {}
     });
 }
