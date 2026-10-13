@@ -7,7 +7,7 @@ import { handler, HttpError, json, logError } from "../lib/http.ts";
 import { pickSprint } from "../lib/milestone.ts";
 import { take } from "../lib/ratelimit.ts";
 
-export const ASSETS_BRANCH = "feedback-assets";
+const ASSETS_BRANCH = "feedback-assets";
 // Vercel caps request bodies at 4.5 MB; refuse early above that.
 const MAX_BODY_BYTES = 4_500_000;
 

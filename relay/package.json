@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Vercel functions for claude-sync: updates, private release downloads and feedback.",
   "engines": {
-    "node": ">=22.18"
+    "node": "24.x"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",
