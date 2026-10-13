@@ -16,7 +16,7 @@ pub mod fake;
 /// `Commit` changes: path -> new content, `None` = delete.
 pub type Changes = BTreeMap<String, Option<Vec<u8>>>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
 pub struct Head {
     pub commit: String,
     pub tree: String,
