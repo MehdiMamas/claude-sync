@@ -2025,7 +2025,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "needs apply layer; enabled at integration"]
     async fn integration_join_writes_into_claude_home() {
         let world = FakeGitHub::new();
         let (id, _) = group_repo(&world, &["ana", "bo"]);
@@ -2043,7 +2042,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "needs apply layer; enabled at integration"]
     async fn integration_secret_blocks_the_push() {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
@@ -2061,7 +2059,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "needs apply layer; enabled at integration"]
     async fn integration_lost_access_removes_files() {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
