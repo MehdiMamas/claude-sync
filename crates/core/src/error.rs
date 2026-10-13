@@ -15,7 +15,11 @@ pub enum Error {
     #[error("someone else pushed first and the retries ran out")]
     PushRace,
     #[error("secret found in {path}:{line} ({pattern}); nothing was committed")]
-    SecretFound { path: String, line: usize, pattern: String },
+    SecretFound {
+        path: String,
+        line: usize,
+        pattern: String,
+    },
     #[error("{path} is not one JSON object; nothing was merged")]
     InvalidJson { path: String },
     #[error("repo {0} is public; claude-sync only uses private repos")]

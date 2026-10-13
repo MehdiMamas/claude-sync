@@ -28,7 +28,9 @@ pub type FileSet = BTreeMap<String, Vec<u8>>;
 
 /// `owner/repo` of a group repo. Display and parse use `owner/repo`;
 /// on disk it is `owner__repo` (§10).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct GroupId {
     pub owner: String,
     pub repo: String,
@@ -36,7 +38,10 @@ pub struct GroupId {
 
 impl GroupId {
     pub fn new(owner: impl Into<String>, repo: impl Into<String>) -> Self {
-        Self { owner: owner.into(), repo: repo.into() }
+        Self {
+            owner: owner.into(),
+            repo: repo.into(),
+        }
     }
     pub fn parse(s: &str) -> Option<Self> {
         let (o, r) = s.split_once('/')?;
