@@ -34,6 +34,9 @@ pub struct GroupStatus {
     pub last_error: Option<String>,
     pub conflicts: Vec<ConflictInfo>,
     pub collisions: Vec<crate::apply::Collision>,
+    /// Joining placed or changed plugin files: open Claude Code sessions need
+    /// `/reload-plugins`. Only set on the status a join returns.
+    pub plugins_changed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -412,9 +415,9 @@ impl Engine {
     }
 
     /// Leave on this device: remove managed content. Does not change membership.
-    pub async fn leave(&self, id: &GroupId) -> crate::Result<()> {
+    pub async fn leave(&self, id: &GroupId) -> crate::Result<ApplyReport> {
         let _busy = self.busy.lock().await;
-        self.forget(id).map(drop)
+        self.forget(id)
     }
 
     pub fn local_edits(&self) -> crate::Result<Vec<LocalEdit>> {
@@ -431,6 +434,14 @@ impl Engine {
         let whole_file = file == edit.path;
         match action {
             EditAction::Share => {
+                let local = self.apply.local_files(&self.paths, id)?;
+                if let Some(bytes) = local.get(file).filter(|b| group::too_large(file, b.len())) {
+                    return Err(Error::Invalid(format!(
+                        "{file} is {} bytes; plugin files over {} MiB are not shared",
+                        bytes.len(),
+                        group::MAX_PLUGIN_FILE >> 20
+                    )));
+                }
                 status.shared.insert(file.to_string());
                 self.save_status(id, &status)?;
                 match self.sync_group(id, None).await {
@@ -558,8 +569,11 @@ impl Engine {
             state.save(&self.paths)?;
         }
         // Errors of the first sync show in the status, like any later one.
-        self.sync_group(id, Some(head)).await;
-        Ok(self.group_status(id))
+        let (report, _) = self.sync_group(id, Some(head)).await;
+        Ok(GroupStatus {
+            plugins_changed: report.apply.plugins_changed,
+            ..self.group_status(id)
+        })
     }
 
     /// Change `claude-sync.json` and commit it, retrying on push races. `false` when `edit`
@@ -668,7 +682,8 @@ impl Engine {
             let keep = |p: &str| group::is_allowlisted(p) && gf.syncs(p);
             let base_v = only(&base.files, keep);
             let remote_v = only(&remote_files, keep);
-            let local = self.local_view(id, &base_v, status, keep)?;
+            let mut too_large = Vec::new();
+            let local = self.local_view(id, &base_v, status, keep, &mut too_large)?;
             let merged = merge::three_way(&base_v, &local, &remote_v);
 
             // Save losing local copies before the apply overwrites them.
@@ -677,7 +692,23 @@ impl Engine {
                 .extend(self.save_conflicts(id, &merged.conflicts)?);
             let mut to_apply = merged.merged;
             to_apply.remove(group::FILE);
+            // A local edit that is not being shared stays a local edit: the apply gets the
+            // group's version, so it leaves the edit in place instead of adopting it.
+            for p in merged.to_push.keys() {
+                if read_only.is_none() && status.shared.contains(p) {
+                    continue;
+                }
+                match remote_v.get(p) {
+                    Some(bytes) => to_apply.insert(p.clone(), bytes.clone()),
+                    None => to_apply.remove(p),
+                };
+            }
             report.apply = self.apply.apply_group(&self.paths, id, &order, &to_apply)?;
+            for note in too_large {
+                if !report.apply.skipped.contains(&note) {
+                    report.apply.skipped.push(note);
+                }
+            }
             status.collisions = report.apply.collisions.iter().map(Into::into).collect();
             base = Base {
                 head: head.clone(),
@@ -734,14 +765,16 @@ impl Engine {
 
     /// The local side of the merge. The apply layer reads managed files back; the engine
     /// supplies the rest from the base: the group file (repo only), paths the apply layer did
-    /// not write (collisions) and paths missing locally that the user did not choose to delete
-    /// (kept local, or not readable back).
+    /// not write (collisions), paths missing locally that the user did not choose to delete
+    /// (kept local, or not readable back), and plugin files grown over the size cap (noted
+    /// in `too_large`).
     fn local_view(
         &self,
         id: &GroupId,
         base: &FileSet,
         status: &Status,
         keep: impl Fn(&str) -> bool,
+        too_large: &mut Vec<String>,
     ) -> crate::Result<FileSet> {
         let mut local: FileSet = self
             .apply
@@ -751,6 +784,12 @@ impl Engine {
             .collect();
         let mut held = self.apply.excluded_paths(&self.paths, id)?;
         held.extend(status.collisions.iter().map(|c| c.path().to_string()));
+        for (p, bytes) in &local {
+            if group::too_large(p, bytes.len()) {
+                too_large.push(group::too_large_note(p));
+                held.insert(p.clone());
+            }
+        }
         let paths: BTreeSet<String> = base.keys().chain(&held).cloned().collect();
         for p in paths {
             let unshared_delete = !local.contains_key(&p) && !status.shared.contains(&p);
@@ -914,6 +953,7 @@ impl Engine {
             last_error: s.last_error,
             conflicts: s.conflicts,
             collisions: s.collisions.into_iter().map(Into::into).collect(),
+            plugins_changed: false,
         }
     }
 
@@ -1083,7 +1123,8 @@ mod tests {
     use std::sync::Mutex;
 
     /// `~/.claude` of one device, in memory. Paths in `collide` belong to the user and are never
-    /// written; kept paths stop being managed.
+    /// written; kept paths stop being managed. Like the real apply, a file edited locally is
+    /// left alone while the group's version stays the one last applied.
     #[derive(Default)]
     struct StubApply {
         st: Mutex<StubState>,
@@ -1092,6 +1133,8 @@ mod tests {
     #[derive(Default)]
     struct StubState {
         local: HashMap<GroupId, FileSet>,
+        /// The group's version of each file as last applied.
+        applied: HashMap<GroupId, FileSet>,
         kept: BTreeSet<String>,
         collide: BTreeSet<String>,
         removed: Vec<GroupId>,
@@ -1144,6 +1187,10 @@ mod tests {
             let mut st = self.st.lock().unwrap();
             let mut report = ApplyReport::default();
             let old = st.local.remove(group).unwrap_or_default();
+            let applied = st
+                .applied
+                .insert(group.clone(), files.clone())
+                .unwrap_or_default();
             let mut new = FileSet::new();
             for (path, bytes) in files {
                 if st.collide.contains(path) {
@@ -1151,6 +1198,13 @@ mod tests {
                         .collisions
                         .push(Collision::UserFile { path: path.clone() });
                 } else if !st.kept.contains(path) {
+                    if applied.get(path) == Some(bytes) && old.get(path) != Some(bytes) {
+                        // Edited locally, the group's version did not change.
+                        if let Some(mine) = old.get(path) {
+                            new.insert(path.clone(), mine.clone());
+                        }
+                        continue;
+                    }
                     if old.get(path) != Some(bytes) {
                         report.written.push(path.clone());
                     }
@@ -1453,14 +1507,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shared_delete_is_pushed_and_unshared_delete_is_restored() {
+    async fn shared_delete_is_pushed_and_unshared_delete_is_held() {
         let (_, id, repo, bo) = joined().await;
         bo.apply.delete(&id, "agents/a.md");
         bo.engine.sync_all().await.unwrap();
         assert!(repo.file("agents/a.md").is_some());
-        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "base\n");
+        assert_eq!(
+            bo.apply.file(&id, "agents/a.md"),
+            None,
+            "still a local edit"
+        );
 
-        bo.apply.delete(&id, "agents/a.md");
         let mut deleted = edit(&id, "agents/a.md");
         deleted.deleted = true;
         bo.engine
@@ -2069,6 +2126,147 @@ mod tests {
         assert!(home.join("CLAUDE.md").exists());
         assert!(!home.join(group::FILE).exists());
         assert!(bo.local_edits().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn integration_unshared_edit_survives_a_sync() {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        let (bo, _dir) = real_device(&world, "bo");
+        bo.join(&id).await.unwrap();
+        let before = repo.commits().len();
+        let home = bo.paths.claude_home.clone();
+        std::fs::write(home.join("agents").join("a.md"), "mine\n").unwrap();
+        let copy = bo.paths.group_dir(&id).join(group::CLAUDE_MD);
+        std::fs::write(&copy, "# Mine\n").unwrap();
+        let settings = home.join("settings.json");
+        std::fs::write(&settings, "{\"a\": 2}\n").unwrap();
+        let listed = |e: &Engine| {
+            let mut p: Vec<String> = e
+                .local_edits()
+                .unwrap()
+                .into_iter()
+                .map(|e| e.path)
+                .collect();
+            p.sort();
+            p
+        };
+        let want = ["CLAUDE.md", "agents/a.md", "settings.shared.json#/a"];
+        assert_eq!(listed(&bo), want);
+        for _ in 0..2 {
+            bo.sync_all().await.unwrap();
+            assert_eq!(listed(&bo), want, "an unshared edit must stay a local edit");
+        }
+        assert_eq!(repo.commits().len(), before);
+        assert_eq!(
+            std::fs::read_to_string(home.join("agents").join("a.md")).unwrap(),
+            "mine\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn integration_plugins_round_trip() {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_file(
+            "plugins/mp/.claude-plugin/marketplace.json",
+            r#"{"name":"mp","plugins":[{"name":"p","source":"./p"}]}"#,
+        );
+        repo.set_file("plugins/mp/p/hooks/hooks.json", "{}\n");
+        let (ana, _a) = real_device(&world, "ana");
+        let (bo, _b) = real_device(&world, "bo");
+        ana.join(&id).await.unwrap();
+        let mp = |e: &Engine| e.paths.marketplaces_dir().join("mp");
+        assert!(mp(&ana).join("p/hooks/hooks.json").exists());
+
+        // Ana edits a plugin file and adds one; both are local edits until shared.
+        std::fs::write(mp(&ana).join("p/hooks/hooks.json"), "{\"v\":2}\n").unwrap();
+        std::fs::write(mp(&ana).join("p/hooks/run.ts"), "export {}\n").unwrap();
+        // A file over the cap is listed, but never shared.
+        std::fs::write(
+            mp(&ana).join("p/big.bin"),
+            vec![b'x'; group::MAX_PLUGIN_FILE + 1],
+        )
+        .unwrap();
+        let edits = ana.local_edits().unwrap();
+        let paths: Vec<&str> = edits.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "plugins/mp/p/big.bin",
+                "plugins/mp/p/hooks/hooks.json",
+                "plugins/mp/p/hooks/run.ts"
+            ]
+        );
+        let err = ana
+            .resolve_edit(&edits[0], EditAction::Share)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("1 MiB"), "{err}");
+        for e in &edits[1..] {
+            ana.resolve_edit(e, EditAction::Share).await.unwrap();
+        }
+        assert_eq!(
+            repo.file("plugins/mp/p/hooks/hooks.json").unwrap(),
+            "{\"v\":2}\n"
+        );
+        assert_eq!(
+            repo.file("plugins/mp/p/hooks/run.ts").unwrap(),
+            "export {}\n"
+        );
+        assert!(repo.file("plugins/mp/p/big.bin").is_none());
+        let report = ana.sync_all().await.unwrap();
+        assert!(repo.file("plugins/mp/p/big.bin").is_none());
+        assert!(report.groups[0]
+            .apply
+            .skipped
+            .iter()
+            .any(|n| n.contains("plugins/mp/p/big.bin")));
+
+        // Bo gets the files and the marketplace entry for its own copy.
+        assert!(bo.join(&id).await.unwrap().plugins_changed);
+        assert_eq!(
+            std::fs::read_to_string(mp(&bo).join("p/hooks/run.ts")).unwrap(),
+            "export {}\n"
+        );
+        let settings: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(bo.paths.claude_home.join("settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            settings["extraKnownMarketplaces"]["mp"]["source"],
+            serde_json::json!({"source": "directory", "path": std::path::absolute(mp(&bo)).unwrap().to_string_lossy()})
+        );
+        assert!(bo.local_edits().unwrap().is_empty());
+
+        // A later change reaches Bo with the reload hint; a sync with nothing new has none.
+        repo.set_file("plugins/mp/p/hooks/run.ts", "export const v = 3\n");
+        let report = bo.sync_all().await.unwrap();
+        assert!(report.groups[0].apply.plugins_changed);
+        let report = bo.sync_all().await.unwrap();
+        assert!(!report.groups[0].apply.plugins_changed);
+
+        // Removing the marketplace from the repo removes it on Bo.
+        let gone: Changes = repo
+            .files()
+            .into_keys()
+            .filter(|p| p.starts_with("plugins/"))
+            .map(|p| (p, None))
+            .collect();
+        repo.push(&gone, "drop mp");
+        let report = bo.sync_all().await.unwrap();
+        assert!(report.groups[0].apply.plugins_changed);
+        assert!(!mp(&bo).exists());
+        let settings: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(bo.paths.claude_home.join("settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(settings.pointer("/extraKnownMarketplaces/mp"), None);
+
+        // Leaving removes Ana's copy, with the reload hint; her never-shared file stays.
+        assert!(ana.leave(&id).await.unwrap().plugins_changed);
+        assert!(!mp(&ana).join("p/hooks/hooks.json").exists());
+        assert!(mp(&ana).join("p/big.bin").exists());
     }
 
     #[tokio::test]

@@ -391,7 +391,7 @@ fn remove_dropped(out: &mut Value, shared: &Value, prev: &Owned, owned: &mut Own
 }
 
 /// Remove the key at `ptr`, then prune objects that the removal left empty.
-fn remove_at(root: &mut Value, ptr: &str) {
+pub(crate) fn remove_at(root: &mut Value, ptr: &str) {
     let toks: Vec<String> = tokens(ptr).collect();
     for depth in (1..=toks.len()).rev() {
         let parent_ptr: String = toks[..depth - 1]
@@ -413,7 +413,7 @@ fn remove_at(root: &mut Value, ptr: &str) {
 }
 
 /// Set `ptr` to `v`, creating objects on the way. False when a parent is not an object.
-fn set_at(root: &mut Value, ptr: &str, v: Value) -> bool {
+pub(crate) fn set_at(root: &mut Value, ptr: &str, v: Value) -> bool {
     let toks: Vec<String> = tokens(ptr).collect();
     let Some((last, parents)) = toks.split_last() else {
         return false;

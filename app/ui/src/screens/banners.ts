@@ -1,7 +1,10 @@
-// Notices shown above every screen: a ready update, and local edits to shared files (§7).
+// Notices shown above every screen: a ready update, plugins to reload, and local edits to
+// shared files (§7).
 import { api, groupKey, type EditAction, type LocalEdit } from "../api";
 import { busy, h, toast } from "../dom";
 import { store } from "../store";
+
+export const PLUGINS_CHANGED = "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them.";
 
 const ACTIONS: { action: EditAction; label: string; done: string }[] = [
   { action: "share", label: "Share with group", done: "Shared with the group" },
@@ -51,6 +54,18 @@ export function banners(): HTMLElement[] {
         "div",
         { class: "notice info", role: "region", "aria-label": "Update" },
         h("div", { class: "notice-text" }, `claude-sync ${u.version} is ready. It installs when you quit, or now:`),
+        h("div", { class: "actions" }, btn),
+      ),
+    );
+  }
+  if (store.pluginsChanged) {
+    const btn = h("button", null, "Dismiss");
+    btn.addEventListener("click", () => store.set({ pluginsChanged: false }));
+    out.push(
+      h(
+        "div",
+        { class: "notice info", role: "region", "aria-label": "Plugins changed" },
+        h("div", { class: "notice-text" }, PLUGINS_CHANGED),
         h("div", { class: "actions" }, btn),
       ),
     );

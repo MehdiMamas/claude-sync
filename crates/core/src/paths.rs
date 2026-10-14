@@ -69,7 +69,14 @@ impl Paths {
     pub fn backups_dir(&self) -> PathBuf {
         self.state_dir.join("backups")
     }
+    /// Plugin marketplaces bundled in group repos (`plugins/<name>/` -> `marketplaces/<name>/`).
+    pub fn marketplaces_dir(&self) -> PathBuf {
+        self.state_dir.join(MARKETPLACES)
+    }
 }
+
+/// The folder under `state_dir` that holds bundled plugin marketplaces.
+pub const MARKETPLACES: &str = "marketplaces";
 
 #[cfg(test)]
 mod tests {

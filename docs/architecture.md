@@ -48,6 +48,7 @@ skills/<name>/...       shared skills
 agents/*.md             shared subagents
 commands/*.md           shared slash commands
 output-styles/*.md      shared output styles
+plugins/<marketplace>/  shared plugin marketplaces (below)
 ```
 
 `claude-sync.json`:
@@ -57,13 +58,23 @@ output-styles/*.md      shared output styles
   "schema": 1,
   "name": "Mehdi & friends",
   "members": ["MehdiMamas", "friend-login"],
-  "sync": { "settings": true, "claudeMd": true, "skills": true, "agents": true, "commands": true, "outputStyles": true }
+  "sync": { "settings": true, "claudeMd": true, "skills": true, "agents": true, "commands": true, "outputStyles": true, "plugins": true }
 }
 ```
 
 - The host is whoever owns the repo. It is not stored in the file, so a repo transfer moves the host role without edits.
 - `members` is the list of GitHub logins that should have access. Logins compare case-insensitively.
 - Unknown keys are kept on rewrite. A `schema` newer than the app knows means read-only until the app updates.
+
+### Plugins
+
+A group can bundle Claude Code plugin marketplaces (issue #30). `plugins/<marketplace>/` is a marketplace folder exactly as Claude Code expects it: `.claude-plugin/marketplace.json` plus the plugins it lists.
+
+- **Valid marketplace.** The folder name matches `[a-z0-9][a-z0-9-]*`, and `plugins/<marketplace>/.claude-plugin/marketplace.json` exists with `"name"` equal to the folder name. Otherwise the marketplace is not installed and the sync report says why.
+- **Allowlist.** Any path below `plugins/<marketplace>/` syncs, dot-files included (`.claude-plugin/`, `.gitignore`), except `.git`, `.DS_Store`, `.env` / `.env.*` and anything under `node_modules`. The usual path checks still apply (no `..`, no Windows-reserved names).
+- **Size cap.** A plugin file over 1 MiB is neither placed nor shared. It is reported, and Share refuses it.
+- **Trust.** Plugins run code (hooks, MCP servers, scripts) on every member's machine. The join screens and the group README say so: "Plugins in this group run code on every member's machine; only join groups whose members you trust."
+- Where the files go and how Claude Code finds them is in §7 and §8. Which plugins are on stays in `settings.shared.json` (`enabledPlugins`).
 
 ## 5. Membership as code
 
@@ -98,8 +109,10 @@ The engine talks to GitHub's REST API only. It never needs `git` on the machine.
 Moves the merged group state into `~/.claude` without touching anything it does not own.
 
 - **Managed files are copies, not links.** Copies work the same on every OS, need no admin rights, and let the app see local edits. `~/.claude-sync/manifest.json` records every file the app wrote: path, group, SHA-256.
-- Targets: `skills/<name>/**` → `~/.claude/skills/<name>/**`; `agents/*.md`, `commands/*.md`, `output-styles/*.md` → the same folder under `~/.claude`.
+- Targets: `skills/<name>/**` → `~/.claude/skills/<name>/**`; `agents/*.md`, `commands/*.md`, `output-styles/*.md` → the same folder under `~/.claude`; `plugins/<marketplace>/**` → `~/.claude-sync/marketplaces/<marketplace>/**` (outside `~/.claude`, so Claude Code's own plugin cache is never touched).
 - **Ownership rules.** The app writes or deletes a path only if the manifest says it owns it. A path that exists but is not in the manifest belongs to the user: the group file is skipped and reported as a collision. Two groups that ship the same path: the group joined first wins and the other is reported.
+- **Marketplaces.** The folder under `~/.claude-sync/marketplaces/` is the app's, so a stray file in the way is backed up and replaced, not reported. A marketplace belongs to the first group that placed it: if a second joined group ships the same name, that group gets a collision on `plugins/<marketplace>` and none of its files for it are placed. When the owner leaves, the next sync of the other group takes it over. The manifest records the owner of each marketplace and the `settings.json` entry the app set for it (§8).
+- **Reload.** Claude Code reads plugins when a session starts. When an apply, join or leave changes a plugin file or a marketplace entry, the sync report carries `pluginsChanged` and the app says: "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them."
 - **CLAUDE.md.** The group's `CLAUDE.md` is copied to `~/.claude-sync/groups/<owner>__<repo>/CLAUDE.md`. `~/.claude/CLAUDE.md` gets one managed block at the top, with one import line per group:
   ```
   <!-- claude-sync:begin (managed, do not edit inside) -->
@@ -107,7 +120,7 @@ Moves the merged group state into `~/.claude` without touching anything it does 
   <!-- claude-sync:end -->
   ```
   Everything outside the block is the user's.
-- **Local edits.** A file watcher (debounced, 2 s) on managed paths compares hashes against the manifest. A changed managed file shows a notice: **Share with group** (commit it), **Keep local** (stop managing that path on this device), or **Undo** (restore the group's version). A new local skill can be shared from the app.
+- **Local edits.** A file watcher (debounced, 2 s) on managed paths compares hashes against the manifest. A changed managed file shows a notice: **Share with group** (commit it), **Keep local** (stop managing that path on this device), or **Undo** (restore the group's version). A new local skill can be shared from the app. The watcher also covers `~/.claude-sync/marketplaces/`: an edited plugin file, or a new file inside a marketplace folder a group placed, gets the same notice, and Share commits it under `plugins/<marketplace>/`. Undo of a new file removes it (a copy goes to the backups).
 - Every write goes through write-to-temp-then-rename. Before the first change to an existing user file (`CLAUDE.md`, `settings.json`) the app copies it to `~/.claude-sync/backups/<UTC time>/`.
 
 ## 8. Settings merge
@@ -120,7 +133,11 @@ Moves the merged group state into `~/.claude` without touching anything it does 
 - If either file is not one JSON object, nothing is merged and the app says so. If the result equals the current file, nothing is written.
 - Never shared, even if present in `settings.shared.json`: `apiKeyHelper`, `env` values that the secret scan flags, and `hooks` whose commands contain absolute paths (reported, not applied).
 
-Plugins and marketplaces are settings: `extraKnownMarketplaces` and `enabledPlugins` in `settings.shared.json`. Use `github` sources so they work on every machine (a `directory` source is a local path).
+Plugins and marketplaces:
+
+- A marketplace bundled under `plugins/<marketplace>/` (§4) is registered by the app, not by `settings.shared.json`: apply sets `extraKnownMarketplaces.<marketplace>` in `~/.claude/settings.json` to `{"source": {"source": "directory", "path": "<absolute path of ~/.claude-sync/marketplaces/<marketplace>>"}}`. The path is this machine's, so the value never goes through `settings.shared.json` and is never offered for sharing.
+- That value is the app's. It replaces a different local value for the same name (for example a `directory` source pointing at a local checkout); `settings.json` is backed up first and the report says so. It also wins over the same key in any group's `settings.shared.json`, which is reported and not applied. It is removed when the marketplace leaves the group or the group is removed, but only while it still holds the value the app set.
+- `enabledPlugins` (and any marketplace not bundled in the repo) stay in `settings.shared.json` and merge as above. A marketplace that is not bundled needs a source that works on every machine, such as `github`; a `directory` source there is a path on one machine.
 
 ## 9. Secret scan
 
@@ -131,10 +148,11 @@ Ported from v0 (`lib/secrets.sh`, `SPEC.md` §7): `github_pat_…`, `sk-ant-…`
 ```
 ~/.claude-sync/
   state.json             signed-in login, device name, groups joined (order matters), poll interval, paused
-  manifest.json          managed files (§7)
+  manifest.json          managed files and marketplace owners (§7)
   settings-owned.json    settings ownership (§8)
   groups/<owner>__<repo>/base/   base snapshot (§6)
   groups/<owner>__<repo>/CLAUDE.md
+  marketplaces/<name>/   plugin marketplaces bundled in a group repo (§4, §7)
   conflicts/  backups/  logs/
 ```
 

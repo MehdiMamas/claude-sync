@@ -18,6 +18,10 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const PREFIX: &str = "claude-sync-e2e-";
+const MARKETPLACE_V1: &str = "{\"name\": \"e2e-mp\", \"plugins\": []}\n";
+const MARKETPLACE_V2: &str =
+    "{\"name\": \"e2e-mp\", \"plugins\": [{\"name\": \"e2e\", \"source\": \"./e2e\"}]}\n";
+const PLUGIN_JSON: &str = "{\"name\": \"e2e\", \"version\": \"0.1.0\"}\n";
 const TOKEN_VAR: &str = "CLAUDE_SYNC_E2E_TOKEN";
 
 /// Deletes the run's repo when dropped, on success and on panic.
@@ -90,6 +94,16 @@ fn write(e: &Engine, rel: &str, text: &str) {
     let p = home_file(e, rel);
     std::fs::create_dir_all(p.parent().unwrap()).unwrap();
     std::fs::write(p, text).unwrap();
+}
+
+/// A file of a bundled marketplace on this device: `plugins/<rel>` in the repo.
+fn mp_file(e: &Engine, rel: &str) -> std::path::PathBuf {
+    rel.split('/')
+        .fold(e.paths.marketplaces_dir(), |p, s| p.join(s))
+}
+
+fn read_mp(e: &Engine, rel: &str) -> Option<String> {
+    std::fs::read_to_string(mp_file(e, rel)).ok()
 }
 
 fn settings(e: &Engine) -> serde_json::Value {
@@ -243,6 +257,10 @@ async fn two_devices_against_real_github() {
         ("commands/e2e.md", "command v1\n"),
         ("skills/e2e/SKILL.md", "---\nname: e2e\n---\nskill v1\n"),
         (
+            "plugins/e2e-mp/.claude-plugin/marketplace.json",
+            MARKETPLACE_V1,
+        ),
+        (
             "settings.shared.json",
             "{\n  \"env\": {\n    \"E2E_A\": \"1\",\n    \"E2E_B\": \"1\"\n  }\n}\n",
         ),
@@ -278,6 +296,57 @@ async fn two_devices_against_real_github() {
         read(e, "agents/e2e-a.md").as_deref() == Some("agent a v2\n")
     })
     .await;
+
+    // Plugins: A changes the bundled marketplace and adds a plugin; B gets both, plus a
+    // directory source in settings.json that points at B's own copy.
+    assert_eq!(
+        read_mp(&a, "e2e-mp/.claude-plugin/marketplace.json").as_deref(),
+        Some(MARKETPLACE_V1)
+    );
+    std::fs::write(
+        mp_file(&a, "e2e-mp/.claude-plugin/marketplace.json"),
+        MARKETPLACE_V2,
+    )
+    .unwrap();
+    let plugin = mp_file(&a, "e2e-mp/e2e/.claude-plugin/plugin.json");
+    std::fs::create_dir_all(plugin.parent().unwrap()).unwrap();
+    std::fs::write(&plugin, PLUGIN_JSON).unwrap();
+    let edits: Vec<String> = a
+        .local_edits()
+        .unwrap()
+        .into_iter()
+        .map(|e| e.path)
+        .collect();
+    assert_eq!(
+        edits,
+        [
+            "plugins/e2e-mp/.claude-plugin/marketplace.json",
+            "plugins/e2e-mp/e2e/.claude-plugin/plugin.json"
+        ]
+    );
+    share_all(&a).await;
+    remote_until(
+        &gh,
+        &id,
+        "plugins/e2e-mp/e2e/.claude-plugin/plugin.json",
+        |c| c == Some(PLUGIN_JSON),
+    )
+    .await;
+    pull_until(&b, "A's plugin", |e| {
+        read_mp(e, "e2e-mp/e2e/.claude-plugin/plugin.json").as_deref() == Some(PLUGIN_JSON)
+    })
+    .await;
+    assert_eq!(
+        read_mp(&b, "e2e-mp/.claude-plugin/marketplace.json").as_deref(),
+        Some(MARKETPLACE_V2)
+    );
+    let b_dir = std::path::absolute(b.paths.marketplaces_dir().join("e2e-mp")).unwrap();
+    let source = &settings(&b)["extraKnownMarketplaces"]["e2e-mp"]["source"];
+    assert_eq!(source["source"], "directory");
+    assert_eq!(source["path"], b_dir.to_string_lossy().as_ref());
+    assert!(b_dir.join("e2e/.claude-plugin/plugin.json").is_file());
+    assert!(b.local_edits().unwrap().is_empty());
+    assert!(a.local_edits().unwrap().is_empty());
 
     // ETag: unchanged remote answers 304, so the 60 s loop does nothing.
     let etag = GitHubRepo::new(gh.clone(), id.clone());
@@ -402,7 +471,13 @@ async fn two_devices_against_real_github() {
     assert!(found, "{id} not in group_repos()");
 
     // Leave removes B's managed content.
-    b.leave(&id).await.unwrap();
+    assert!(b.leave(&id).await.unwrap().plugins_changed);
     assert_eq!(read(&b, "agents/e2e-a.md"), None);
+    assert!(!b.paths.marketplaces_dir().join("e2e-mp").exists());
+    assert_eq!(
+        settings(&b).pointer("/extraKnownMarketplaces/e2e-mp"),
+        None,
+        "the marketplace entry leaves with the group"
+    );
     assert!(b.groups().await.unwrap().is_empty());
 }

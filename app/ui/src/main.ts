@@ -134,6 +134,7 @@ async function boot(): Promise<void> {
     on("update-available", (update) => store.set({ update })),
     on("signed-in", async () => store.set({ auth: await api.authStatus() })),
     on("sync-report", () => store.bump()),
+    on("plugins-changed", () => store.set({ pluginsChanged: true })),
     on("navigate", (route) => go(route)),
   ]);
   const [auth, status, info, update] = await Promise.all([

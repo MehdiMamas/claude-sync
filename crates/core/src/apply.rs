@@ -9,11 +9,16 @@
 //! - `groups/<owner>__<repo>/CLAUDE.md` and `.../settings.shared.json`: the group's files
 //!   as last applied, byte for byte.
 //! - `backups/<UTC time>/`: copies of user files taken before the app changes them.
+//! - `marketplaces/<name>/`: plugin marketplaces a group bundles under `plugins/<name>/`,
+//!   registered in `settings.json` as `extraKnownMarketplaces.<name>` (a directory source).
+//!   The manifest tracks these files like the ones in `~/.claude` (see [`target_of`]).
 //!
 //! A managed file the user edited (or deleted) is not reverted while the group's version
 //! stays the same; it shows up in `watch::local_edits` and in [`local_files`] instead. When
 //! the group ships a new version, the apply writes it: by then the three-way merge
 //! upstream has seen both sides and saved any losing local copy.
+use crate::group;
+use crate::paths::MARKETPLACES;
 use crate::settings::{self, Owned};
 use crate::{FileSet, GroupId, Paths};
 use serde::{Deserialize, Serialize};
@@ -53,21 +58,32 @@ pub struct ApplyReport {
     /// Managed files left in place because they were edited locally (the group dropped
     /// them, or the group was removed). They are the user's now, or a local edit to share.
     pub kept: Vec<String>,
+    /// Group files not placed and why: oversize plugin files, invalid marketplaces (§4).
+    pub skipped: Vec<String>,
+    /// A plugin file or a bundled marketplace's `settings.json` entry changed: open Claude
+    /// Code sessions need `/reload-plugins` (or a restart) to see it.
+    pub plugins_changed: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
-    /// `~/.claude`-relative path (forward slashes) -> owner.
+    /// Repo path (forward slashes) -> owner. The file is at that path under `~/.claude`,
+    /// except `plugins/<name>/...`, which is under `<state_dir>/marketplaces/<name>/...`.
     #[serde(default)]
     pub files: BTreeMap<String, ManagedFile>,
+    /// Bundled plugin marketplaces placed on this machine, by name. The first group that
+    /// placed one keeps it; another group shipping the same name gets a collision.
+    #[serde(default)]
+    pub marketplaces: BTreeMap<String, ManagedMarketplace>,
     /// Keyed by `owner/repo`.
     #[serde(default)]
     pub groups: BTreeMap<String, GroupEntry>,
     /// The joined-group order last passed to `apply_group` (import line order).
     #[serde(default)]
     pub order: Vec<GroupId>,
-    /// Folders under `~/.claude` the app created (removed again when empty).
+    /// Folders under `~/.claude` the app created (removed again when empty). Entries under
+    /// `marketplaces/` are under `state_dir`.
     #[serde(default)]
     pub created_dirs: BTreeSet<String>,
     /// The app created `~/.claude/CLAUDE.md`; it is deleted again if only the block was in it.
@@ -80,6 +96,16 @@ pub struct Manifest {
 pub struct ManagedFile {
     pub group: GroupId,
     pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedMarketplace {
+    pub group: GroupId,
+    /// The `extraKnownMarketplaces.<name>` value the app set in `settings.json`; `None`
+    /// when it could not be set (settings.json unreadable).
+    #[serde(default)]
+    pub setting: Option<Value>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,18 +161,34 @@ pub fn apply_group(
     let mut backups = Backups::new(paths);
     m.order = order.to_vec();
     entry.excluded.clear();
-    // A kept path the group no longer ships is forgotten; settings pointers stay.
-    entry
-        .keep_local
-        .retain(|k| k.starts_with(SETTINGS_POINTER_PREFIX) || files.contains_key(k));
+    // A kept path the group no longer ships is forgotten; settings pointers stay, and so do
+    // new plugin files kept on this device while they exist.
+    entry.keep_local.retain(|k| {
+        k.starts_with(SETTINGS_POINTER_PREFIX)
+            || files.contains_key(k)
+            || (group::marketplace_of(k).is_some() && exists_any(&target_of(paths, k)))
+    });
     let rank = |g: &GroupId| order.iter().position(|x| x == g);
     let my_rank = rank(group);
+    let placed = marketplaces::plan(&m, group, order, files, &mut report);
 
-    // 1. Managed tree files.
+    // 1. Managed tree files, and the files of the marketplaces placed here.
     let mut desired = BTreeSet::new();
     for (rel, bytes) in files {
         if rel == CLAUDE_MD || rel == SHARED_SETTINGS || entry.keep_local.contains(rel) {
             continue;
+        }
+        let plugin = group::marketplace_of(rel);
+        if let Some(mp) = plugin {
+            if !placed.contains(mp) {
+                entry.excluded.insert(rel.clone());
+                continue;
+            }
+            if group::too_large(rel, bytes.len()) {
+                report.skipped.push(group::too_large_note(rel));
+                entry.excluded.insert(rel.clone());
+                continue;
+            }
         }
         if !is_managed_target(rel) {
             if is_tree_path(rel) {
@@ -155,12 +197,13 @@ pub fn apply_group(
             entry.excluded.insert(rel.clone());
             continue;
         }
-        let target = target_path(&paths.claude_home, rel);
+        let (root, sub) = locate(paths, rel);
+        let target = target_path(root, &sub);
         let sha = sha256_hex(bytes);
         match m.files.get(rel).cloned() {
             Some(mf) if mf.group == *group => {
                 desired.insert(rel.clone());
-                if blocked_by_user(&paths.claude_home, rel) || not_a_file(&target) {
+                if blocked_by_user(root, &sub) || not_a_file(&target) {
                     report
                         .collisions
                         .push(Collision::UserFile { path: rel.clone() });
@@ -175,7 +218,7 @@ pub fn apply_group(
                     // the file: leave it, it is a local edit.
                     continue;
                 } else {
-                    write_tree_file(&paths.claude_home, rel, bytes, &mut m.created_dirs)?;
+                    write_tree_file(root, &sub, bytes, &mut m.created_dirs)?;
                     push_unique(&mut report.written, rel);
                 }
                 m.files.insert(
@@ -187,12 +230,14 @@ pub fn apply_group(
                 );
             }
             Some(mf) => {
-                let we_win = match (my_rank, rank(&mf.group)) {
-                    (Some(a), Some(b)) => a < b,
-                    (Some(_), None) => true,
-                    _ => false,
-                };
-                if !we_win || blocked_by_user(&paths.claude_home, rel) || not_a_file(&target) {
+                // A marketplace's files follow the marketplace, which this group holds.
+                let we_win = plugin.is_some()
+                    || match (my_rank, rank(&mf.group)) {
+                        (Some(a), Some(b)) => a < b,
+                        (Some(_), None) => true,
+                        _ => false,
+                    };
+                if !we_win || blocked_by_user(root, &sub) || not_a_file(&target) {
                     report.collisions.push(Collision::OtherGroup {
                         path: rel.clone(),
                         owner: mf.group,
@@ -207,7 +252,7 @@ pub fn apply_group(
                     backups.save(rel, cur)?;
                 }
                 if cur.as_deref() != Some(bytes.as_slice()) {
-                    write_tree_file(&paths.claude_home, rel, bytes, &mut m.created_dirs)?;
+                    write_tree_file(root, &sub, bytes, &mut m.created_dirs)?;
                     push_unique(&mut report.written, rel);
                 }
                 m.files.insert(
@@ -219,7 +264,14 @@ pub fn apply_group(
                 );
             }
             None => {
-                if exists_any(&target) || blocked_by_user(&paths.claude_home, rel) {
+                let in_the_way = if plugin.is_some() {
+                    // The marketplace folder is the app's: a stray file there is backed
+                    // up and replaced, only a folder or link in the way blocks.
+                    not_a_file(&target)
+                } else {
+                    exists_any(&target)
+                };
+                if in_the_way || blocked_by_user(root, &sub) {
                     report
                         .collisions
                         .push(Collision::UserFile { path: rel.clone() });
@@ -227,8 +279,14 @@ pub fn apply_group(
                     continue;
                 }
                 desired.insert(rel.clone());
-                write_tree_file(&paths.claude_home, rel, bytes, &mut m.created_dirs)?;
-                push_unique(&mut report.written, rel);
+                let cur = read_file(&target)?;
+                if cur.as_deref() != Some(bytes.as_slice()) {
+                    if let Some(cur) = &cur {
+                        backups.save(rel, cur)?;
+                    }
+                    write_tree_file(root, &sub, bytes, &mut m.created_dirs)?;
+                    push_unique(&mut report.written, rel);
+                }
                 m.files.insert(
                     rel.clone(),
                     ManagedFile {
@@ -252,7 +310,8 @@ pub fn apply_group(
             m.files.remove(&rel);
             continue;
         }
-        match delete_if_unchanged(&paths.claude_home, &rel, &mf.sha256)? {
+        let (root, sub) = locate(paths, &rel);
+        match delete_if_unchanged(root, &sub, &mf.sha256)? {
             Deleted::Yes => {
                 m.files.remove(&rel);
                 push_unique(&mut report.removed, &rel);
@@ -264,7 +323,7 @@ pub fn apply_group(
             Deleted::Edited => push_unique(&mut report.kept, &rel),
         }
     }
-    prune_dirs(&paths.claude_home, &mut m)?;
+    prune_dirs(paths, &mut m)?;
 
     // 3. The group's CLAUDE.md copy.
     if !entry.keep_local.contains(CLAUDE_MD) {
@@ -301,19 +360,25 @@ pub fn apply_group(
     m.groups.insert(gkey.clone(), entry.clone());
     update_claude_md_block(paths, &mut m, &mut backups, &mut report)?;
 
-    // 4. settings.shared.json -> settings.json.
+    // 4. settings.shared.json -> settings.json. A bundled marketplace's entry is the app's.
     if !entry.keep_local.contains(SHARED_SETTINGS) {
+        let bundled: BTreeSet<String> = m.marketplaces.keys().chain(&placed).cloned().collect();
         let entry = m.groups.get_mut(&gkey).expect("inserted above");
         apply_settings(
             paths,
             group,
             order,
             files.get(SHARED_SETTINGS),
+            &bundled,
             entry,
             &mut backups,
             &mut report,
         )?;
     }
+
+    // 5. extraKnownMarketplaces entries for the marketplaces placed here.
+    marketplaces::register(paths, group, &placed, &mut m, &mut backups, &mut report)?;
+    report.plugins_changed |= touches_plugins(&report);
 
     if m != before {
         m.save(paths)?;
@@ -321,11 +386,13 @@ pub fn apply_group(
     Ok(report)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_settings(
     paths: &Paths,
     group: &GroupId,
     order: &[GroupId],
     shared_bytes: Option<&Vec<u8>>,
+    bundled: &BTreeSet<String>,
     entry: &mut GroupEntry,
     backups: &mut Backups,
     report: &mut ApplyReport,
@@ -391,6 +458,12 @@ fn apply_settings(
             );
         }
     }
+    filters.extend(bundled.iter().map(|mp| {
+        (
+            marketplaces::pointer(mp),
+            format!("the group repo bundles this marketplace under plugins/{mp}; the directory source is used"),
+        )
+    }));
     let (shared, mut skipped) = settings::without(&shared, &filters);
 
     let file = paths.claude_home.join("settings.json");
@@ -447,6 +520,7 @@ fn read_settings_file(file: &Path) -> Result<(Value, Option<Vec<u8>>), String> {
 /// (the "local" side of the three-way merge). Paths set to "keep local" are left out.
 ///
 /// - Managed files: their current bytes; a managed file the user deleted is missing.
+/// - New files the user added inside a marketplace folder this group placed.
 /// - `CLAUDE.md`: the group's copy under `groups/<owner>__<repo>/`.
 /// - `settings.shared.json`: rebuilt from the copy the app last applied, with every
 ///   value the app set replaced by the local one where the user changed it, and dropped
@@ -464,14 +538,17 @@ pub fn local_files(paths: &Paths, group: &GroupId) -> crate::Result<FileSet> {
         .unwrap_or_default();
     let mut out = FileSet::new();
     for (rel, mf) in &m.files {
-        if mf.group != *group
-            || entry.keep_local.contains(rel)
-            || blocked_by_user(&paths.claude_home, rel)
-        {
+        let (root, sub) = locate(paths, rel);
+        if mf.group != *group || entry.keep_local.contains(rel) || blocked_by_user(root, &sub) {
             continue;
         }
-        if let Some(b) = read_file(&target_path(&paths.claude_home, rel))? {
+        if let Some(b) = read_file(&target_path(root, &sub))? {
             out.insert(rel.clone(), b);
+        }
+    }
+    for rel in marketplaces::new_files(paths, &m, group)? {
+        if let Some(b) = read_file(&target_of(paths, &rel))? {
+            out.insert(rel, b);
         }
     }
     if entry.claude_md.is_some() && !entry.keep_local.contains(CLAUDE_MD) {
@@ -498,6 +575,16 @@ pub fn local_files(paths: &Paths, group: &GroupId) -> crate::Result<FileSet> {
         }
     }
     Ok(out)
+}
+
+/// Files the user added on this device inside a marketplace folder `group` placed. They
+/// count as local edits ([`local_files`] carries them; Share pushes them to the group).
+pub fn added_plugin_files(
+    paths: &Paths,
+    m: &Manifest,
+    group: &GroupId,
+) -> crate::Result<Vec<String>> {
+    marketplaces::new_files(paths, m, group)
 }
 
 /// Paths the group ships that this device does not manage: kept local, collisions, and
@@ -539,10 +626,11 @@ pub fn remove_group(paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport
         .collect();
     for (rel, mf) in ours {
         m.files.remove(&rel);
-        if blocked_by_user(&paths.claude_home, &rel) {
+        let (root, sub) = locate(paths, &rel);
+        if blocked_by_user(root, &sub) {
             continue;
         }
-        let target = target_path(&paths.claude_home, &rel);
+        let target = target_path(root, &sub);
         let Some(cur) = read_file(&target)? else {
             continue;
         };
@@ -554,7 +642,7 @@ pub fn remove_group(paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport
             push_unique(&mut report.kept, &rel);
         }
     }
-    prune_dirs(&paths.claude_home, &mut m)?;
+    prune_dirs(paths, &mut m)?;
 
     let gdir = paths.group_dir(group);
     let copy = gdir.join(CLAUDE_MD);
@@ -566,6 +654,15 @@ pub fn remove_group(paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport
     m.groups.remove(&gkey);
     m.order.retain(|g| g != group);
     update_claude_md_block(paths, &mut m, &mut backups, &mut report)?;
+    marketplaces::register(
+        paths,
+        group,
+        &BTreeSet::new(),
+        &mut m,
+        &mut backups,
+        &mut report,
+    )?;
+    report.plugins_changed |= touches_plugins(&report);
 
     let mut owned_all = load_owned(paths)?;
     if let Some(prev) = owned_all.remove(&gkey) {
@@ -627,6 +724,7 @@ pub fn keep_local(paths: &Paths, group: &GroupId, path: &str) -> crate::Result<(
             Some(mf) if mf.group == *group => {
                 m.files.remove(path);
             }
+            None if marketplaces::is_new_file(paths, &m, group, path) => {}
             _ => {
                 return Err(crate::Error::Invalid(format!(
                     "{path} is not managed for group {group}"
@@ -689,22 +787,30 @@ pub fn undo(
         update_claude_md_block(paths, &mut m, &mut backups, &mut report)?;
         return m.save(paths);
     }
-    match m.files.get(path) {
-        Some(mf) if mf.group == *group => {}
+    let added = match m.files.get(path) {
+        Some(mf) if mf.group == *group => false,
+        None if marketplaces::is_new_file(paths, &m, group, path) => true,
         _ => {
             return Err(crate::Error::Invalid(format!(
                 "{path} is not managed for group {group}"
             )))
         }
-    }
-    if blocked_by_user(&paths.claude_home, path) {
+    };
+    let (root, sub) = locate(paths, path);
+    if blocked_by_user(root, &sub) {
         return Err(crate::Error::Invalid(format!(
             "{path} is behind a link or a file the user owns"
         )));
     }
+    if added {
+        // A file added on this device and never shared: keep a copy before removing it.
+        if let Some(cur) = read_file(&target_path(root, &sub))? {
+            backups.save(path, &cur)?;
+        }
+    }
     match group_version {
         Some(b) => {
-            write_tree_file(&paths.claude_home, path, b, &mut m.created_dirs)?;
+            write_tree_file(root, &sub, b, &mut m.created_dirs)?;
             m.files.insert(
                 path.to_string(),
                 ManagedFile {
@@ -714,12 +820,12 @@ pub fn undo(
             );
         }
         None => {
-            let target = target_path(&paths.claude_home, path);
+            let target = target_path(root, &sub);
             if exists_any(&target) {
                 remove_counted(&target)?;
             }
             m.files.remove(path);
-            prune_dirs(&paths.claude_home, &mut m)?;
+            prune_dirs(paths, &mut m)?;
         }
     }
     m.save(paths)
@@ -892,14 +998,20 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn is_tree_path(rel: &str) -> bool {
-    ["skills/", "agents/", "commands/", "output-styles/"]
-        .iter()
-        .any(|p| rel.starts_with(p))
+    [
+        "skills/",
+        "agents/",
+        "commands/",
+        "output-styles/",
+        "plugins/",
+    ]
+    .iter()
+    .any(|p| rel.starts_with(p))
 }
 
-/// A path the apply layer copies into `~/.claude`: `skills/<name>/**`, or a `.md` file
-/// under `agents/`, `commands/` or `output-styles/`, with no segment that could escape
-/// the folder or mean something special on Windows.
+/// A path the apply layer places: `skills/<name>/**`, a `.md` file under `agents/`,
+/// `commands/` or `output-styles/`, or `plugins/<marketplace>/**`, with no segment that
+/// could escape the folder or mean something special on Windows.
 pub fn is_managed_target(rel: &str) -> bool {
     let segs: Vec<&str> = rel.split('/').collect();
     if !segs.iter().all(|s| safe_segment(s)) {
@@ -908,8 +1020,42 @@ pub fn is_managed_target(rel: &str) -> bool {
     match segs[0] {
         "skills" => segs.len() >= 3,
         "agents" | "commands" | "output-styles" => segs.len() >= 2 && rel.ends_with(".md"),
+        group::PLUGINS => group::marketplace_of(rel).is_some(),
         _ => false,
     }
+}
+
+/// Where a managed path lives: `plugins/<name>/...` under `<state_dir>/marketplaces/<name>/...`,
+/// everything else under `~/.claude`. Returns the root and the path below it.
+fn locate<'a>(paths: &'a Paths, rel: &str) -> (&'a Path, String) {
+    match rel.strip_prefix("plugins/") {
+        Some(rest) => (&paths.state_dir, format!("{MARKETPLACES}/{rest}")),
+        None => (&paths.claude_home, rel.to_string()),
+    }
+}
+
+/// The file on this machine for a managed path (see [`locate`]).
+pub fn target_of(paths: &Paths, rel: &str) -> PathBuf {
+    let (root, sub) = locate(paths, rel);
+    target_path(root, &sub)
+}
+
+/// The root a `created_dirs` entry is relative to.
+fn dir_root<'a>(paths: &'a Paths, dir: &str) -> &'a Path {
+    if dir.starts_with(&format!("{MARKETPLACES}/")) {
+        &paths.state_dir
+    } else {
+        &paths.claude_home
+    }
+}
+
+/// The report wrote or removed a plugin file.
+fn touches_plugins(report: &ApplyReport) -> bool {
+    report
+        .written
+        .iter()
+        .chain(&report.removed)
+        .any(|p| group::marketplace_of(p).is_some())
 }
 
 fn safe_segment(s: &str) -> bool {
@@ -1027,11 +1173,11 @@ fn delete_if_unchanged(root: &Path, rel: &str, sha: &str) -> io::Result<Deleted>
 }
 
 /// Remove folders the app created that are empty now, deepest first.
-fn prune_dirs(root: &Path, m: &mut Manifest) -> io::Result<()> {
+fn prune_dirs(paths: &Paths, m: &mut Manifest) -> io::Result<()> {
     let mut dirs: Vec<String> = m.created_dirs.iter().cloned().collect();
     dirs.sort_by_key(|d| std::cmp::Reverse(d.matches('/').count()));
     for d in dirs {
-        let p = target_path(root, &d);
+        let p = target_path(dir_root(paths, &d), &d);
         match fs::symlink_metadata(&p) {
             Ok(md) if md.is_dir() && !md.file_type().is_symlink() => {
                 if fs::read_dir(&p)?.next().is_none() {
@@ -1138,9 +1284,11 @@ pub(crate) fn utc_stamp() -> String {
 }
 
 /// One `backups/<UTC time>/` folder per operation, created on the first save.
+/// A path saved twice in one operation keeps its first (original) copy.
 struct Backups {
     root: PathBuf,
     dir: Option<PathBuf>,
+    saved: BTreeSet<String>,
 }
 
 impl Backups {
@@ -1148,9 +1296,13 @@ impl Backups {
         Self {
             root: paths.state_dir.join("backups"),
             dir: None,
+            saved: BTreeSet::new(),
         }
     }
     fn save(&mut self, rel: &str, bytes: &[u8]) -> io::Result<()> {
+        if !self.saved.insert(rel.to_string()) {
+            return Ok(());
+        }
         if self.dir.is_none() {
             let stamp = utc_stamp();
             let mut dir = self.root.join(&stamp);
@@ -1166,6 +1318,8 @@ impl Backups {
         write_atomic(&target_path(dir, rel), bytes)
     }
 }
+
+mod marketplaces;
 
 #[cfg(test)]
 mod tests;

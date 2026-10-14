@@ -25,6 +25,8 @@ export interface GroupStatus {
   lastError: string | null;
   conflicts: ConflictInfo[];
   collisions: Collision[];
+  /** Only on the status a join returns: plugin files were placed or changed. */
+  pluginsChanged: boolean;
 }
 export interface ApplyReport {
   written: string[];
@@ -32,6 +34,8 @@ export interface ApplyReport {
   collisions: Collision[];
   settingsSkipped: string[];
   kept: string[];
+  skipped: string[];
+  pluginsChanged: boolean;
 }
 export interface GroupSyncReport {
   id: GroupId;
@@ -121,6 +125,7 @@ export interface AppInfo {
 export interface Events {
   status: Status;
   "sync-report": SyncReport;
+  "plugins-changed": null;
   "local-edits": LocalEdit[];
   invitations: Invitation[];
   "update-available": UpdateInfo;
