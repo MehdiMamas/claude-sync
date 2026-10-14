@@ -885,6 +885,11 @@ impl Engine {
     ) -> crate::Result<Vec<String>> {
         let paths: BTreeSet<&String> = local.keys().chain(merged.keys()).collect();
         let mut written = Vec::new();
+        let backup_root = self
+            .paths
+            .backups_dir()
+            .join("personal")
+            .join(utc_stamp(now_unix()));
         for path in paths {
             let want = merged.get(path);
             if local.get(path) == want || scan.is_held(path) {
@@ -914,6 +919,10 @@ impl Engine {
                 continue;
             }
             let file = join_rel(&self.paths.claude_home, &under_home);
+            // The memory being overwritten or deleted is kept, like CLAUDE.md.
+            if let Some(old) = local.get(path) {
+                write_atomic(&join_rel(&backup_root, path), old)?;
+            }
             match want {
                 Some(bytes) => write_atomic(&file, bytes)?,
                 None => {

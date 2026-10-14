@@ -423,6 +423,56 @@ const KLAWLY_WIN: &str = "C--Users-Ana-Projects-klawly";
 const KLAWLY_MAC: &str = "-Users-ana-Projects-klawly";
 const KLAWLY_KEY: &str = "memory/home-Projects-klawly";
 
+/// Every file under `backups/personal/<stamp>/`, keyed `<stamp-less path>`, with its text.
+fn personal_backups(d: &Dev) -> Vec<(String, String)> {
+    let root = d.paths.backups_dir().join("personal");
+    let mut out: Vec<(String, String)> = crate::engine::read_tree(&root)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(p, b)| {
+            let rest = p.split_once('/').map_or(p.clone(), |(_, r)| r.to_string());
+            (rest, String::from_utf8(b).unwrap())
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[tokio::test]
+async fn memory_deleted_or_overwritten_by_a_sync_is_backed_up() {
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.set_mem(KLAWLY_WIN, "a.md", "apples\n");
+    pc.set_mem(KLAWLY_WIN, "b.md", "bananas\n");
+    pc.personal_enable().await.unwrap();
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    mac.personal_enable().await.unwrap();
+    assert_eq!(mac.mem(KLAWLY_MAC, "a.md").as_deref(), Some("apples\n"));
+    assert!(personal_backups(&pc).is_empty());
+
+    // The mac deletes one memory and changes the other.
+    std::fs::remove_file(mac.mem_path(KLAWLY_MAC, "a.md")).unwrap();
+    mac.set_mem(KLAWLY_MAC, "b.md", "blueberries\n");
+    mac.sync().await;
+    pc.sync().await;
+
+    assert_eq!(pc.mem(KLAWLY_WIN, "a.md"), None);
+    assert_eq!(pc.mem(KLAWLY_WIN, "b.md").as_deref(), Some("blueberries\n"));
+    assert_eq!(
+        personal_backups(&pc),
+        [
+            (
+                "memory/home-Projects-klawly/a.md".to_string(),
+                "apples\n".to_string()
+            ),
+            (
+                "memory/home-Projects-klawly/b.md".to_string(),
+                "bananas\n".to_string()
+            ),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn enable_creates_a_private_repo_without_the_group_topic() {
     let world = FakeGitHub::new();
