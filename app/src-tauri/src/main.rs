@@ -128,6 +128,11 @@ fn main() {
             commands::sync_now,
             commands::get_settings,
             commands::set_settings,
+            commands::notifications,
+            commands::mark_notification_read,
+            commands::mark_all_notifications_read,
+            commands::clear_notifications,
+            commands::test_notification,
             commands::feedback_logs,
             commands::feedback_capture_screen,
             commands::feedback_attach_file,
@@ -162,6 +167,7 @@ fn main() {
                 auth::sign_in_with_dev_token(&handle, token);
             }
             tray::build(&handle)?;
+            notify::init(&handle);
             background::refresh_status(&handle);
             background::start(&handle);
             jobs::reconcile_soon(&handle, true);

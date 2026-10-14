@@ -63,6 +63,8 @@ pub async fn start(app: &AppHandle) -> Result<DeviceCodeView, Error> {
                 );
                 notify::show(
                     &a,
+                    notify::Kind::Other,
+                    None,
                     "Signed in",
                     &format!("claude-sync is signed in as {login}."),
                 );

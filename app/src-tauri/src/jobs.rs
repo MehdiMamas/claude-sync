@@ -1,14 +1,15 @@
 //! Group scheduled jobs (§17) and group plugin installs (§18) in the app: the headless
 //! `run-job` / `remove-jobs` subcommands the OS scheduler and the uninstaller start, the
 //! reconcile after every sync, join and leave, and the commands of the group screen.
-use crate::ctx::Ctx;
+use crate::ctx::{Ctx, Prefs};
 use crate::guard::{self, Error};
+use crate::notify::{self, Kind};
 use claude_sync_core::jobs::{
     self, os, run, AutoAccepted, Jobs, JobsOverview, JobsState, ReconcileReport,
 };
 use claude_sync_core::plugin_install::{self, PluginCli, RealCli};
 use claude_sync_core::state::AppState;
-use claude_sync_core::{claude_cli, GroupId, Paths};
+use claude_sync_core::{claude_cli, notifications, GroupId, Paths};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -96,7 +97,7 @@ pub fn run_job_main(paths: &Paths, args: &[String]) -> i32 {
         Ok(Some(last)) => {
             tracing::info!(job = %id, status = %last.status, code = ?last.exit_code, "job finished");
             if let Some(report) = &last.report {
-                notify_report(&title, &last.status, report);
+                notify_report(paths, &group, &title, &last.status, report);
             }
             if last.status == "ok" {
                 0
@@ -120,18 +121,32 @@ pub fn remove_jobs_main(paths: &Paths) -> i32 {
     }
 }
 
-/// "<title> finished: its report is ready." Clicking it opens the report (Windows: while
-/// this process waits, up to 10 minutes); otherwise the text names the file.
-fn notify_report(title: &str, status: &str, report: &std::path::Path) {
+/// "<title> finished: its report is ready." This process has no window, so it records
+/// the notification in the history itself (the app picks it up on its next background pass, see
+/// `background::tick`) and shows the desktop notification unless it is turned off in
+/// Settings. Clicking it opens the report (Windows: while this process waits, up to 10
+/// minutes); otherwise the text names the file.
+fn notify_report(
+    paths: &Paths,
+    group: &GroupId,
+    title: &str,
+    status: &str,
+    report: &std::path::Path,
+) {
     let heading = format!("{title}: report ready");
-    let body = if status == "ok" {
-        format!("Click to open {}", report.display())
+    let ended = if status == "ok" {
+        String::new()
     } else {
-        format!(
-            "The run ended with \"{status}\". Click to open {}",
-            report.display()
-        )
+        format!("The run ended with \"{status}\". ")
     };
+    let saved = format!("{ended}Report: {}", report.display());
+    if let Err(e) = notifications::record(paths, Kind::Job, Some(group.clone()), &heading, &saved) {
+        tracing::warn!("notification not saved to the history: {e}");
+    }
+    if !Prefs::load(paths).desktop_notifications {
+        return;
+    }
+    let body = format!("{ended}Click to open {}", report.display());
     #[cfg(windows)]
     {
         use tauri_winrt_notification::Toast;
@@ -222,18 +237,22 @@ pub fn ensure_plugins_soon(app: &AppHandle, groups: Vec<GroupId>, force: bool) {
 fn ensure_plugins(app: &AppHandle, groups: &[GroupId], force: bool) -> Vec<String> {
     let ctx = ctx(app);
     let mut warnings = Vec::new();
-    let mut changed = false;
+    let mut changed = Vec::new();
     for g in groups {
         let cli = || real_cli(&ctx.paths);
         if let Ok(o) = guard::call("install group plugins", || {
             plugin_install::ensure(&ctx.paths, g, &cli, force)
         }) {
-            changed |= !o.installed.is_empty() || !o.updated.is_empty();
+            if !o.installed.is_empty() || !o.updated.is_empty() {
+                changed.push(g);
+            }
             warnings.extend(o.warnings);
         }
     }
-    if changed {
-        crate::background::plugins_changed(app);
+    if !changed.is_empty() {
+        // Link the group when the plugins of only one changed.
+        let group = (changed.len() == 1).then(|| changed[0]);
+        crate::background::plugins_changed(app, group);
     }
     warnings
 }
@@ -286,7 +305,7 @@ fn notify_auto(app: &AppHandle, a: &AutoAccepted) {
         "{}: {what} will run without asking, because this group's jobs are allowed. See the group's Scheduled jobs.",
         a.title
     );
-    crate::notify::show(app, &title, &body);
+    notify::show(app, Kind::Job, Some(&a.group), &title, &body);
 }
 
 pub async fn list(ctx: Arc<Ctx>, group: GroupId) -> Result<JobsOverview, Error> {

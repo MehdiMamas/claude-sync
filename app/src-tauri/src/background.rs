@@ -3,9 +3,11 @@
 use crate::config;
 use crate::ctx::{lock, now_unix, Ctx, Status};
 use crate::guard::{self, Error};
-use crate::{feedback, notify, tray, updates};
+use crate::notify::{self, Kind};
+use crate::{feedback, tray, updates};
 use claude_sync_core::engine::SyncReport;
 use claude_sync_core::watch::WatchHandle;
+use claude_sync_core::GroupId;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -41,6 +43,8 @@ async fn tick(app: &AppHandle) {
     crate::personal::after_sync(app, false).await;
     check_local_edits(app);
     feedback::retry_outbox(app).await;
+    // Job runs (`run-job`, a separate process) add to the history without the app.
+    notify::changed(app);
 }
 
 /// Run a sync pass in the background (tray "Sync now", after sign-in, ...).
@@ -94,6 +98,8 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
                 for c in &g.conflicts {
                     notify::show(
                         app,
+                        Kind::Group,
+                        Some(&g.id),
                         "Conflict in a shared file",
                         &format!(
                             "{} ({}): the group's version won; yours was saved.",
@@ -102,11 +108,17 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
                     );
                 }
                 if g.lost_access {
-                    notify::show(app, "Group access ended", &format!("You no longer have access to {}. Its files were removed from this machine (a backup was kept).", g.id));
+                    notify::show(app, Kind::Group, Some(&g.id), "Group access ended", &format!("You no longer have access to {}. Its files were removed from this machine (a backup was kept).", g.id));
                 }
             }
-            if report.groups.iter().any(|g| g.apply.plugins_changed) {
-                plugins_changed(app);
+            let changed: Vec<_> = report
+                .groups
+                .iter()
+                .filter(|g| g.apply.plugins_changed)
+                .collect();
+            if !changed.is_empty() {
+                let group = (changed.len() == 1).then(|| &changed[0].id);
+                plugins_changed(app, group);
             }
             crate::jobs::after_sync(app);
             if errors.is_empty() {
@@ -188,10 +200,17 @@ pub const PLUGINS_CHANGED: &str =
     "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them.";
 
 /// A sync, join or leave changed plugin files or a marketplace entry: open Claude Code
-/// sessions only see it after `/reload-plugins` or a restart.
-pub fn plugins_changed(app: &AppHandle) {
+/// sessions only see it after `/reload-plugins` or a restart. `group` is the group whose
+/// plugins changed, when it is one.
+pub fn plugins_changed(app: &AppHandle, group: Option<&GroupId>) {
     let _ = app.emit("plugins-changed", ());
-    notify::show(app, "Plugins changed", PLUGINS_CHANGED);
+    notify::show(
+        app,
+        Kind::Plugins,
+        group,
+        "Plugins changed",
+        PLUGINS_CHANGED,
+    );
 }
 
 /// Look for managed files edited by hand and tell the UI (and the user, for new ones).
@@ -224,7 +243,18 @@ pub fn check_local_edits(app: &AppHandle) {
         } else {
             format!("{} shared files were changed on this machine.", new.len())
         };
-        notify::show(app, "Local change to a shared file", &body);
+        // Link the group when all the new edits are in one.
+        let group = new
+            .iter()
+            .all(|e| e.group == first.group)
+            .then_some(&first.group);
+        notify::show(
+            app,
+            Kind::LocalEdit,
+            group,
+            "Local change to a shared file",
+            &body,
+        );
     }
 }
 
@@ -256,6 +286,8 @@ pub async fn check_invitations(
     for i in new {
         notify::show(
             app,
+            Kind::Group,
+            Some(&i.repo),
             "Invitation to a claude-sync group",
             &format!(
                 "{} invited you to {}. Open claude-sync to accept.",

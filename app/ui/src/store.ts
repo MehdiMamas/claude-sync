@@ -12,6 +12,8 @@ interface State {
   pluginsChanged: boolean;
   /** Personal memory on this device; drives the offer notice. */
   personal: PersonalStatus | null;
+  /** Unread notifications (the bell's badge). */
+  unread: number;
 }
 
 type Listener = () => void;
@@ -30,6 +32,7 @@ export const store: State & {
   update: null,
   pluginsChanged: false,
   personal: null,
+  unread: 0,
   set(patch) {
     Object.assign(this, patch);
     for (const l of listeners) l();

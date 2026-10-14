@@ -26,6 +26,8 @@ The app updates itself after that.
 3. To invite friends, open the group and add their GitHub logins. GitHub sends each of them an invitation. Any member can add or remove members, but the invitations go out from the host's app, so they are sent the next time the host's app runs.
 4. To join, a friend installs claude-sync and signs in. The invitation shows under **Pending invitations**. They click **Accept** and the app sets up the group on their machine.
 
+The app tells you when something happens (an invitation, a conflict, an update, plugins to reload). If you miss a notification, click the bell next to the app name: every notification is kept there. You can turn desktop notifications off in **Settings**; they are still kept in the app.
+
 ### Personal memory
 
 What you tell Claude to remember about you is yours, not the group's. Turn on **Settings → Personal memory** and your own `CLAUDE.md` text and Claude's memories (the memory folder of each project) follow you to your other computers. The app keeps them in a private repo on your account, `<your login>/claude-sync-personal`. Your other computers join it automatically when they sign in with the same GitHub account; you can switch that off, choose what syncs, see and remove your devices, or turn it off on one computer. Turning it off leaves your files and the repo as they are.

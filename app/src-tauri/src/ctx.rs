@@ -40,11 +40,36 @@ impl Default for Status {
 }
 
 /// App-only preferences that are not part of the core's `state.json`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Prefs {
     /// Autostart is turned on once, on the first run; after that it is the user's choice.
     pub autostart_initialized: bool,
+    /// Show desktop notifications (Settings). The history is kept either way.
+    pub desktop_notifications: bool,
+}
+
+impl Prefs {
+    fn path(paths: &Paths) -> PathBuf {
+        paths.state_dir.join("app.json")
+    }
+
+    /// The saved preferences, or the defaults. Also read by the headless `run-job`.
+    pub fn load(paths: &Paths) -> Self {
+        std::fs::read(Self::path(paths))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Self {
+            autostart_initialized: false,
+            desktop_notifications: true,
+        }
+    }
 }
 
 pub struct Ctx {
@@ -199,14 +224,11 @@ impl Ctx {
     }
 
     fn prefs_path(&self) -> PathBuf {
-        self.paths.state_dir.join("app.json")
+        Prefs::path(&self.paths)
     }
 
     pub fn prefs(&self) -> Prefs {
-        std::fs::read(self.prefs_path())
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        Prefs::load(&self.paths)
     }
 
     pub fn save_prefs(&self, p: &Prefs) -> std::io::Result<()> {

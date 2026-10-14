@@ -6,12 +6,14 @@ use crate::ctx::{lock, Ctx, Status};
 use crate::feedback::{self, FeedbackInput, FeedbackResult, Screenshot};
 use crate::guard::{self, Error};
 use crate::jobs as app_jobs;
+use crate::notify;
 use crate::updates::{self, UpdateInfo};
 use claude_sync_core::apply::Manifest;
 use claude_sync_core::contents::{self, GroupContents};
 use claude_sync_core::engine::{CommitInfo, GroupStatus, SyncReport};
 use claude_sync_core::github::Invitation;
 use claude_sync_core::jobs::JobsOverview;
+use claude_sync_core::notifications::{self, Notification};
 use claude_sync_core::watch::{EditAction, LocalEdit};
 use claude_sync_core::{group, GroupId};
 use serde::{Deserialize, Serialize};
@@ -127,7 +129,7 @@ pub async fn accept_invitation(app: AppHandle, ctx: CtxState<'_>, id: u64) -> Re
         .map_err(guard::logged("accept invitation"))?;
     lock(&ctx.known_invitations).retain(|i| *i != id);
     if g.plugins_changed {
-        background::plugins_changed(&app);
+        background::plugins_changed(&app, Some(&g.id));
     }
     background::sync_soon(&app, true);
     Ok(g)
@@ -144,7 +146,7 @@ pub async fn join(app: AppHandle, ctx: CtxState<'_>, group: GroupId) -> Res<Grou
     let e = ctx.engine()?;
     let g = e.join(&group).await.map_err(guard::logged("join group"))?;
     if g.plugins_changed {
-        background::plugins_changed(&app);
+        background::plugins_changed(&app, Some(&g.id));
     }
     background::sync_soon(&app, true);
     Ok(g)
@@ -201,7 +203,7 @@ pub async fn leave_group(app: AppHandle, ctx: CtxState<'_>, group: GroupId) -> R
         .await
         .map_err(guard::logged("leave group"))?;
     if report.plugins_changed {
-        background::plugins_changed(&app);
+        background::plugins_changed(&app, Some(&group));
     }
     app_jobs::after_leave(&app, &group);
     Ok(())
@@ -319,6 +321,7 @@ pub struct Settings {
     poll_seconds: u64,
     autostart: bool,
     paused: bool,
+    desktop_notifications: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -328,6 +331,7 @@ pub struct SettingsPatch {
     poll_seconds: Option<u64>,
     autostart: Option<bool>,
     paused: Option<bool>,
+    desktop_notifications: Option<bool>,
 }
 
 fn settings_of(app: &AppHandle, ctx: &Ctx) -> Settings {
@@ -336,6 +340,7 @@ fn settings_of(app: &AppHandle, ctx: &Ctx) -> Settings {
         poll_seconds: ctx.poll_seconds(),
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         paused: ctx.paused(),
+        desktop_notifications: ctx.prefs().desktop_notifications,
     }
 }
 
@@ -381,7 +386,52 @@ pub fn set_settings(app: AppHandle, ctx: CtxState, settings: SettingsPatch) -> R
     background::refresh_status(&app);
     ctx.wake.notify_one();
     saved?;
+    if let Some(on) = settings.desktop_notifications {
+        let mut prefs = ctx.prefs();
+        prefs.desktop_notifications = on;
+        ctx.save_prefs(&prefs)
+            .map_err(|e| format!("could not save the setting: {e}"))?;
+    }
     Ok(settings_of(&app, &ctx))
+}
+
+/// The notification history, newest first.
+#[tauri::command]
+pub fn notifications(ctx: CtxState) -> Vec<Notification> {
+    notifications::list(&ctx.paths)
+}
+
+#[tauri::command]
+pub fn mark_notification_read(app: AppHandle, ctx: CtxState, id: u64) -> Res<()> {
+    notifications::mark_read(&ctx.paths, id).map_err(guard::logged("mark notification read"))?;
+    notify::changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn mark_all_notifications_read(app: AppHandle, ctx: CtxState) -> Res<()> {
+    notifications::mark_all_read(&ctx.paths).map_err(guard::logged("mark notifications read"))?;
+    notify::changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_notifications(app: AppHandle, ctx: CtxState) -> Res<()> {
+    notifications::clear(&ctx.paths).map_err(guard::logged("clear notifications"))?;
+    notify::changed(&app);
+    Ok(())
+}
+
+/// Settings' "Send a test notification".
+#[tauri::command]
+pub fn test_notification(app: AppHandle) {
+    notify::show(
+        &app,
+        notify::Kind::Other,
+        None,
+        "Test notification",
+        "Notifications from claude-sync show up like this.",
+    );
 }
 
 #[tauri::command]
