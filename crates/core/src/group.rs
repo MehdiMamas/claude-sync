@@ -232,7 +232,7 @@ pub fn readme(name: &str, host: &str) -> String {
          2. Install claude-sync and sign in with GitHub.\n\
          3. The app finds this group and sets it up on your machine.\n\n\
          ## What is shared\n\n\
-         - `CLAUDE.md`: shared instructions, imported into your `~/.claude/CLAUDE.md`\n\
+         - `CLAUDE.md`: shared instructions, imported into your `~/.claude/CLAUDE.md`. Changes another member makes wait until you accept them in the app.\n\
          - `settings.shared.json`: keys merged into your `~/.claude/settings.json`\n\
          - `skills/`, `agents/`, `commands/`, `output-styles/`\n\
          - `plugins/`: plugin marketplaces, installed for every member as a local directory marketplace\n\

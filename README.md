@@ -28,6 +28,10 @@ The app updates itself after that.
 
 The app tells you when something happens (an invitation, a conflict, an update, plugins to reload). If you miss a notification, click the bell next to the app name: every notification is kept there. You can turn desktop notifications off in **Settings**; they are still kept in the app.
 
+### Reviewing changes to the shared instructions
+
+When another member adds or removes lines in a group's `CLAUDE.md`, nothing changes in yours until you say so. The app tells you, and the group's page shows each change with who made it, so you can **Accept** or **Decline** it. A line you decline stays out (or, for a removal, stays in) and you are not asked about it again. Declining only affects you: it never undoes the change for the rest of the group. Your own changes, from any of your computers, apply at once. Each group is reviewed on its own, so deleting a line in one group never removes it from another. To have everyone's changes apply at once, turn off **Review changes others make to CLAUDE.md** on the group's page.
+
 ### Personal memory
 
 What you tell Claude to remember about you is yours, not the group's. Turn on **Settings → Personal memory** and your own `CLAUDE.md` text and Claude's memories (the memory folder of each project) follow you to your other computers. The app keeps them in a private repo on your account, `<your login>/claude-sync-personal`. Your other computers join it automatically when they sign in with the same GitHub account; you can switch that off, choose what syncs, see and remove your devices, or turn it off on one computer. Turning it off leaves your files and the repo as they are.

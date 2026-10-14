@@ -13,6 +13,7 @@ use crate::github::{GitHub, Invitation};
 use crate::group::{self, GroupFile};
 use crate::merge;
 use crate::remote::{Changes, Collaborator, GitHubRemotes, Head, RemoteFactory, RemoteRepo};
+use crate::review::{self, ReviewState};
 use crate::state::{now_unix, utc_stamp, write_atomic, write_json, AppState};
 use crate::watch::{EditAction, LocalEdit};
 use crate::{Error, FileSet, GroupId, Paths};
@@ -40,6 +41,23 @@ pub struct GroupStatus {
     /// Joining placed or changed plugin files: open Claude Code sessions need
     /// `/reload-plugins`. Only set on the status a join returns.
     pub plugins_changed: bool,
+    /// Changes other members made to the group's `CLAUDE.md` that wait for this user (§7a).
+    pub review_pending: usize,
+    /// "Review changes others make to CLAUDE.md" is on for this group.
+    pub review_claude_md: bool,
+}
+
+/// The review of a group's `CLAUDE.md` (§7a), for the group screen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeMdReview {
+    pub review: bool,
+    /// Oldest first.
+    pub pending: Vec<review::Item>,
+    /// Changes the user declined (remembered, never asked again).
+    pub declined: usize,
+    /// The copy's accepted text differs from the group's (declined or pending changes).
+    pub differs: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +86,8 @@ pub struct GroupSyncReport {
     pub error: Option<String>,
     /// Access to the repo is gone; its content was removed from this machine.
     pub lost_access: bool,
+    /// Changes to the group's `CLAUDE.md` that this pass put up for review (§7a).
+    pub review: Vec<review::Item>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +126,15 @@ pub trait ApplyLayer: Send + Sync {
         group_version: Option<&[u8]>,
     ) -> crate::Result<()>;
     fn local_edits(&self, paths: &Paths) -> crate::Result<Vec<LocalEdit>>;
+    /// Write the group's `CLAUDE.md` copy as `copy`, with `accepted` as the version the app
+    /// wrote (§7a). A copy that differs from `accepted` is a local edit.
+    fn write_claude_md(
+        &self,
+        paths: &Paths,
+        group: &GroupId,
+        copy: &[u8],
+        accepted: &[u8],
+    ) -> crate::Result<()>;
     /// Paths the group ships that this device does not manage (kept local, collisions,
     /// unsafe). The engine uses the base version as their local side.
     fn excluded_paths(&self, _paths: &Paths, _group: &GroupId) -> crate::Result<BTreeSet<String>> {
@@ -146,6 +175,15 @@ impl ApplyLayer for FsApply {
     }
     fn local_edits(&self, paths: &Paths) -> crate::Result<Vec<LocalEdit>> {
         crate::watch::local_edits(paths)
+    }
+    fn write_claude_md(
+        &self,
+        paths: &Paths,
+        group: &GroupId,
+        copy: &[u8],
+        accepted: &[u8],
+    ) -> crate::Result<()> {
+        crate::apply::write_claude_md(paths, group, copy, accepted)
     }
     fn excluded_paths(&self, paths: &Paths, group: &GroupId) -> crate::Result<BTreeSet<String>> {
         crate::apply::excluded_paths(paths, group)
@@ -493,8 +531,16 @@ impl Engine {
                     status.shared.remove(file);
                 }
                 self.save_status(id, &status)?;
+                // The group's CLAUDE.md goes back to what this user accepted, not to the
+                // group's text with the changes they declined (§7a).
+                let accepted = match (file == group::CLAUDE_MD, self.load_review(id)?) {
+                    (true, Some(st)) => Some(st.accepted.into_bytes()),
+                    _ => None,
+                };
                 let base = self.load_base(id)?;
-                let version = base.files.get(file).map(Vec::as_slice);
+                let version = accepted
+                    .as_deref()
+                    .or(base.files.get(file).map(Vec::as_slice));
                 self.apply.undo(&self.paths, id, &edit.path, version)
             }
         }
@@ -572,6 +618,85 @@ impl Engine {
         limit: usize,
     ) -> crate::Result<Vec<CommitInfo>> {
         self.remotes.open(id).recent_commits(limit).await
+    }
+
+    /// Changes to the groups' `CLAUDE.md` waiting for this user, over all groups (§7a).
+    pub fn claude_md_pending(&self) -> usize {
+        AppState::load(&self.paths)
+            .map(|s| {
+                s.groups
+                    .iter()
+                    .map(|id| self.group_status(id).review_pending)
+                    .sum()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Changes others made to the group's `CLAUDE.md` that wait for this user (§7a).
+    pub fn claude_md_review(&self, id: &GroupId) -> crate::Result<ClaudeMdReview> {
+        let st = self.load_review(id)?.unwrap_or_default();
+        Ok(ClaudeMdReview {
+            review: st.review,
+            differs: st.accepted != st.group,
+            declined: st.declined.len(),
+            pending: st.pending,
+        })
+    }
+
+    /// Accept (`accept`) or decline pending changes: `ids`, or all of them. Accepted changes
+    /// go into the copy at once; declined ones never do and are not asked again. Nothing is
+    /// pushed either way.
+    pub async fn decide_claude_md(
+        &self,
+        id: &GroupId,
+        ids: Option<&[String]>,
+        accept: bool,
+    ) -> crate::Result<ClaudeMdReview> {
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        let mut st = self.require_review(id)?;
+        let before = st.accepted.clone();
+        if accept {
+            let applied = st.accept(ids);
+            self.write_accepted(id, &mut st, &before, &applied, false)?;
+        } else {
+            st.decline(ids, now_unix());
+            st.save(&self.review_file(id))?;
+        }
+        self.claude_md_review(id)
+    }
+
+    /// Turn "Review changes others make to CLAUDE.md" on or off. Turning it off accepts what
+    /// is pending (the UI asks first) and lets later changes apply at once; past declines stay.
+    pub async fn set_claude_md_review(
+        &self,
+        id: &GroupId,
+        on: bool,
+    ) -> crate::Result<ClaudeMdReview> {
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        let mut st = self.require_review(id)?;
+        st.review = on;
+        let before = st.accepted.clone();
+        let applied = if on { Vec::new() } else { st.accept(None) };
+        self.write_accepted(id, &mut st, &before, &applied, false)?;
+        self.claude_md_review(id)
+    }
+
+    /// "Use the group's version": the copy becomes the group's `CLAUDE.md` again, pending and
+    /// declined changes are forgotten. An edit of the copy is replaced (and backed up).
+    pub async fn use_group_claude_md(&self, id: &GroupId) -> crate::Result<ClaudeMdReview> {
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        let mut st = self.require_review(id)?;
+        let before = st.accepted.clone();
+        st.reset();
+        self.write_accepted(id, &mut st, &before, &[], true)?;
+        let mut status = self.load_status(id);
+        if status.shared.remove(group::CLAUDE_MD) {
+            self.save_status(id, &status)?;
+        }
+        self.claude_md_review(id)
     }
 
     // ---- internals ----
@@ -659,6 +784,7 @@ impl Engine {
             conflicts: Vec::new(),
             error: None,
             lost_access: false,
+            review: Vec::new(),
         };
         let remote = self.remotes.open(id);
         let head = match head {
@@ -718,10 +844,34 @@ impl Engine {
             };
             let (gf, read_only) = read_group_file(id, &remote_files)?;
             let keep = |p: &str| group::is_allowlisted(p) && gf.syncs(p);
-            let base_v = only(&base.files, keep);
-            let remote_v = only(&remote_files, keep);
+            let mut base_v = only(&base.files, keep);
+            let mut remote_v = only(&remote_files, keep);
             let mut too_large = Vec::new();
-            let local = self.local_view(id, &base_v, status, keep, &mut too_large)?;
+            let (mut local, copy) = self.local_view(id, &base_v, status, keep, &mut too_large)?;
+            // The group's CLAUDE.md goes through review (§7a), not the three-way merge.
+            let md = if keep(group::CLAUDE_MD) {
+                for files in [&mut base_v, &mut remote_v, &mut local] {
+                    files.remove(group::CLAUDE_MD);
+                }
+                let shared = read_only.is_none() && status.shared.contains(group::CLAUDE_MD);
+                let pass = self
+                    .review_pull(
+                        remote,
+                        id,
+                        &base,
+                        &head,
+                        &remote_files,
+                        copy,
+                        shared,
+                        report,
+                    )
+                    .await?;
+                Some(pass)
+            } else {
+                remove_file_if_exists(&self.review_file(id))?;
+                None
+            };
+            let md_push = md.as_ref().and_then(|m| m.push.clone());
             let merged = merge::three_way(&base_v, &local, &remote_v);
 
             // Save losing local copies before the apply overwrites them.
@@ -741,6 +891,9 @@ impl Engine {
                     None => to_apply.remove(p),
                 };
             }
+            if let Some(text) = md.as_ref().and_then(|m| m.apply.clone()) {
+                to_apply.insert(group::CLAUDE_MD.into(), text);
+            }
             report.apply = self.apply.apply_group(&self.paths, id, &order, &to_apply)?;
             for note in too_large {
                 if !report.apply.skipped.contains(&note) {
@@ -754,12 +907,17 @@ impl Engine {
             };
             self.save_base(id, &base)?;
 
-            status.shared.retain(|p| merged.to_push.contains_key(p));
-            let push: Changes = merged
+            status.shared.retain(|p| {
+                merged.to_push.contains_key(p) || (p == group::CLAUDE_MD && md_push.is_some())
+            });
+            let mut push: Changes = merged
                 .to_push
                 .into_iter()
                 .filter(|(p, _)| read_only.is_none() && status.shared.contains(p))
                 .collect();
+            if let Some(content) = md_push {
+                push.insert(group::CLAUDE_MD.into(), content);
+            }
             if push.is_empty() {
                 break (gf, read_only);
             }
@@ -776,6 +934,9 @@ impl Engine {
                     self.save_base(id, &base)?;
                     status.shared.retain(|p| !push.contains_key(p));
                     report.pushed = true;
+                    if let (Some(content), Some(md)) = (push.get(group::CLAUDE_MD), md) {
+                        self.review_pushed(id, content.as_deref(), md.copy)?;
+                    }
                     break (gf, read_only);
                 }
                 Err(Error::PushRace) if attempt < PUSH_RETRIES => {
@@ -805,7 +966,8 @@ impl Engine {
     /// supplies the rest from the base: repo-only files (group file, schedules), paths the apply layer did
     /// not write (collisions), paths missing locally that the user did not choose to delete
     /// (kept local, or not readable back), and plugin files grown over the size cap (noted
-    /// in `too_large`).
+    /// in `too_large`). Also returns the group's `CLAUDE.md` copy as it is on disk, which
+    /// review handles (§7a).
     fn local_view(
         &self,
         id: &GroupId,
@@ -813,7 +975,7 @@ impl Engine {
         status: &Status,
         keep: impl Fn(&str) -> bool,
         too_large: &mut Vec<String>,
-    ) -> crate::Result<FileSet> {
+    ) -> crate::Result<(FileSet, LocalCopy)> {
         let mut local: FileSet = self
             .apply
             .local_files(&self.paths, id)?
@@ -822,6 +984,10 @@ impl Engine {
             .collect();
         let mut held = self.apply.excluded_paths(&self.paths, id)?;
         held.extend(status.collisions.iter().map(|c| c.path().to_string()));
+        let copy = match held.contains(group::CLAUDE_MD) {
+            true => LocalCopy::Held,
+            false => LocalCopy::Copy(local.get(group::CLAUDE_MD).cloned()),
+        };
         for (p, bytes) in &local {
             if group::too_large(p, bytes.len()) {
                 too_large.push(group::too_large_note(p));
@@ -838,7 +1004,7 @@ impl Engine {
                 };
             }
         }
-        Ok(local)
+        Ok((local, copy))
     }
 
     fn scan(&self, changes: &Changes) -> crate::Result<()> {
@@ -974,6 +1140,7 @@ impl Engine {
 
     fn group_status(&self, id: &GroupId) -> GroupStatus {
         let s = self.load_status(id);
+        let review = self.load_review(id).ok().flatten();
         let or = |v: String, fallback: &str| {
             if v.is_empty() {
                 fallback.to_string()
@@ -992,6 +1159,8 @@ impl Engine {
             conflicts: s.conflicts,
             collisions: s.collisions.into_iter().map(Into::into).collect(),
             plugins_changed: false,
+            review_pending: review.as_ref().map_or(0, |r| r.pending.len()),
+            review_claude_md: review.is_none_or(|r| r.review),
         }
     }
 
@@ -1001,6 +1170,253 @@ impl Engine {
 
     fn save_base(&self, id: &GroupId, base: &Base) -> crate::Result<()> {
         save_base_dir(&self.paths.base_dir(id), base)
+    }
+
+    fn review_file(&self, id: &GroupId) -> PathBuf {
+        self.paths.group_dir(id).join(review::FILE)
+    }
+
+    fn load_review(&self, id: &GroupId) -> crate::Result<Option<ReviewState>> {
+        ReviewState::load(&self.review_file(id))
+    }
+
+    fn require_review(&self, id: &GroupId) -> crate::Result<ReviewState> {
+        self.load_review(id)?.ok_or_else(|| {
+            Error::Invalid(format!("{id} has no CLAUDE.md on this device to review"))
+        })
+    }
+
+    /// Save `st` and make the copy follow its accepted text: a copy that was in step takes it
+    /// as it is; an edited copy gets the same `applied` changes and stays an edit (unless
+    /// `replace`).
+    fn write_accepted(
+        &self,
+        id: &GroupId,
+        st: &mut ReviewState,
+        before: &str,
+        applied: &[review::Item],
+        replace: bool,
+    ) -> crate::Result<()> {
+        st.save(&self.review_file(id))?;
+        let copy = self
+            .apply
+            .local_files(&self.paths, id)?
+            .remove(group::CLAUDE_MD)
+            .map(|b| String::from_utf8_lossy(&b).into_owned());
+        let copy = match copy {
+            Some(c) if c != before && !replace => review::apply_all(&c, applied),
+            _ => st.accepted.clone(),
+        };
+        self.apply
+            .write_claude_md(&self.paths, id, copy.as_bytes(), st.accepted.as_bytes())
+    }
+
+    /// The group's `CLAUDE.md` through review (§7a). The changes since the last pass are
+    /// attributed to their authors: this account's apply to the accepted text, others' wait
+    /// for the user (or apply too when review is off). The copy follows the accepted text and
+    /// keeps an unshared edit. A shared edit is rebased onto the group's text, so what the
+    /// user declined is never pushed back.
+    #[allow(clippy::too_many_arguments)]
+    async fn review_pull(
+        &self,
+        remote: &dyn RemoteRepo,
+        id: &GroupId,
+        base: &Base,
+        head: &Head,
+        remote_files: &FileSet,
+        copy: LocalCopy,
+        shared: bool,
+        report: &mut GroupSyncReport,
+    ) -> crate::Result<MdPass> {
+        let old = text_of(base.files.get(group::CLAUDE_MD));
+        let new_bytes = remote_files.get(group::CLAUDE_MD);
+        let new = text_of(new_bytes);
+        let mut st = match self.load_review(id)? {
+            Some(st) => st,
+            // First sight: a join takes the group's text as it is; an upgraded device the
+            // version it already applied.
+            None => ReviewState::new(if base.head.is_empty() { &new } else { &old }),
+        };
+        let steps = if st.group == new {
+            Vec::new()
+        } else if st.group == old {
+            self.claude_md_steps(remote, &base.head, head, &new).await
+        } else {
+            vec![unknown_step(&new, head)]
+        };
+        let held = matches!(copy, LocalCopy::Held);
+        let review_on = st.review;
+        // A copy kept local is not this device's concern: the group's text is accepted.
+        st.review &= !held;
+        let before = st.accepted.clone();
+        let pulled = st.pull(&steps);
+        st.review = review_on;
+        report.review.extend(pulled.new);
+
+        let copy = match copy {
+            LocalCopy::Copy(c) => c.map(|b| String::from_utf8_lossy(&b).into_owned()),
+            LocalCopy::Held => None,
+        };
+        let current = match copy {
+            // An unshared edit stays; the changes applied this pass go into it too.
+            Some(c) if c != before => {
+                let patched = review::apply_all(&c, &pulled.applied);
+                if st.accepted != before {
+                    self.apply.write_claude_md(
+                        &self.paths,
+                        id,
+                        patched.as_bytes(),
+                        st.accepted.as_bytes(),
+                    )?;
+                }
+                Some(patched)
+            }
+            Some(_) => Some(st.accepted.clone()),
+            None => None,
+        };
+        let push = match &current {
+            _ if !shared || held => None,
+            // A shared delete.
+            None => new_bytes.map(|_| None),
+            Some(c) => {
+                let text = review::rebase(&st.accepted, c, &new);
+                (text != new).then(|| Some(text.into_bytes()))
+            }
+        };
+        st.save(&self.review_file(id))?;
+        let apply = (new_bytes.is_some() || !st.accepted.is_empty())
+            .then(|| st.accepted.clone().into_bytes());
+        Ok(MdPass {
+            apply,
+            push,
+            copy: current,
+        })
+    }
+
+    /// The user's edit of the copy was pushed as `pushed`: it is the group's text now, and
+    /// the copy is accepted as it is.
+    fn review_pushed(
+        &self,
+        id: &GroupId,
+        pushed: Option<&[u8]>,
+        copy: Option<String>,
+    ) -> crate::Result<()> {
+        let mut st = self.load_review(id)?.unwrap_or_default();
+        st.group = pushed
+            .map(|b| String::from_utf8_lossy(b).into_owned())
+            .unwrap_or_default();
+        st.accepted = copy.unwrap_or_default();
+        st.settle();
+        st.save(&self.review_file(id))?;
+        if pushed.is_some() {
+            let c = st.accepted.as_bytes();
+            self.apply.write_claude_md(&self.paths, id, c, c)?;
+        }
+        Ok(())
+    }
+
+    /// Who changed the group's `CLAUDE.md` between `from` and `to`, step by step. When the
+    /// history cannot be read, every change counts as someone else's: nothing applies unasked.
+    async fn claude_md_steps(
+        &self,
+        remote: &dyn RemoteRepo,
+        from: &Head,
+        to: &Head,
+        new: &str,
+    ) -> Vec<review::Step> {
+        let commits = match remote.commits_between(&from.commit, &to.commit).await {
+            Ok(c) if !c.is_empty() => c,
+            Ok(_) => return vec![unknown_step(new, to)],
+            Err(e) => {
+                tracing::warn!(group = %remote.id(), error = %e, "could not read who changed CLAUDE.md");
+                return vec![unknown_step(new, to)];
+            }
+        };
+        let mine = |c: &CommitInfo| c.author.eq_ignore_ascii_case(&self.login);
+        let step = |c: &CommitInfo, text: &str| review::Step {
+            text: text.into(),
+            mine: mine(c),
+            author: c.author.clone(),
+            commit: c.sha.clone(),
+            message: c.message.clone(),
+            at_unix: c.at_unix,
+        };
+        let authors: BTreeSet<String> = commits.iter().map(|c| c.author.to_lowercase()).collect();
+        let last = commits.last().expect("not empty");
+        if authors.len() == 1 {
+            return vec![step(last, new)];
+        }
+        // Several authors: the last other member's commit takes the whole change.
+        let theirs = || {
+            let c = commits.iter().rev().find(|c| !mine(c)).unwrap_or(last);
+            vec![review::Step {
+                mine: false,
+                ..step(c, new)
+            }]
+        };
+        if commits.len() > MAX_HISTORY_WALK {
+            return theirs();
+        }
+        let mut steps = Vec::new();
+        for c in &commits {
+            match remote.file_at(&c.sha, group::CLAUDE_MD).await {
+                Ok(bytes) => steps.push(step(c, &text_of(bytes.as_ref()))),
+                Err(e) => {
+                    tracing::warn!(group = %remote.id(), error = %e, "could not read CLAUDE.md history");
+                    return theirs();
+                }
+            }
+        }
+        if steps.last().map(|s| s.text.as_str()) != Some(new) {
+            return theirs();
+        }
+        steps
+    }
+}
+
+/// Commits read one by one to attribute `CLAUDE.md` changes when several people pushed.
+const MAX_HISTORY_WALK: usize = 20;
+
+/// The group's `CLAUDE.md` copy as the merge found it.
+enum LocalCopy {
+    /// Not managed on this device ("Keep local").
+    Held,
+    /// `None`: missing.
+    Copy(Option<Vec<u8>>),
+}
+
+/// What review decided for one pass.
+struct MdPass {
+    /// The accepted text the apply gives the copy (`None`: no copy).
+    apply: Option<Vec<u8>>,
+    /// The user's shared edit, rebased onto the group's text (`Some(None)`: delete).
+    push: Option<Option<Vec<u8>>>,
+    /// The copy after this pass.
+    copy: Option<String>,
+}
+
+fn text_of(bytes: Option<&Vec<u8>>) -> String {
+    bytes
+        .map(|b| String::from_utf8_lossy(b).into_owned())
+        .unwrap_or_default()
+}
+
+/// A change whose author is unknown: it waits for review.
+fn unknown_step(text: &str, head: &Head) -> review::Step {
+    review::Step {
+        text: text.into(),
+        mine: false,
+        author: String::new(),
+        commit: head.commit.clone(),
+        message: String::new(),
+        at_unix: now_unix(),
+    }
+}
+
+fn remove_file_if_exists(file: &Path) -> crate::Result<()> {
+    match std::fs::remove_file(file) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
     }
 }
 
@@ -1309,6 +1725,24 @@ mod tests {
         }
         fn keep_local(&self, _: &Paths, _: &GroupId, path: &str) -> crate::Result<()> {
             self.st.lock().unwrap().kept.insert(path.into());
+            Ok(())
+        }
+        fn write_claude_md(
+            &self,
+            _: &Paths,
+            group: &GroupId,
+            copy: &[u8],
+            accepted: &[u8],
+        ) -> crate::Result<()> {
+            let mut st = self.st.lock().unwrap();
+            if st.kept.contains(group::CLAUDE_MD) {
+                return Ok(());
+            }
+            let path = String::from(group::CLAUDE_MD);
+            let local = st.local.entry(group.clone()).or_default();
+            local.insert(path.clone(), copy.to_vec());
+            let applied = st.applied.entry(group.clone()).or_default();
+            applied.insert(path, accepted.to_vec());
             Ok(())
         }
         fn local_edits(&self, _: &Paths) -> crate::Result<Vec<LocalEdit>> {
@@ -2040,6 +2474,294 @@ mod tests {
         assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "mine\n");
         assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
         assert_eq!(commit_count(&repo), before + 1, "only the test's commit");
+    }
+
+    // The group's CLAUDE.md through review (§7a).
+
+    fn md(e: &Engine, id: &GroupId) -> ClaudeMdReview {
+        e.claude_md_review(id).unwrap()
+    }
+
+    fn lines(items: &[review::Item]) -> Vec<(review::Kind, String, String)> {
+        items
+            .iter()
+            .map(|i| (i.kind, i.lines.join("|"), i.author.clone()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn others_claude_md_changes_wait_for_review() {
+        let (_, id, repo, bo) = joined().await;
+        repo.set_file(group::CLAUDE_MD, "Use tabs.\n");
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(
+            lines(&report.groups[0].review),
+            [
+                (review::Kind::Remove, "# Friends".into(), "ana".into()),
+                (review::Kind::Add, "Use tabs.".into(), "ana".into()),
+            ]
+        );
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\n",
+            "neither the addition nor the removal applies unasked"
+        );
+        let g = &bo.engine.groups().await.unwrap()[0];
+        assert_eq!((g.review_pending, g.review_claude_md), (2, true));
+        assert_eq!(md(&bo.engine, &id).pending.len(), 2);
+        // Asked once: the next sync reports nothing new and pushes nothing.
+        let before = commit_count(&repo);
+        let again = bo.engine.sync_all().await.unwrap();
+        assert!(again.groups[0].review.is_empty());
+        assert_eq!(commit_count(&repo), before);
+    }
+
+    #[tokio::test]
+    async fn own_claude_md_changes_apply_at_once() {
+        let (world, id, repo, bo) = joined().await;
+        // From a git clone under the same account.
+        repo.set_file_as("BO", group::CLAUDE_MD, "# Friends\nMine.\n");
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].review.is_empty());
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\nMine.\n"
+        );
+        // From another device of the same account.
+        let mac = device(&world, "bo", "mac");
+        mac.engine.join(&id).await.unwrap();
+        mac.apply.edit(&id, group::CLAUDE_MD, "# Friends\n");
+        mac.engine
+            .resolve_edit(&edit(&id, group::CLAUDE_MD), EditAction::Share)
+            .await
+            .unwrap();
+        assert_eq!(repo.file(group::CLAUDE_MD).unwrap(), "# Friends\n");
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].review.is_empty());
+        assert_eq!(bo.apply.file(&id, group::CLAUDE_MD).unwrap(), "# Friends\n");
+    }
+
+    #[tokio::test]
+    async fn accept_applies_and_decline_keeps_without_asking_again() {
+        let (_, id, repo, bo) = joined().await;
+        repo.set_file(group::CLAUDE_MD, "# Friends\nUse tabs.\nBe brief.\n");
+        bo.engine.sync_all().await.unwrap();
+        let pending = md(&bo.engine, &id).pending;
+        assert_eq!(pending.len(), 1, "one block of two lines");
+        let before = commit_count(&repo);
+        let ids = [pending[0].id.clone()];
+        let after = bo
+            .engine
+            .decide_claude_md(&id, Some(&ids), true)
+            .await
+            .unwrap();
+        assert!(after.pending.is_empty() && !after.differs);
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\nUse tabs.\nBe brief.\n"
+        );
+
+        // Ana removes a line and adds one; bo declines both.
+        repo.set_file(group::CLAUDE_MD, "# Friends\nBe brief.\nNo emoji.\n");
+        bo.engine.sync_all().await.unwrap();
+        assert_eq!(md(&bo.engine, &id).pending.len(), 2);
+        let after = bo.engine.decide_claude_md(&id, None, false).await.unwrap();
+        assert!(after.pending.is_empty() && after.differs);
+        assert_eq!(after.declined, 2);
+        let mine = "# Friends\nUse tabs.\nBe brief.\n";
+        assert_eq!(bo.apply.file(&id, group::CLAUDE_MD).unwrap(), mine);
+        for _ in 0..2 {
+            let report = bo.engine.sync_all().await.unwrap();
+            assert!(report.groups[0].review.is_empty(), "not asked again");
+        }
+        assert_eq!(bo.apply.file(&id, group::CLAUDE_MD).unwrap(), mine);
+        assert_eq!(commit_count(&repo), before + 1, "only ana's commit");
+
+        // A new change is asked about; the declined ones stay declined.
+        repo.set_file(
+            group::CLAUDE_MD,
+            "# Friends\nBe brief.\nNo emoji.\nShort PRs.\n",
+        );
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(
+            lines(&report.groups[0].review),
+            [(review::Kind::Add, "Short PRs.".into(), "ana".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn declined_differences_are_never_pushed() {
+        let (_, id, repo, bo) = joined().await;
+        repo.set_file(group::CLAUDE_MD, "# Friends\nUse tabs.\n");
+        bo.engine.sync_all().await.unwrap();
+        bo.engine.decide_claude_md(&id, None, false).await.unwrap();
+        // Bo edits their copy (without ana's line) and shares the edit.
+        bo.apply
+            .edit(&id, group::CLAUDE_MD, "# Friends\nBo's rule.\n");
+        bo.engine
+            .resolve_edit(&edit(&id, group::CLAUDE_MD), EditAction::Share)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.file(group::CLAUDE_MD).unwrap(),
+            "# Friends\nBo's rule.\nUse tabs.\n",
+            "only bo's own line is pushed; ana's declined line stays in the group"
+        );
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\nBo's rule.\n"
+        );
+        let before = commit_count(&repo);
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].review.is_empty() && !report.groups[0].pushed);
+        assert_eq!(commit_count(&repo), before);
+    }
+
+    #[tokio::test]
+    async fn review_off_applies_others_changes_again() {
+        let (_, id, repo, bo) = joined().await;
+        repo.set_file(group::CLAUDE_MD, "# Friends\nUse tabs.\n");
+        bo.engine.sync_all().await.unwrap();
+        let off = bo.engine.set_claude_md_review(&id, false).await.unwrap();
+        assert!(
+            !off.review && off.pending.is_empty(),
+            "pending ones are accepted"
+        );
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\nUse tabs.\n"
+        );
+        repo.set_file(group::CLAUDE_MD, "Use tabs.\n");
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(report.groups[0].review.len(), 0);
+        assert_eq!(bo.apply.file(&id, group::CLAUDE_MD).unwrap(), "Use tabs.\n");
+        assert!(!bo.engine.groups().await.unwrap()[0].review_claude_md);
+    }
+
+    #[tokio::test]
+    async fn an_unshared_edit_stays_while_accepted_changes_go_into_it() {
+        let (_, id, repo, bo) = joined().await;
+        bo.apply
+            .edit(&id, group::CLAUDE_MD, "# Friends\nMy note.\n");
+        repo.set_file(group::CLAUDE_MD, "Top.\n# Friends\n");
+        bo.engine.sync_all().await.unwrap();
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\nMy note.\n"
+        );
+        bo.engine.decide_claude_md(&id, None, true).await.unwrap();
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "Top.\n# Friends\nMy note.\n"
+        );
+        // Undo goes back to what bo accepted.
+        bo.engine
+            .resolve_edit(&edit(&id, group::CLAUDE_MD), EditAction::Undo)
+            .await
+            .unwrap();
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "Top.\n# Friends\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_line_deleted_in_one_group_stays_in_the_other() {
+        let world = FakeGitHub::new();
+        let text = "# Rules\nAlways run the tests.\n";
+        let a = GroupId::new("ana", group::DEFAULT_REPO);
+        let b = GroupId::new("cy", "crew");
+        for (id, members) in [(&a, ["ana", "bo"]), (&b, ["cy", "bo"])] {
+            let json = group_json("G", &members);
+            let repo = FakeRepo::with_files(
+                id.clone(),
+                &[(group::FILE, &json), (group::CLAUDE_MD, text)],
+            );
+            repo.add_collaborator("bo");
+            world.add(&repo);
+        }
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&a).await.unwrap();
+        bo.engine.join(&b).await.unwrap();
+        world
+            .repo(&b)
+            .unwrap()
+            .set_file(group::CLAUDE_MD, "# Rules\n");
+        let report = bo.engine.sync_all().await.unwrap();
+        let of = |id: &GroupId| {
+            report
+                .groups
+                .iter()
+                .find(|g| &g.id == id)
+                .map(|g| lines(&g.review))
+                .unwrap_or_default()
+        };
+        assert!(of(&a).is_empty());
+        assert_eq!(
+            of(&b),
+            [(
+                review::Kind::Remove,
+                "Always run the tests.".into(),
+                "cy".into()
+            )]
+        );
+        bo.engine.decide_claude_md(&b, None, false).await.unwrap();
+        bo.engine.sync_all().await.unwrap();
+        assert_eq!(bo.apply.file(&a, group::CLAUDE_MD).unwrap(), text);
+        assert_eq!(bo.apply.file(&b, group::CLAUDE_MD).unwrap(), text);
+        assert_eq!(
+            world.repo(&a).unwrap().file(group::CLAUDE_MD).unwrap(),
+            text
+        );
+        assert_eq!(md(&bo.engine, &a).pending.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn several_authors_are_told_apart() {
+        let (_, id, repo, bo) = joined().await;
+        repo.set_file_as("bo", group::CLAUDE_MD, "# Friends\nBo's line.\n");
+        repo.set_file(group::CLAUDE_MD, "# Friends\nBo's line.\nAna's line.\n");
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(
+            lines(&report.groups[0].review),
+            [(review::Kind::Add, "Ana's line.".into(), "ana".into())]
+        );
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\nBo's line.\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn integration_declined_changes_are_not_local_edits() {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        let (bo, _dir) = real_device(&world, "bo");
+        bo.join(&id).await.unwrap();
+        let copy = bo.paths.group_dir(&id).join(group::CLAUDE_MD);
+        repo.set_file(group::CLAUDE_MD, "# Friends\nUse tabs.\n");
+        bo.sync_all().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&copy).unwrap(), "# Friends\n");
+        assert!(bo.local_edits().unwrap().is_empty());
+        bo.decide_claude_md(&id, None, false).await.unwrap();
+        bo.sync_all().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&copy).unwrap(), "# Friends\n");
+        assert!(
+            bo.local_edits().unwrap().is_empty(),
+            "a declined change is not the user's edit"
+        );
+        let file = bo.paths.group_dir(&id).join(review::FILE);
+        let st = ReviewState::load(&file).unwrap().unwrap();
+        assert_eq!(st.declined.len(), 1);
+
+        repo.set_file(group::CLAUDE_MD, "# Friends\nUse tabs.\nBe brief.\n");
+        bo.sync_all().await.unwrap();
+        bo.decide_claude_md(&id, None, true).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&copy).unwrap(),
+            "# Friends\nBe brief.\n"
+        );
+        assert!(bo.local_edits().unwrap().is_empty());
     }
 
     #[tokio::test]

@@ -1,5 +1,5 @@
 // Global UI state fed by commands and backend events.
-import type { AppInfo, AuthStatus, Invitation, LocalEdit, PersonalStatus, Status, UpdateInfo } from "./api";
+import type { AppInfo, AuthStatus, GroupStatus, Invitation, LocalEdit, PersonalStatus, Status, UpdateInfo } from "./api";
 
 interface State {
   auth: AuthStatus | null;
@@ -14,6 +14,8 @@ interface State {
   personal: PersonalStatus | null;
   /** Unread notifications (the bell's badge). */
   unread: number;
+  /** CLAUDE.md changes from others waiting for review, over all groups (the nav badge). */
+  review: number;
 }
 
 type Listener = () => void;
@@ -33,6 +35,7 @@ export const store: State & {
   pluginsChanged: false,
   personal: null,
   unread: 0,
+  review: 0,
   set(patch) {
     Object.assign(this, patch);
     for (const l of listeners) l();
@@ -42,6 +45,12 @@ export const store: State & {
     refreshHook?.();
   },
 };
+
+/** Keep the nav badge in step with a fresh group list. */
+export function countReview(groups: GroupStatus[]): void {
+  const review = groups.reduce((n, g) => n + (g.reviewPending ?? 0), 0);
+  if (review !== store.review) store.set({ review });
+}
 
 export function subscribe(l: Listener): void {
   listeners.push(l);

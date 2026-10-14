@@ -77,6 +77,15 @@ pub trait RemoteRepo: Send + Sync {
     async fn recent_commits(&self, _limit: usize) -> crate::Result<Vec<CommitInfo>> {
         Ok(Vec::new())
     }
+    /// The commits after `from` up to `to`, oldest first, with their GitHub author login
+    /// (used to tell this account's `CLAUDE.md` changes from other members', §7a).
+    async fn commits_between(&self, _from: &str, _to: &str) -> crate::Result<Vec<CommitInfo>> {
+        Err(Error::Invalid("commit history is not available".into()))
+    }
+    /// One file at a commit; `None` when the commit does not have it.
+    async fn file_at(&self, _commit: &str, _path: &str) -> crate::Result<Option<Vec<u8>>> {
+        Err(Error::Invalid("file history is not available".into()))
+    }
 }
 
 /// Account-level calls and a way to open repos: what the engine needs beyond one repo.
@@ -559,51 +568,94 @@ impl RemoteRepo for GitHubRepo {
     }
 
     async fn recent_commits(&self, limit: usize) -> crate::Result<Vec<CommitInfo>> {
-        #[derive(Deserialize)]
-        struct Item {
-            sha: String,
-            commit: Detail,
-            author: Option<Owner>,
-        }
-        #[derive(Deserialize)]
-        struct Detail {
-            message: String,
-            author: Option<Person>,
-        }
-        #[derive(Deserialize)]
-        struct Person {
-            name: Option<String>,
-            date: Option<String>,
-        }
         let branch = self.info().await?.default_branch;
         let path = self.path(&format!(
             "/commits?sha={branch}&per_page={}",
             limit.clamp(1, 100)
         ));
-        let items: Vec<Item> = match self.gh.get(&path).await {
+        let items: Vec<CommitItem> = match self.gh.get(&path).await {
             Err(e) if is_empty_repo(&e) => return Ok(Vec::new()),
             r => r?,
         };
-        Ok(items
-            .into_iter()
-            .map(|i| {
-                let person = i.commit.author;
-                CommitInfo {
-                    sha: i.sha,
-                    message: i.commit.message,
-                    author: i
-                        .author
-                        .map(|a| a.login)
-                        .or_else(|| person.as_ref().and_then(|p| p.name.clone()))
-                        .unwrap_or_default(),
-                    at_unix: person
-                        .and_then(|p| p.date)
-                        .and_then(|d| crate::state::parse_rfc3339(&d))
-                        .unwrap_or(0),
-                }
-            })
-            .collect())
+        Ok(items.into_iter().map(CommitItem::info).collect())
     }
+
+    async fn commits_between(&self, from: &str, to: &str) -> crate::Result<Vec<CommitInfo>> {
+        #[derive(Deserialize)]
+        struct Compare {
+            commits: Vec<CommitItem>,
+        }
+        let c: Compare = self
+            .gh
+            .get(&self.path(&format!("/compare/{from}...{to}")))
+            .await?;
+        Ok(c.commits.into_iter().map(CommitItem::info).collect())
+    }
+
+    async fn file_at(&self, commit: &str, path: &str) -> crate::Result<Option<Vec<u8>>> {
+        #[derive(Deserialize)]
+        struct Contents {
+            content: String,
+            encoding: String,
+        }
+        let url = self.path(&format!("/contents/{path}?ref={commit}"));
+        match self.gh.get::<Contents>(&url).await {
+            Err(Error::GitHub { status: 404, .. }) => Ok(None),
+            Err(e) => Err(e),
+            Ok(c) if c.encoding == "base64" => decode_base64(&c.content).map(Some),
+            Ok(_) => Err(Error::Invalid(format!(
+                "{path} at {commit} is too large to read"
+            ))),
+        }
+    }
+}
+
+/// A commit as `/commits` and `/compare` list it.
+#[derive(Deserialize)]
+struct CommitItem {
+    sha: String,
+    commit: CommitDetail,
+    author: Option<Owner>,
+}
+
+#[derive(Deserialize)]
+struct CommitDetail {
+    message: String,
+    author: Option<CommitPerson>,
+}
+
+#[derive(Deserialize)]
+struct CommitPerson {
+    name: Option<String>,
+    date: Option<String>,
+}
+
+impl CommitItem {
+    /// The GitHub login when GitHub knows the author, else the git author name.
+    fn info(self) -> CommitInfo {
+        let person = self.commit.author;
+        CommitInfo {
+            sha: self.sha,
+            message: self.commit.message,
+            author: self
+                .author
+                .map(|a| a.login)
+                .or_else(|| person.as_ref().and_then(|p| p.name.clone()))
+                .unwrap_or_default(),
+            at_unix: person
+                .and_then(|p| p.date)
+                .and_then(|d| crate::state::parse_rfc3339(&d))
+                .unwrap_or(0),
+        }
+    }
+}
+
+/// GitHub's base64 (wrapped in newlines).
+fn decode_base64(content: &str) -> crate::Result<Vec<u8>> {
+    let clean: String = content.chars().filter(|c| !c.is_whitespace()).collect();
+    b64()
+        .decode(clean)
+        .map_err(|e| Error::Invalid(format!("bad base64 from GitHub: {e}")))
 }
 
 #[cfg(test)]
@@ -1031,5 +1083,37 @@ mod tests {
             ("f", 1_791_884_701)
         );
         assert_eq!((got[1].author.as_str(), got[1].at_unix), ("Someone", 0));
+    }
+
+    #[tokio::test]
+    async fn commits_between_and_file_at() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/compare/c1...c3"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"commits": [
+                {"sha": "c2", "author": {"login": "f"}, "commit": {"message": "m2", "author": {"name": "F"}}},
+                {"sha": "c3", "author": null, "commit": {"message": "m3", "author": {"name": "G"}}},
+            ]})))
+            .mount(&server)
+            .await;
+        let got = repo.commits_between("c1", "c3").await.unwrap();
+        let who: Vec<_> = got
+            .iter()
+            .map(|c| (c.sha.as_str(), c.author.as_str()))
+            .collect();
+        assert_eq!(who, [("c2", "f"), ("c3", "G")]);
+
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/contents/CLAUDE.md"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "content": "aGVs\nbG8K\n", "encoding": "base64"
+            })))
+            .mount(&server)
+            .await;
+        assert_eq!(
+            repo.file_at("c2", "CLAUDE.md").await.unwrap().unwrap(),
+            b"hello\n"
+        );
+        assert_eq!(repo.file_at("c2", "missing.md").await.unwrap(), None);
     }
 }

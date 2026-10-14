@@ -164,10 +164,24 @@ impl FakeRepo {
 
     /// Someone else pushes (no checks, no hooks). Returns the new head.
     pub fn push(&self, changes: &Changes, message: &str) -> Head {
+        let owner = self.owner();
+        self.push_as(&owner, changes, message)
+    }
+
+    /// `author` pushes from outside the app (a git clone, the web UI).
+    pub fn push_as(&self, author: &str, changes: &Changes, message: &str) -> Head {
         let mut st = self.lock();
         let files = apply_changes(st.files(), changes).expect("fake push");
-        let owner = st.owner.clone();
-        st.push(files, message, &owner)
+        st.push(files, message, author)
+    }
+
+    /// `author` writes one file from outside the app.
+    pub fn set_file_as(&self, author: &str, path: &str, content: &str) -> Head {
+        self.push_as(
+            author,
+            &BTreeMap::from([(path.to_string(), Some(content.as_bytes().to_vec()))]),
+            &format!("update {path}"),
+        )
     }
 
     /// Someone else writes one file.
@@ -458,6 +472,40 @@ impl RemoteRepo for FakeRepo {
                 at_unix: n as u64 + 1,
             })
             .collect())
+    }
+
+    async fn commits_between(&self, from: &str, to: &str) -> crate::Result<Vec<CommitInfo>> {
+        let st = self.enter("commits_between")?;
+        let end = st
+            .commits
+            .iter()
+            .position(|c| c.sha == to)
+            .ok_or_else(not_found)?;
+        let start = st
+            .commits
+            .iter()
+            .position(|c| c.sha == from)
+            .map_or(0, |i| i + 1);
+        Ok(st.commits[start..=end]
+            .iter()
+            .enumerate()
+            .map(|(n, c)| CommitInfo {
+                sha: c.sha.clone(),
+                message: c.message.clone(),
+                author: c.author.clone(),
+                at_unix: (start + n) as u64 + 1,
+            })
+            .collect())
+    }
+
+    async fn file_at(&self, commit: &str, path: &str) -> crate::Result<Option<Vec<u8>>> {
+        let st = self.enter("file_at")?;
+        let c = st
+            .commits
+            .iter()
+            .find(|c| c.sha == commit)
+            .ok_or_else(not_found)?;
+        Ok(c.files.get(path).cloned())
     }
 }
 

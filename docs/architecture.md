@@ -126,7 +126,7 @@ Moves the merged group state into `~/.claude` without touching anything it does 
 - **Ownership rules.** The app writes or deletes a path only if the manifest says it owns it. A path that exists but is not in the manifest belongs to the user: the group file is skipped and reported as a collision. Two groups that ship the same path: the group joined first wins and the other is reported.
 - **Marketplaces.** The folder under `~/.claude-sync/marketplaces/` is the app's, so a stray file in the way is backed up and replaced, not reported. A marketplace belongs to the first group that placed it: if a second joined group ships the same name, that group gets a collision on `plugins/<marketplace>` and none of its files for it are placed. When the owner leaves, the next sync of the other group takes it over. The manifest records the owner of each marketplace and the `settings.json` entry the app set for it (§8).
 - **Reload.** Claude Code reads plugins when a session starts. When an apply, join or leave changes a plugin file or a marketplace entry, the sync report carries `pluginsChanged` and the app says: "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them."
-- **CLAUDE.md.** The group's `CLAUDE.md` is copied to `~/.claude-sync/groups/<owner>__<repo>/CLAUDE.md`. `~/.claude/CLAUDE.md` gets one managed block at the top, with one import line per group:
+- **CLAUDE.md.** Each device keeps its own copy of the group's `CLAUDE.md` at `~/.claude-sync/groups/<owner>__<repo>/CLAUDE.md`. Changes other members make reach it only when the user accepts them (§7a). `~/.claude/CLAUDE.md` gets one managed block at the top, with one import line per group:
   ```
   <!-- claude-sync:begin (managed, do not edit inside) -->
   @~/.claude-sync/groups/MehdiMamas__claude-sync-data/CLAUDE.md
@@ -135,6 +135,34 @@ Moves the merged group state into `~/.claude` without touching anything it does 
   Everything outside the block is the user's.
 - **Local edits.** A file watcher (debounced, 2 s) on managed paths compares hashes against the manifest. A changed managed file shows a notice: **Share with group** (commit it), **Keep local** (stop managing that path on this device), or **Undo** (restore the group's version). A new local skill can be shared from the app. The watcher also covers `~/.claude-sync/marketplaces/`: an edited plugin file, or a new file inside a marketplace folder a group placed, gets the same notice, and Share commits it under `plugins/<marketplace>/`. Undo of a new file removes it (a copy goes to the backups).
 - Every write goes through write-to-temp-then-rename. Before the first change to an existing user file (`CLAUDE.md`, `settings.json`) the app copies it to `~/.claude-sync/backups/<UTC time>/`.
+
+## 7a. Reviewing changes to a group's CLAUDE.md
+
+A person can be in several groups, and a line from one group's `CLAUDE.md` may be copied into another. What other people do to a group's `CLAUDE.md` must never silently change what this user's Claude reads. So by default every line someone else adds or removes waits until the user accepts or declines it.
+
+**Items.** When a sync finds that the group's `CLAUDE.md` changed, the change is split into items: one block of added lines, or one block of removed lines, from one commit. Each item records its author (the GitHub login of the commit), the commit, its message and time, and up to two lines of context on each side. Items are applied by content, not by line number: a removal finds its lines, an addition goes next to the lines it followed. An item that has nothing left to do (someone else already made the same change) is dropped.
+
+**Whose change.** The app reads the commits between the last head it synced and the new one (`GET /compare`).
+- Every commit is this account's (another of the user's devices, or a clone pushing with the same login): the change applies at once.
+- Every commit is one other member's: all of it waits for review, attributed to them.
+- A mix: the app reads `CLAUDE.md` at each commit (at most 20) and splits the change per commit, so the user's own steps apply and the others' wait. Past 20 commits, or when one of them cannot be read, the whole change is attributed to the last other member and waits.
+- The history cannot be read at all: the change waits as "Someone"'s. Nothing applies unasked.
+
+**State.** Per group in `~/.claude-sync/groups/<owner>__<repo>/claude-md-review.json` (`format: 1`, written atomically): `group` (the group's text as last seen), `accepted` (the group's text with this user's decisions applied), the pending items, the declined items (at most 500 kept), and the `review` switch. The copy that Claude Code imports holds `accepted`. The file watcher ignores the review file, and local edits (§7) are measured against `accepted`, so a declined line never shows as a local edit.
+
+**Accept and decline.** Accept patches the item into `accepted` and the copy. Decline leaves both alone and remembers the item: the app never asks about it again, and the next change in the same place is a new item. A deleted line the user declined stays in their copy. A line the user declined to add stays out.
+
+**Declined differences are never pushed.** When the user shares an edit of their copy, the edit is rebased onto the group's current text: only what the user changed by hand goes to the group, not the lines they declined. Declining is private; it never undoes another member's change for the rest of the group.
+
+**The user's own edits.** An unshared edit of the copy stays; an accepted item is patched into it. Undo (§7) returns the copy to `accepted`, not to the group's text. **Use the group's version** (group page, shown when the copy differs from the group's text and nothing is pending) sets `accepted` and the copy to the group's text and forgets the declined items. **Keep local** stops managing the copy, so nothing is reviewed for it; the group's text is still recorded as seen.
+
+**The switch.** "Review changes others make to CLAUDE.md" on the group page, on by default. Off, everyone's changes apply at once, as before. Turning it off with items pending accepts them, after the app asks.
+
+**Telling the user.** A sync that finds new items sends one notification per group ("ana changed Friends's CLAUDE.md: 1 addition, 1 removal to review"). The tray tooltip and the nav show the number waiting, the Groups list tags the group, and the group page lists each item with its author, time, commit message and lines, with Accept and Decline (and Accept all / Decline all).
+
+**Other groups.** Review state is per group. Accepting, declining or deleting a line in one group never touches another group's copy, even when the same line is in both.
+
+**Scope.** Only `CLAUDE.md` is reviewed. Skills, agents, commands and output styles still follow §6 and §7 (the group's version applies; a local edit gets the Share / Keep local / Undo notice). Settings merge per key (§8).
 
 ## 8. Settings merge
 

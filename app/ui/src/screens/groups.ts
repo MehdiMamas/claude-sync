@@ -1,7 +1,7 @@
 // Groups: joined groups with status, pending invitations, groups to join, create a group.
 import { api, errorText, groupKey, type GroupId, type GroupStatus, type Invitation } from "../api";
 import { busy, errorBox, h, relTime, replace, spinner, toast } from "../dom";
-import { go, onRefresh, store, subscribe } from "../store";
+import { countReview, go, onRefresh, store, subscribe } from "../store";
 import { claudeMdEditor } from "./claude-md";
 
 // Shown wherever the user can join a group (§4: a group can bundle plugins).
@@ -32,6 +32,8 @@ function groupRow(g: GroupStatus): HTMLElement {
       h(
         "div",
         { class: "right" },
+        g.reviewPending > 0 &&
+          h("span", { class: "tag warn" }, `${g.reviewPending} CLAUDE.md change${g.reviewPending === 1 ? "" : "s"} to review`),
         problems > 0 && h("span", { class: "tag warn" }, `${problems} to review`),
         h("div", { class: "muted small" }, `Synced ${relTime(g.lastSyncUnix)}`),
       ),
@@ -127,6 +129,7 @@ export function groupsScreen(view: HTMLElement): void {
     if (!list.firstChild) list.replaceChildren(spinner("Loading groups"));
     try {
       const groups = await api.groups();
+      countReview(groups);
       if (groups.length === 0) {
         replace(
           list,

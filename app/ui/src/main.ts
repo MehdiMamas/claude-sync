@@ -1,6 +1,6 @@
 import "./style.css";
 import { api, on, setBackend } from "./api";
-import { go, onRefresh, store, subscribe } from "./store";
+import { countReview, go, onRefresh, store, subscribe } from "./store";
 import { avatar } from "./avatar";
 import { h, replace, relTime } from "./dom";
 import { banners } from "./screens/banners";
@@ -79,6 +79,16 @@ function bell(current: boolean): HTMLElement {
   );
 }
 
+/** The nav badge: CLAUDE.md changes waiting for review. */
+function navBadge(): HTMLElement {
+  const n = store.review;
+  return h(
+    "span",
+    { id: "nav-review" },
+    n > 0 && h("span", { class: "nav-badge", title: `${n} CLAUDE.md change${n === 1 ? "" : "s"} to review` }, String(n)),
+  );
+}
+
 let currentKey = "";
 
 function render(): void {
@@ -97,6 +107,7 @@ function render(): void {
     document.getElementById("status-slot")?.replaceChildren(statusPill());
     document.getElementById("bell-slot")?.replaceChildren(bell(route.name === "notifications"));
     document.getElementById("banners")?.replaceChildren(...banners());
+    document.getElementById("nav-review")?.replaceWith(navBadge());
     return;
   }
   currentKey = key;
@@ -125,7 +136,7 @@ function render(): void {
             h(
               "li",
               null,
-              h("a", { href: `#/${n.path}`, "aria-current": n.name === navRoute ? "page" : false }, n.label),
+              h("a", { href: `#/${n.path}`, "aria-current": n.name === navRoute ? "page" : false }, n.label, n.name === "groups" && navBadge()),
             ),
           ),
         ),
@@ -173,7 +184,10 @@ async function boot(): Promise<void> {
     on("invitations", (invitations) => store.set({ invitations })),
     on("update-available", (update) => store.set({ update })),
     on("signed-in", async () => store.set({ auth: await api.authStatus() })),
-    on("sync-report", () => store.bump()),
+    on("sync-report", () => {
+      store.bump();
+      api.groups().then(countReview, () => {});
+    }),
     on("plugins-changed", () => store.set({ pluginsChanged: true })),
     on("notifications-changed", ({ unread }) => store.set({ unread })),
     on("navigate", (route) => go(route)),
@@ -202,6 +216,7 @@ async function boot(): Promise<void> {
       (personal) => store.set({ personal }),
       () => {},
     );
+    api.groups().then(countReview, () => {});
   }
 }
 

@@ -737,6 +737,39 @@ pub fn keep_local(paths: &Paths, group: &GroupId, path: &str) -> crate::Result<(
     m.save(paths)
 }
 
+/// Write the group's `CLAUDE.md` copy as `copy` and record `accepted` as the version the app
+/// wrote (§7a): the watcher compares the copy with `accepted`, so differences the user
+/// declined are not local edits, and a `copy` that differs from `accepted` (an unshared
+/// edit kept while accepted changes land) still is one. A copy the user edited is backed up
+/// before it changes.
+pub fn write_claude_md(
+    paths: &Paths,
+    group: &GroupId,
+    copy: &[u8],
+    accepted: &[u8],
+) -> crate::Result<()> {
+    let mut m = Manifest::load(paths)?;
+    let mut backups = Backups::new(paths);
+    let entry = m.groups.entry(group.to_string()).or_default();
+    if entry.keep_local.contains(CLAUDE_MD) {
+        return Ok(());
+    }
+    let file = paths.group_dir(group).join(CLAUDE_MD);
+    let cur = read_file(&file)?;
+    if cur.as_deref() != Some(copy) {
+        if let Some(cur) = &cur {
+            if entry.claude_md.as_deref() != Some(sha256_hex(cur).as_str()) {
+                backups.save(&format!("{}/{CLAUDE_MD}", group.dir_name()), cur)?;
+            }
+        }
+        write_atomic(&file, copy)?;
+    }
+    entry.claude_md = Some(sha256_hex(accepted));
+    let mut report = ApplyReport::default();
+    update_claude_md_block(paths, &mut m, &mut backups, &mut report)?;
+    m.save(paths)
+}
+
 /// Put the group's version back (the "Undo" action, §7). For a file or `CLAUDE.md`,
 /// `group_version` is the group's content (`None` = the group does not have it: delete
 /// it). For `settings.shared.json` or `settings.shared.json#<pointer>` the values the app
