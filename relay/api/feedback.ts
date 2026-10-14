@@ -5,7 +5,7 @@ import { buildIssueBody, type Feedback, logsNeedFile, parseFeedback } from "../l
 import { discard, github, GitHubError, githubJson, type Milestone, repoPath } from "../lib/github.ts";
 import { handler, HttpError, json, logError } from "../lib/http.ts";
 import { pickSprint } from "../lib/milestone.ts";
-import { take } from "../lib/ratelimit.ts";
+import { FEEDBACK_LIMIT, FEEDBACK_WINDOW_MS, take } from "../lib/ratelimit.ts";
 
 const ASSETS_BRANCH = "feedback-assets";
 // Vercel caps request bodies at 4.5 MB; refuse early above that.
@@ -115,7 +115,7 @@ export const POST = handler("feedback", async (req) => {
   const { login } = await requireCaller(req);
   const feedback = parseFeedback(await readBody(req));
 
-  const slot = take(login);
+  const slot = take(`feedback:${login}`, FEEDBACK_LIMIT, FEEDBACK_WINDOW_MS);
   if (!slot.ok) {
     throw new HttpError(429, "too many feedback posts, try again later", {
       "retry-after": String(slot.retryAfterSeconds),

@@ -73,8 +73,7 @@ export function setEnv(extra: Record<string, string | undefined> = {}): void {
     RELAY_GITHUB_TOKEN: RELAY_TOKEN,
     RELEASES_REPO: "MehdiMamas/claude-sync",
     FEEDBACK_REPO: undefined,
-    ALLOWED_GITHUB_USERS: "MehdiMamas, Friend-One",
-    GROUP_REPOS: "MehdiMamas/claude-sync-data",
+    BLOCKED_GITHUB_USERS: undefined,
     RELAY_PUBLIC_URL: undefined,
     ...extra,
   };

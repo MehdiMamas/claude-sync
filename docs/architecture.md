@@ -171,12 +171,12 @@ Plain TypeScript functions, no framework. Env:
 
 | Name | What |
 |---|---|
-| `RELAY_GITHUB_TOKEN` | Fine-grained PAT on `MehdiMamas/claude-sync` and the repos in `GROUP_REPOS`: Contents read/write, Issues read/write, Metadata read. Metadata read is enough for the collaborator check (`GET /repos/{owner}/{repo}/collaborators/{username}`); Administration is not needed. |
+| `RELAY_GITHUB_TOKEN` | Fine-grained PAT on `RELEASES_REPO` (and `FEEDBACK_REPO` if set): Contents read/write, Issues read/write, Metadata read |
 | `RELEASES_REPO` | `MehdiMamas/claude-sync` |
-| `ALLOWED_GITHUB_USERS` | Comma-separated logins always allowed |
-| `GROUP_REPOS` | Comma-separated `owner/repo` (starts as `MehdiMamas/claude-sync-data`); their collaborators are allowed |
+| `FEEDBACK_REPO` | Where feedback issues go; defaults to `RELEASES_REPO` |
+| `BLOCKED_GITHUB_USERS` | Comma-separated logins refused with 403 (abuse) |
 
-**Auth.** Every call (except `/api/health`) carries the user's GitHub token: `Authorization: Bearer <token>`. The relay calls `GET /user` to get the login and allows it if it is in `ALLOWED_GITHUB_USERS` or is a collaborator on a repo in `GROUP_REPOS`. Results are cached in memory for 10 minutes. The user token is never logged or stored.
+**Auth.** Every call (except `/api/health`) carries the user's GitHub token: `Authorization: Bearer <token>`. The relay calls `GET /user` to get the login. Any GitHub account may use the relay unless its login is in `BLOCKED_GITHUB_USERS`. The login is cached in memory for 10 minutes. The user token is never logged or stored. Each login gets 120 calls per hour across all endpoints (`429` with `Retry-After` past that).
 
 **`GET /api/update?target=<windows|darwin>&arch=<x86_64|aarch64>&current_version=<semver>`.** Reads the latest non-draft release of `RELEASES_REPO`. Returns `204` if not newer, else the Tauri updater JSON (`version`, `notes`, `pub_date`, `url`, `signature`). `signature` is the contents of the matching `.sig` asset. `url` is `/api/download/<asset-id>` on the relay.
 
@@ -189,7 +189,9 @@ Plain TypeScript functions, no framework. Env:
 4. Put it in the **nearest sprint**: the open milestone titled `Sprint N` with the earliest `due_on` that is today or later. If none, the open milestone with the latest due date. If none, no milestone.
 5. Return `{ number, url }`.
 
-Rate limit per login: 10 feedback posts per hour (in memory; good enough for a hobby).
+Rate limit per login: 5 feedback posts per hour (in memory; good enough for a hobby).
+
+**Feedback is public.** `FEEDBACK_REPO` defaults to the app's own repo, which is public, so the issue (title, description, login, app version, OS), the screenshot and the logs are public. The form says so before sending. Logs are off unless the user ticks the box; the app and the relay both redact tokens from them (§9), but they can still show file paths and repo names.
 
 ## 13. Updates and releases
 

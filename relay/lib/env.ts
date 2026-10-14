@@ -34,7 +34,7 @@ export const env = {
     const value = process.env.FEEDBACK_REPO?.trim();
     return value ? repo("FEEDBACK_REPO", value) : env.releasesRepo();
   },
-  allowedUsers: (): Set<string> => new Set(list(process.env.ALLOWED_GITHUB_USERS).map((s) => s.toLowerCase())),
-  groupRepos: (): string[] => list(process.env.GROUP_REPOS).filter((r) => REPO_RE.test(r)),
+  /** Logins refused with 403 (abuse); everyone else with a valid GitHub token is allowed. */
+  blockedUsers: (): Set<string> => new Set(list(process.env.BLOCKED_GITHUB_USERS).map((s) => s.toLowerCase())),
   publicUrl: (): string | undefined => process.env.RELAY_PUBLIC_URL?.trim().replace(/\/+$/, "") || undefined,
 };
