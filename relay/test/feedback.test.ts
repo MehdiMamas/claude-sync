@@ -58,13 +58,20 @@ function patchCalls(): Array<Call & { body: { labels: string[]; milestone?: numb
   return fm.calls.filter((c) => c.method === "PATCH") as Array<Call & { body: { labels: string[]; milestone?: number } }>;
 }
 
-/** The user's create answers `status`; the relay token's create succeeds. */
-function refuseUser(status: number): void {
+/** The caller's create answers `status` with GitHub's `message`; any other token would succeed. */
+function refuseUser(status: number, message = "Resource not accessible", headers: Record<string, string> = {}): void {
   fm.on("POST", `${REPO}/issues`, (call) =>
     call.headers.authorization === `Bearer ${USER_TOKEN}`
-      ? Response.json({ message: "refused" }, { status })
+      ? Response.json({ message }, { status, headers })
       : Response.json({ number: 43, html_url: ISSUE_URL.replace("42", "43") }, { status: 201 }),
   );
+}
+
+/** No issue was filed with the relay token, and nothing was labelled. */
+function assertOnlyTheCallerTried(): void {
+  assert.equal(issueCalls().length, 1);
+  assert.equal(issueCall().headers.authorization, `Bearer ${USER_TOKEN}`);
+  assert.equal(patchCalls().length, 0);
 }
 
 function putCalls(): Call[] {
@@ -111,7 +118,7 @@ describe("POST /api/feedback", () => {
   it("opens the issue as the caller, then sets labels and the nearest sprint with the relay token", async () => {
     const res = await feedback(post(valid()));
     assert.equal(res.status, 201);
-    assert.deepEqual(await res.json(), { number: 42, url: ISSUE_URL, asUser: true });
+    assert.deepEqual(await res.json(), { number: 42, url: ISSUE_URL });
 
     assert.equal(issueCalls().length, 1);
     const call = issueCall();
@@ -162,48 +169,89 @@ describe("POST /api/feedback", () => {
     fm.on("PATCH", `${REPO}/issues/42`, 403);
     const res = await feedback(post(valid()));
     assert.equal(res.status, 201);
-    assert.deepEqual(await res.json(), { number: 42, url: ISSUE_URL, asUser: true });
+    assert.deepEqual(await res.json(), { number: 42, url: ISSUE_URL });
     assert.ok(logs.some((l) => l.includes("feedback labels") && l.includes("403")), logs.join("\n"));
   });
 
-  it("files the issue with the relay token, with a Reporter row, when GitHub refuses the caller with 403", async () => {
-    refuseUser(403);
+  it("never files the issue with the relay token: a 403 from GitHub answers 403 with the reason", async () => {
+    refuseUser(403, "Resource not accessible by integration");
     const res = await feedback(post(valid({ screenshot: PNG.toString("base64") })));
-    assert.equal(res.status, 201);
-    assert.deepEqual(await res.json(), { number: 43, url: ISSUE_URL.replace("42", "43"), asUser: false });
-
-    const [asUser, asRelay] = issueCalls();
-    assert.equal(asUser?.headers.authorization, `Bearer ${USER_TOKEN}`);
-    assert.equal(asRelay?.headers.authorization, `Bearer ${RELAY_TOKEN}`);
-    assert.deepEqual(asRelay?.body.labels, ["feedback", "type:bug"]);
-    assert.equal(asRelay?.body.milestone, 2);
-    assert.match(asRelay?.body.body ?? "", /\| Reporter \| \[MehdiMamas\]\(https:\/\/github\.com\/MehdiMamas\) \|/);
-    // The screenshot is committed once, and both bodies link it.
-    assert.equal(putCalls().length, 1);
-    assert.match(asRelay?.body.body ?? "", /!\[screenshot\]\(https:\/\/github\.com\/MehdiMamas\/claude-sync\/blob\/feedback-assets\//);
-    // The relay token sets labels at creation; no follow-up call.
-    assert.equal(patchCalls().length, 0);
-    assert.ok(logs.some((l) => l.includes("as MehdiMamas returned 403")), logs.join("\n"));
+    assert.equal(res.status, 403);
+    assert.deepEqual(await res.json(), {
+      error:
+        "GitHub did not let your account open an issue on MehdiMamas/claude-sync: your account is blocked from the repository, or your sign-in lacks the repo scope (GitHub said: Resource not accessible by integration).",
+    });
+    assertOnlyTheCallerTried();
+    assert.ok(logs.some((l) => l.includes("refused the issue from MehdiMamas with 403")), logs.join("\n"));
   });
 
-  it("falls back to the relay token for 401, 404, 410, 422 and 429 from the caller's create", async () => {
-    for (const status of [401, 404, 410, 422, 429]) {
+  it("answers 403 for 401, 404 and 410, and 422 for 422, each with its own reason", async () => {
+    const cases: Array<[number, number, string]> = [
+      [401, 403, "GitHub no longer accepts your sign-in; sign out and in again"],
+      [404, 403, "the repository is not visible to your account"],
+      [410, 403, "issues are turned off on the repository"],
+      [422, 422, "GitHub rejected the issue"],
+    ];
+    for (const [github, status, reason] of cases) {
       resetRateLimits();
       fm.calls.length = 0;
-      refuseUser(status);
+      refuseUser(github, "Nope");
       const res = await feedback(post(valid()));
-      assert.equal(res.status, 201, `status ${status}`);
-      assert.equal(((await res.json()) as { asUser: boolean }).asUser, false);
-      assert.equal(issueCalls()[1]?.headers.authorization, `Bearer ${RELAY_TOKEN}`, `status ${status}`);
+      assert.equal(res.status, status, `GitHub ${github}`);
+      const { error } = (await res.json()) as { error: string };
+      assert.equal(error, `GitHub did not let your account open an issue on MehdiMamas/claude-sync: ${reason} (GitHub said: Nope).`);
+      assertOnlyTheCallerTried();
     }
   });
 
-  it("does not fall back on a GitHub 5xx: answers 502 so the app retries later", async () => {
+  it("leaves out GitHub's message when the error body has none, and redacts and shortens it", async () => {
+    fm.on("POST", `${REPO}/issues`, 404);
+    let res = await feedback(post(valid()));
+    assert.equal(res.status, 403);
+    assert.match(((await res.json()) as { error: string }).error, /not visible to your account\.$/);
+
+    resetRateLimits();
+    refuseUser(403, `bad token ghp_${"a".repeat(36)}\n${"x".repeat(500)}`);
+    res = await feedback(post(valid()));
+    const { error } = (await res.json()) as { error: string };
+    assert.ok(error.includes("bad token [REDACTED:ghp] xxx"), error);
+    assert.ok(!error.includes("a".repeat(36)) && !error.includes("\n"));
+    assert.ok(error.length < 450, `${error.length} chars`);
+  });
+
+  it("answers 429 with Retry-After when GitHub rate-limits the caller, so the app retries", async () => {
+    refuseUser(429, "slow down", { "retry-after": "120" });
+    let res = await feedback(post(valid()));
+    assert.equal(res.status, 429);
+    assert.equal(res.headers.get("retry-after"), "120");
+    assertOnlyTheCallerTried();
+
+    // A secondary rate limit comes back as 403 with Retry-After or no requests left.
+    for (const headers of [{ "retry-after": "30" }, { "x-ratelimit-remaining": "0" }] as Array<Record<string, string>>) {
+      resetRateLimits();
+      fm.calls.length = 0;
+      refuseUser(403, "You have exceeded a secondary rate limit", headers);
+      res = await feedback(post(valid()));
+      assert.equal(res.status, 429, JSON.stringify(headers));
+      assert.equal(res.headers.get("retry-after"), headers["retry-after"] ?? "60");
+      assertOnlyTheCallerTried();
+    }
+  });
+
+  it("answers 502 on a GitHub 5xx, so the app keeps the report and retries", async () => {
     refuseUser(503);
     const res = await feedback(post(valid()));
     assert.equal(res.status, 502);
-    assert.equal(issueCalls().length, 1);
-    assert.equal(issueCall().headers.authorization, `Bearer ${USER_TOKEN}`);
+    assertOnlyTheCallerTried();
+  });
+
+  it("answers 500 when GitHub cannot be reached, so the app retries", async () => {
+    fm.on("POST", `${REPO}/issues`, () => {
+      throw new TypeError("fetch failed");
+    });
+    const res = await feedback(post(valid()));
+    assert.equal(res.status, 500);
+    assertOnlyTheCallerTried();
   });
 
   it("commits a PNG screenshot to feedback-assets and links it in the issue", async () => {
@@ -425,13 +473,6 @@ describe("POST /api/feedback", () => {
     assert.deepEqual(await res.json(), {
       number: 1,
       url: "https://github.com/MehdiMamas/claude-sync-feedback/issues/1",
-      asUser: true,
     });
-  });
-
-  it("502 when GitHub refuses the issue from both the caller and the relay", async () => {
-    fm.on("POST", `${REPO}/issues`, 422);
-    assert.equal((await feedback(post(valid()))).status, 502);
-    assert.equal(issueCalls().length, 2);
   });
 });

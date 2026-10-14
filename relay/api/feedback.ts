@@ -4,19 +4,23 @@ import { env } from "../lib/env.ts";
 import { buildIssueBody, type Feedback, logsNeedFile, parseFeedback } from "../lib/feedback.ts";
 import { discard, github, GitHubError, githubJson, type Milestone, repoPath } from "../lib/github.ts";
 import { handler, HttpError, json, logError, logWarn } from "../lib/http.ts";
+import { redact } from "../lib/redact.ts";
 import { pickSprint } from "../lib/milestone.ts";
 import { FEEDBACK_LIMIT, FEEDBACK_WINDOW_MS, take } from "../lib/ratelimit.ts";
 
 const ASSETS_BRANCH = "feedback-assets";
 // Vercel caps request bodies at 4.5 MB; refuse early above that.
 const MAX_BODY_BYTES = 4_500_000;
-// Statuses for creating the issue with the caller's token that come from the caller's
-// side: a token without the scope, a user blocked from the repo, SSO, the user's own
-// GitHub rate limit. The relay then files the issue with its own token, as before.
-// 422 is included: the retry either works (the cause was the user's account) or fails
-// the same way and answers 502 as before. 5xx and network errors are not: they answer
-// 502/500 so the app keeps the report in its outbox and retries.
-const FILE_WITH_RELAY_TOKEN = new Set([401, 403, 404, 410, 422, 429]);
+// Why GitHub refused the caller's create, in words the app can show. The relay never
+// files the issue another way: an issue only ever exists under the account that wrote it.
+const REFUSED: Record<number, string> = {
+  401: "GitHub no longer accepts your sign-in; sign out and in again",
+  403: "your account is blocked from the repository, or your sign-in lacks the repo scope",
+  404: "the repository is not visible to your account",
+  410: "issues are turned off on the repository",
+  422: "GitHub rejected the issue",
+};
+const MAX_REASON = 200;
 
 interface CreatedIssue {
   number: number;
@@ -102,6 +106,48 @@ async function triage(repo: string, token: string, issue: CreatedIssue, labels: 
   }
 }
 
+/** GitHub's own one-line message from an error body, redacted and cut short. */
+async function githubMessage(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { message?: unknown };
+    if (typeof body.message !== "string") return "";
+    const line = redact(body.message).replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+    return line.length > MAX_REASON ? `${line.slice(0, MAX_REASON - 1)}…` : line;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The error for a create GitHub refused. A rate limit (429, or a 403 that carries one)
+ * answers 429 and a 5xx answers 502, so the app keeps the report and sends it later.
+ * Every other refusal answers 403 or 422 with a reason the app shows to the user.
+ */
+async function refused(repo: string, login: string, res: Response): Promise<HttpError> {
+  const limited =
+    res.status === 429 ||
+    (res.status === 403 && (res.headers.has("retry-after") || res.headers.get("x-ratelimit-remaining") === "0"));
+  if (limited) {
+    discard(res);
+    logWarn(`feedback: GitHub rate-limited ${login} creating the issue (${res.status})`);
+    const wait = Number(res.headers.get("retry-after"));
+    return new HttpError(429, "GitHub is rate-limiting your account, try again later", {
+      "retry-after": String(Number.isFinite(wait) && wait > 0 ? Math.ceil(wait) : 60),
+    });
+  }
+  const hint = REFUSED[res.status];
+  if (!hint) {
+    discard(res);
+    return new GitHubError("create issue", res.status);
+  }
+  const detail = await githubMessage(res);
+  logWarn(`feedback: GitHub refused the issue from ${login} with ${res.status}`);
+  return new HttpError(
+    res.status === 422 ? 422 : 403,
+    `GitHub did not let your account open an issue on ${repo}: ${hint}${detail ? ` (GitHub said: ${detail})` : ""}.`,
+  );
+}
+
 async function readBody(req: Request): Promise<unknown> {
   const length = Number(req.headers.get("content-length") ?? "0");
   if (length > MAX_BODY_BYTES) throw new HttpError(413, "request body is too large");
@@ -146,8 +192,8 @@ async function storeAssets(
 /**
  * POST /api/feedback
  * JSON { title, description, kind: "bug"|"idea", appVersion, os, logs?, screenshot? }
- * 201 { number, url, asUser } with the new issue. asUser is false when the relay had to
- * file it with its own token.
+ * 201 { number, url } with the new issue, opened under the caller's account. When GitHub
+ * refuses the caller: 403/422 with the reason (the app shows it), or 429/502 (the app retries).
  */
 export const POST = handler("feedback", async (req) => {
   const { login, token: userToken } = await requireCallerWithToken(req);
@@ -166,29 +212,17 @@ export const POST = handler("feedback", async (req) => {
   const assets = await storeAssets(repo, relayToken, feedback);
   const milestone = await nearestSprint(repo, relayToken);
   const labels = ["feedback", `type:${feedback.kind}`];
-  const issues = `${repoPath(repo)}/issues`;
-  const fields = (reporter: string | null) => ({
+  const fields = {
     title: feedback.title,
-    body: buildIssueBody({ feedback, reporter, ...assets }),
+    body: buildIssueBody({ feedback, ...assets }),
     labels,
     ...(milestone !== null ? { milestone } : {}),
-  });
+  };
 
   // Opened with the caller's token, so GitHub shows them as the author.
-  const asUser = await github(issues, { token: userToken, method: "POST", body: fields(null) });
-  if (asUser.ok) {
-    const issue = (await asUser.json()) as CreatedIssue;
-    await triage(repo, relayToken, issue, labels, milestone);
-    return json(201, { number: issue.number, url: issue.html_url, asUser: true });
-  }
-  discard(asUser);
-  if (!FILE_WITH_RELAY_TOKEN.has(asUser.status)) throw new GitHubError("create issue", asUser.status);
-
-  logWarn(`feedback: creating the issue as ${login} returned ${asUser.status}; filing it with the relay token`);
-  const issue = await githubJson<CreatedIssue>("create issue", issues, {
-    token: relayToken,
-    method: "POST",
-    body: fields(login),
-  });
-  return json(201, { number: issue.number, url: issue.html_url, asUser: false });
+  const res = await github(`${repoPath(repo)}/issues`, { token: userToken, method: "POST", body: fields });
+  if (!res.ok) throw await refused(repo, login, res);
+  const issue = (await res.json()) as CreatedIssue;
+  await triage(repo, relayToken, issue, labels, milestone);
+  return json(201, { number: issue.number, url: issue.html_url });
 });

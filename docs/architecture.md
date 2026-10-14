@@ -193,9 +193,9 @@ Plain TypeScript functions, no framework. Env:
 2. If there is a screenshot, commit it to the `feedback-assets` branch at `feedback/<yyyy-mm>/<uuid>.png` (created from the default branch if missing).
 3. Create the issue **with the user's token**, so GitHub shows the user as its author: the description, app version, OS, the screenshot link, and the logs in a collapsed block. Users have no push access, so the screenshot and log files are committed with the relay token (step 2).
 4. GitHub drops labels and milestone from someone without push access, so the relay then sets labels `feedback` and `type:bug` or `type:idea` and the **nearest sprint** with its own token: the open milestone titled `Sprint N` with the earliest `due_on` that is today or later. If none, the open milestone with the latest due date. If none, no milestone. Best effort: a failure is logged, the post still succeeds.
-5. Return `{ number, url, asUser }`.
+5. Return `{ number, url }`.
 
-If GitHub refuses the user's create for a reason on the user's side (401, 403, 404, 410, 422, 429: missing scope, blocked from the repo, SSO, the user's rate limit), the relay files the issue with its own token as before, with a `Reporter` row naming the login, and returns `asUser: false`. A 5xx or network error is not retried with the relay token: it answers 502/500 and the app keeps the report in its outbox.
+The issue is only ever created with the user's token, never with the relay token, so a report always sits under the account that wrote it. If GitHub refuses the user's create (401, 403, 404, 410, 422: missing scope, blocked from the repo, SSO, issues off), the relay answers 403 (422 for a 422) with `GitHub did not let your account open an issue on <repo>: <reason>`, and the app shows that message. A rate limit (429, or a 403 with `Retry-After` or no requests left) answers 429, a 5xx 502 and a network error 500: the app keeps the report in its outbox and sends it later. A report the outbox later finds refused is set aside and the user gets a notification with the reason.
 
 Rate limit per login: 5 feedback posts per hour (in memory; good enough for a hobby).
 
