@@ -229,6 +229,12 @@ async fn two_devices_against_real_github() {
         .await
         .expect("README.md in the repo");
     assert_eq!(readme["type"], "file");
+    // Two commits, with different messages (#44).
+    let created = commits_until(&a, &id, &format!("{login}@pc-a: create group")).await;
+    assert_eq!(
+        created.get(1).map(|c| c.message.as_str()),
+        Some(format!("{login}@pc-a: create group (start the repo)").as_str())
+    );
 
     // Seed content as another client would, then A pulls it.
     let seed: Changes = [

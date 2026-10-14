@@ -407,9 +407,16 @@ impl RemoteRepo for GitHubRepo {
                     "the first commit of a repo needs a file".into(),
                 ));
             };
-            parent = self.first_commit(&path, &content, message).await?;
             changes.remove(&path);
             changes.retain(|_, c| c.is_some());
+            // When a second commit follows, name this one apart so history doesn't show
+            // the same message twice (#44).
+            let first_message = if changes.is_empty() {
+                message.to_string()
+            } else {
+                format!("{message} (start the repo)")
+            };
+            parent = self.first_commit(&path, &content, &first_message).await?;
             self.remember(&parent);
             if changes.is_empty() {
                 return Ok(parent);
@@ -878,7 +885,9 @@ mod tests {
         let (server, repo) = setup().await;
         Mock::given(method("PUT"))
             .and(path("/repos/o/r/contents/CLAUDE.md"))
-            .and(body_partial_json(json!({"content": "aGk="})))
+            .and(body_partial_json(
+                json!({"content": "aGk=", "message": "init (start the repo)"}),
+            ))
             .respond_with(
                 ResponseTemplate::new(201)
                     .set_body_json(json!({"commit": {"sha": "c1", "tree": {"sha": "t1"}}})),
@@ -899,7 +908,9 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path("/repos/o/r/git/commits"))
-            .and(body_partial_json(json!({"parents": ["c1"]})))
+            .and(body_partial_json(
+                json!({"parents": ["c1"], "message": "init"}),
+            ))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({"sha": "c2"})))
             .mount(&server)
             .await;
