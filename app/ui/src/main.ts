@@ -1,6 +1,7 @@
 import "./style.css";
 import { api, on, setBackend } from "./api";
 import { go, onRefresh, store, subscribe } from "./store";
+import { avatar } from "./avatar";
 import { h, replace, relTime } from "./dom";
 import { banners } from "./screens/banners";
 import { signInScreen } from "./screens/signin";
@@ -96,7 +97,7 @@ function render(): void {
           "div",
           { class: "nav-foot" },
           h("div", { id: "status-slot" }, statusPill()),
-          h("div", { class: "muted small" }, `Signed in as ${store.auth.login ?? "?"}`),
+          h("div", { class: "muted small who" }, store.auth.login && avatar(store.auth.login, 18), `Signed in as ${store.auth.login ?? "?"}`),
         ),
       ),
       h("main", { class: "main" }, h("div", { id: "banners" }, banners()), view),

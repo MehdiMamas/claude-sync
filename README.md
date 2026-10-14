@@ -76,7 +76,7 @@ The layout:
 - `relay/`: the web service for updates and feedback ([relay/README.md](relay/README.md)).
 - `bin/`, `lib/`, `tests/`: the older bash CLI that the app replaces ([SPEC.md](SPEC.md)).
 
-`pnpm -C app/ui dev` serves the window in a browser with a fake backend (`?signedOut` and `?empty` show other states).
+`pnpm -C app/ui dev` serves the window in a browser with a fake backend (`?signedOut`, `?empty` and `?noHistory` show other states).
 
 Sign-in needs a GitHub OAuth app with device flow turned on: set `CLAUDE_SYNC_GITHUB_CLIENT_ID` when you build. Updates and feedback need `CLAUDE_SYNC_RELAY_URL`. A release build (`pnpm -C app tauri build`) signs its update bundles, so it also needs `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 

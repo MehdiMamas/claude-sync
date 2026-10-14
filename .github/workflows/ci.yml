@@ -70,6 +70,8 @@ jobs:
       # The app's Tauri crate embeds app/ui/dist at compile time, so the UI is built first.
       - name: pnpm -C app/ui install
         run: pnpm -C app/ui install --frozen-lockfile
+      - name: pnpm -C app/ui test
+        run: pnpm -C app/ui test
       - name: pnpm -C app/ui build
         run: pnpm -C app/ui build
 

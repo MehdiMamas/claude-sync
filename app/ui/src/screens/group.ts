@@ -14,8 +14,10 @@ import {
   type MarketplaceInfo,
   type PermissionMode,
 } from "../api";
+import { avatar } from "../avatar";
 import { busy, confirmButton, errorBox, h, relTime, replace, spinner, toast } from "../dom";
 import { go, onRefresh, store } from "../store";
+import { historyCard } from "./history";
 
 function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
   const you = store.auth?.login?.toLowerCase();
@@ -58,7 +60,8 @@ function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
       { class: "row" },
       h(
         "div",
-        { class: "grow" },
+        { class: "grow who" },
+        avatar(m, 20),
         m,
         isHost && h("span", { class: "tag" }, "host"),
         m.toLowerCase() === you && h("span", { class: "tag" }, "you"),
@@ -74,7 +77,7 @@ function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
     h("ul", { class: "list flat" }, g.members.map(memberRow)),
     g.invited.length > 0 && [
       h("h3", null, "Invited, not joined yet"),
-      h("ul", { class: "list flat" }, g.invited.map((m) => h("li", { class: "row muted" }, m))),
+      h("ul", { class: "list flat" }, g.invited.map((m) => h("li", { class: "row muted" }, h("div", { class: "grow who" }, avatar(m, 20), m)))),
     ],
     form,
     !hosting && h("p", { class: "muted small" }, `${g.host} hosts this group. Members can add and remove people too.`),
@@ -204,9 +207,9 @@ function contentsBody(c: GroupContents): (HTMLElement | false)[] {
   ];
 }
 
-function contentsCard(id: GroupId): HTMLElement {
+function contentsCard(contents: Promise<GroupContents>): HTMLElement {
   const body = h("div", null, spinner("Reading what this group gives you"));
-  api.groupContents(id).then(
+  contents.then(
     (c) => replace(body, contentsBody(c)),
     (e) => replace(body, errorBox(errorText(e))),
   );
@@ -474,32 +477,6 @@ function shareCard(id: GroupId): HTMLElement {
   );
 }
 
-function historyCard(id: GroupId): HTMLElement {
-  const body = h("div", null, spinner("Loading changes"));
-  api.recentCommits(id, 20).then(
-    (commits) =>
-      replace(
-        body,
-        commits.length === 0
-          ? h("p", { class: "muted" }, "No changes yet.")
-          : h(
-              "ol",
-              { class: "list flat", "aria-label": "Recent changes" },
-              commits.map((c) =>
-                h(
-                  "li",
-                  { class: "row" },
-                  h("div", { class: "grow" }, h("div", null, c.message.split("\n")[0]), h("div", { class: "muted small" }, `${c.author} · ${relTime(c.atUnix)}`)),
-                  h("code", { class: "muted small", title: c.sha }, c.sha.slice(0, 7)),
-                ),
-              ),
-            ),
-      ),
-    (e) => replace(body, errorBox(errorText(e))),
-  );
-  return h("section", { class: "card", "aria-labelledby": "history-h" }, h("h2", { id: "history-h" }, "Recent changes"), body);
-}
-
 function openButton(label: string, path: string, reveal: boolean, ariaLabel?: string): HTMLButtonElement {
   const b = h("button", { "aria-label": ariaLabel }, label);
   b.addEventListener("click", () => api.openPath(path, reveal).catch((e) => toast(errorText(e), "error")));
@@ -570,16 +547,18 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
         ),
         h("div", { class: "actions" }, leave),
       );
+      // Read once: the contents card lists it and the history card names mods and skills by it.
+      const contents = api.groupContents(g.id);
       replace(
         body,
         g.lastError && h("div", { class: "error", role: "alert" }, g.lastError),
         pluginNotice(g.id),
-        contentsCard(g.id),
+        contentsCard(contents),
         jobsCard(g.id),
         problemsCard(g),
         membersCard(g, load),
         shareCard(g.id),
-        historyCard(g.id),
+        historyCard(g.id, contents),
       );
     } catch (e) {
       replace(body, errorBox(errorText(e), load));

@@ -23,6 +23,7 @@ function Step([string]$Name, [scriptblock]$Run) {
 if (-not (Test-Path 'app/ui/node_modules')) {
   Step 'pnpm -C app/ui install' { pnpm -C app/ui install --frozen-lockfile }
 }
+Step 'pnpm -C app/ui test' { pnpm -C app/ui test }
 Step 'pnpm -C app/ui build' { pnpm -C app/ui build }
 Step 'cargo fmt --check' { cargo fmt --all -- --check }
 Step 'cargo clippy' { cargo clippy --workspace --all-targets -- -D warnings }
