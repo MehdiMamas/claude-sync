@@ -63,6 +63,7 @@ test("engine sync summaries", () => {
   assert.deepEqual(pick(parse("ana@mac: update skills/a, skills/b")), ["skill", "Updated 2 skills", ["a", "b"]]);
   assert.deepEqual(pick(parse("ana@mac: remove agents/old.md")), ["agent", "Removed an agent", ["old"]]);
   assert.deepEqual(pick(parse("ana@mac: update CLAUDE.md")), ["memory", "Updated the group's CLAUDE.md", []]);
+  assert.deepEqual(pick(parse("ana@mac: share CLAUDE.md")), ["memory", "Shared the group's CLAUDE.md", []]);
   assert.deepEqual(pick(parse("ana@mac: update settings.shared.json")), ["settings", "Updated shared settings", []]);
   assert.deepEqual(pick(parse("ana@mac: update CLAUDE.md, skills/review")), ["other", "Updated 2 items", ["CLAUDE.md", "review"]]);
   assert.deepEqual(pick(parse("ana@mac: update skills/a; remove skills/b")), ["skill", "Updated a skill, removed a skill", ["a", "b"]]);
