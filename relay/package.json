@@ -1,6 +1,7 @@
 {
   "name": "claude-sync-relay",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Vercel functions for claude-sync: updates, private release downloads and feedback.",
   "engines": {

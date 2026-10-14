@@ -1,4 +1,4 @@
-// Send feedback (§12, issue #22): a GitHub issue through the relay, with logs and a screenshot.
+// Send feedback (§12, issue #22): a public GitHub issue through the relay, with optional logs and a screenshot.
 import { api, errorText, type FeedbackInput, type Screenshot } from "../api";
 import { busy, bytes, errorBox, h, replace, toast } from "../dom";
 import { store } from "../store";
@@ -19,7 +19,8 @@ export function feedbackScreen(view: HTMLElement): void {
   const kindIdea = h("input", { type: "radio", name: "kind", id: "k-idea", value: "idea" });
   const title = h("input", { id: "f-title", required: true, maxlength: 200, autocomplete: "off" });
   const description = h("textarea", { id: "f-desc", rows: 6, required: true });
-  const includeLogs = h("input", { id: "f-logs", type: "checkbox", checked: true });
+  // Off by default: the logs end up in a public issue.
+  const includeLogs = h("input", { id: "f-logs", type: "checkbox", checked: false });
   const logsPre = h("pre", { class: "logs", tabindex: "0", "aria-label": "Recent log lines" }, "Loading…");
   const logsDetails = h("details", null, h("summary", null, "See what is sent"), logsPre);
   logsDetails.addEventListener("toggle", () => {
@@ -100,10 +101,10 @@ export function feedbackScreen(view: HTMLElement): void {
     title,
     h("label", { for: "f-desc" }, "What happened, or what would you like?"),
     description,
-    h("div", { class: "check" }, includeLogs, h("label", { for: "f-logs" }, "Include recent logs (no tokens or file contents)")),
+    h("div", { class: "check" }, includeLogs, h("label", { for: "f-logs" }, "Include recent logs (public; tokens are removed, but file paths and repo names can show)")),
     logsDetails,
     h("h2", null, "Screenshot"),
-    h("p", { class: "muted small" }, "Capture hides this window for a moment and takes a picture of your main screen. Paste image (or Ctrl+V here) uses the image on the clipboard."),
+    h("p", { class: "muted small" }, "The screenshot is public too, so check it shows nothing private. Capture hides this window for a moment and takes a picture of your main screen. Paste image (or Ctrl+V here) uses the image on the clipboard."),
     h("div", { class: "actions" }, capture, attach, paste, none, fileInput),
     shotSlot,
     h("div", { class: "actions" }, submit),
@@ -152,7 +153,15 @@ export function feedbackScreen(view: HTMLElement): void {
     h("header", { class: "head" }, h("h1", null, "Send feedback")),
     store.info && !store.info.relayConfigured &&
       h("div", { class: "notice", role: "note" }, h("div", { class: "notice-text" }, "This build has no feedback server set up (CLAUDE_SYNC_RELAY_URL). Reports are saved on this computer and sent once a build that has one is installed.")),
-    h("p", { class: "muted" }, "Your report becomes a GitHub issue on the claude-sync project, opened by your GitHub account."),
+    h(
+      "div",
+      { class: "notice", role: "note" },
+      h(
+        "div",
+        { class: "notice-text" },
+        "Your report becomes a public GitHub issue on the claude-sync project. Anyone can read its title, description and your GitHub username, and the logs and screenshot if you add them.",
+      ),
+    ),
     form,
   );
 }

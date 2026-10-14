@@ -5,7 +5,7 @@ members = ["crates/core", "app/src-tauri"]
 [workspace.package]
 version = "0.1.1"
 edition = "2021"
-license = "UNLICENSED"
+license = "MIT"
 authors = ["El Mehdi Mamas <mehdimamasxd@gmail.com>"]
 
 [workspace.dependencies]

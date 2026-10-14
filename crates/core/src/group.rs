@@ -299,11 +299,11 @@ mod tests {
             "agents/x.md",
             "commands/deploy.md",
             "output-styles/terse.md",
-            "plugins/claude-mods/.claude-plugin/marketplace.json",
-            "plugins/claude-mods/.gitignore",
-            "plugins/claude-mods/mods/model-router/.claude-plugin/plugin.json",
-            "plugins/claude-mods/mods/model-router/hooks/hooks.json",
-            "plugins/claude-mods/mods/session-manager/types/index.d.ts",
+            "plugins/team-mods/.claude-plugin/marketplace.json",
+            "plugins/team-mods/.gitignore",
+            "plugins/team-mods/mods/linter/.claude-plugin/plugin.json",
+            "plugins/team-mods/mods/linter/hooks/hooks.json",
+            "plugins/team-mods/mods/notes/types/index.d.ts",
             "plugins/0x/README",
             "plugins/a/.envrc",
         ] {
@@ -330,11 +330,11 @@ mod tests {
             "agents/x.md/",
             "other/file.md",
             "plugins",
-            "plugins/claude-mods",
-            "plugins/claude-mods/",
-            "plugins/Claude-Mods/x.json",
+            "plugins/team-mods",
+            "plugins/team-mods/",
+            "plugins/Team-Mods/x.json",
             "plugins/-mods/x.json",
-            "plugins/claude_mods/x.json",
+            "plugins/team_mods/x.json",
             "plugins/.hidden/x.json",
             "plugins/a/.git/config",
             "plugins/a/sub/.git",
@@ -371,10 +371,10 @@ mod tests {
     #[test]
     fn plugin_paths() {
         assert_eq!(
-            marketplace_of("plugins/claude-mods/mods/x.ts"),
-            Some("claude-mods")
+            marketplace_of("plugins/team-mods/mods/x.ts"),
+            Some("team-mods")
         );
-        assert_eq!(marketplace_of("plugins/claude-mods"), None);
+        assert_eq!(marketplace_of("plugins/team-mods"), None);
         assert_eq!(marketplace_of("plugins/Bad/x"), None);
         assert_eq!(marketplace_of("skills/a/b"), None);
         assert_eq!(

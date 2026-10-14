@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { POST as feedback } from "../api/feedback.ts";
 import { resetAuthCache } from "../lib/auth.ts";
 import { fenceFor, MAX_ISSUE_BODY } from "../lib/feedback.ts";
-import { FEEDBACK_WINDOW_MS, resetRateLimits } from "../lib/ratelimit.ts";
+import { FEEDBACK_LIMIT, FEEDBACK_WINDOW_MS, resetRateLimits } from "../lib/ratelimit.ts";
 import { type Call, type FetchMock, mockFetch, mockUser, RELAY_TOKEN, req, setEnv, USER_TOKEN } from "./helpers.ts";
 
 const REPO = "/repos/MehdiMamas/claude-sync";
@@ -278,12 +278,12 @@ describe("POST /api/feedback", () => {
     assert.equal(putCalls().length, 0);
   });
 
-  it("allows 10 posts per login per hour, then 429 with Retry-After", async () => {
-    for (let i = 0; i < 10; i++) assert.equal((await feedback(post(valid()))).status, 201, `post ${i + 1}`);
+  it(`allows ${FEEDBACK_LIMIT} posts per login per hour, then 429 with Retry-After`, async () => {
+    for (let i = 0; i < FEEDBACK_LIMIT; i++) assert.equal((await feedback(post(valid()))).status, 201, `post ${i + 1}`);
     const res = await feedback(post(valid()));
     assert.equal(res.status, 429);
     assert.equal(res.headers.get("retry-after"), String(FEEDBACK_WINDOW_MS / 1000));
-    assert.equal(fm.calls.filter((c) => c.url.endsWith("/issues")).length, 10);
+    assert.equal(fm.calls.filter((c) => c.url.endsWith("/issues")).length, FEEDBACK_LIMIT);
 
     // Another login has its own budget.
     resetAuthCache();
@@ -308,9 +308,15 @@ describe("POST /api/feedback", () => {
     assert.equal(fm.calls.filter((c) => c.method !== "GET").length, 0);
   });
 
-  it("403 for a signed-in caller who is not allowed", async () => {
+  it("files feedback from any GitHub user", async () => {
     mockUser(fm, "stranger");
-    fm.on("GET", "/repos/MehdiMamas/claude-sync-data/collaborators/stranger", 404);
+    assert.equal((await feedback(post(valid()))).status, 201);
+    assert.match(issueCall().body.body, /\[stranger\]\(https:\/\/github\.com\/stranger\)/);
+  });
+
+  it("403 for a blocked login, before anything is written", async () => {
+    setEnv({ BLOCKED_GITHUB_USERS: "stranger" });
+    mockUser(fm, "stranger");
     assert.equal((await feedback(post(valid()))).status, 403);
     assert.equal(fm.calls.filter((c) => c.method !== "GET").length, 0);
   });

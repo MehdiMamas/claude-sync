@@ -663,11 +663,11 @@ fn import_line_is_home_relative_with_forward_slashes() {
     let file = home
         .join(".claude-sync")
         .join("groups")
-        .join("MehdiMamas__claude-sync-data")
+        .join("ana__claude-sync-data")
         .join(CLAUDE_MD);
     assert_eq!(
         import_line(&file, Some(home)),
-        "@~/.claude-sync/groups/MehdiMamas__claude-sync-data/CLAUDE.md"
+        "@~/.claude-sync/groups/ana__claude-sync-data/CLAUDE.md"
     );
     assert_eq!(
         import_line(Path::new("/srv/state/CLAUDE.md"), Some(home)),
@@ -679,8 +679,8 @@ fn import_line_is_home_relative_with_forward_slashes() {
     );
     #[cfg(windows)]
     {
-        let home = Path::new(r"C:\Users\Mehdi");
-        let file = Path::new(r"C:\Users\Mehdi\.claude-sync\groups\o__r\CLAUDE.md");
+        let home = Path::new(r"C:\Users\me");
+        let file = Path::new(r"C:\Users\me\.claude-sync\groups\o__r\CLAUDE.md");
         assert_eq!(
             import_line(file, Some(home)),
             "@~/.claude-sync/groups/o__r/CLAUDE.md"

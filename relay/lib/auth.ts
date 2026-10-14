@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { env } from "./env.ts";
-import { discard, github, repoPath } from "./github.ts";
+import { discard, github } from "./github.ts";
 import { HttpError, logWarn } from "./http.ts";
+import { API_LIMIT, API_WINDOW_MS, take } from "./ratelimit.ts";
 
 export const AUTH_CACHE_MS = 10 * 60 * 1000;
 const MAX_CACHE_ENTRIES = 1000;
@@ -13,7 +14,6 @@ export interface Caller {
 
 interface CacheEntry {
   login: string;
-  allowed: boolean;
   expires: number;
 }
 
@@ -55,26 +55,6 @@ async function loginFor(token: string): Promise<string> {
   return user.login;
 }
 
-/** True when `login` collaborates on any GROUP_REPOS repo. Throws if GitHub fails and no repo says yes. */
-async function isGroupCollaborator(login: string): Promise<boolean> {
-  const repos = env.groupRepos();
-  if (repos.length === 0) return false;
-  const token = env.relayToken();
-  const results = await Promise.all(
-    repos.map(async (repo) => {
-      const res = await github(`${repoPath(repo)}/collaborators/${encodeURIComponent(login)}`, { token });
-      discard(res);
-      if (res.status === 204) return "yes" as const;
-      if (res.status === 404) return "no" as const;
-      logWarn(`collaborator check on ${repo} returned ${res.status}`);
-      return "error" as const;
-    }),
-  );
-  if (results.includes("yes")) return true;
-  if (results.includes("error")) throw new HttpError(502, "GitHub is unavailable");
-  return false;
-}
-
 function remember(key: string, entry: CacheEntry): void {
   if (cache.size >= MAX_CACHE_ENTRIES) {
     const now = Date.now();
@@ -85,8 +65,9 @@ function remember(key: string, entry: CacheEntry): void {
 }
 
 /**
- * Resolves the caller from `Authorization: Bearer <GitHub token>`.
- * 401 when the token is missing or GitHub rejects it, 403 when the login is not allowed.
+ * Resolves the caller from `Authorization: Bearer <GitHub token>`. Any GitHub user may
+ * use the relay. 401 when the token is missing or GitHub rejects it, 403 when the login
+ * is in BLOCKED_GITHUB_USERS, 429 when the login made API_LIMIT calls inside the window.
  */
 export async function requireCaller(req: Request): Promise<Caller> {
   const token = bearer(req);
@@ -94,11 +75,18 @@ export async function requireCaller(req: Request): Promise<Caller> {
   const now = Date.now();
   let entry = cache.get(key);
   if (!entry || entry.expires <= now) {
-    const login = await loginFor(token);
-    const allowed = env.allowedUsers().has(login.toLowerCase()) || (await isGroupCollaborator(login));
-    entry = { login, allowed, expires: now + AUTH_CACHE_MS };
+    entry = { login: await loginFor(token), expires: now + AUTH_CACHE_MS };
     remember(key, entry);
   }
-  if (!entry.allowed) throw new HttpError(403, `${entry.login} is not allowed to use this relay`);
-  return { login: entry.login };
+  const { login } = entry;
+  if (env.blockedUsers().has(login.toLowerCase())) {
+    throw new HttpError(403, `${login} is not allowed to use this relay`);
+  }
+  const slot = take(`api:${login}`, API_LIMIT, API_WINDOW_MS);
+  if (!slot.ok) {
+    throw new HttpError(429, "too many requests, try again later", {
+      "retry-after": String(slot.retryAfterSeconds),
+    });
+  }
+  return { login };
 }

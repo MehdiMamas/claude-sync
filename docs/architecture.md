@@ -10,9 +10,9 @@ A small desktop app (Windows and macOS first, Linux later) that lives in the tra
 - **Devices.** Each person can run the app on as many PCs as they like. Every device signs in with the person's own GitHub account and has full access.
 - **Live.** The app watches the remote for changes and applies them within about a minute. It watches the local files it manages, and when you edit one it asks whether to share the change with the group.
 - **Updates.** The app checks for new versions and updates itself.
-- **Feedback.** A feedback form sends a description, the app's recent logs and a screenshot to this repo as an issue, put into the nearest sprint.
+- **Feedback.** A feedback form sends a description, and optionally the app's recent logs and a screenshot, to this repo as a public issue, put into the nearest sprint.
 
-It costs nothing to run. GitHub (free private repos, OAuth device flow) holds all the data. A free Vercel project (the **relay**) does the few things that need a secret: serving updates from this private repo and filing feedback issues.
+It costs nothing to run. GitHub (free private repos, OAuth device flow) holds all the data. A free Vercel project (the **relay**) does the few things that need a secret: serving updates from this repo's releases and filing feedback issues.
 
 ## 2. Components
 
@@ -21,7 +21,7 @@ crates/core/        Rust library: GitHub client, group format, sync engine, appl
 app/                Tauri 2 app: tray, autostart, updater, UI (app/ui, plain TypeScript + Vite), feedback capture
 relay/              Vercel project (TypeScript functions): /api/update, /api/download, /api/feedback, /api/health
 scripts/            Local checks and the release script (no CI: tests run on our machines)
-bin/ lib/ tests/    v0 bash CLI, kept until personal sync moves to the app (see issues)
+bin/ lib/ tests/    v0 bash CLI (SPEC.md), kept for now; the app replaces it
 ```
 
 No GitHub Actions run on push or PR. The only workflow is a `workflow_dispatch` macOS release build on the self-hosted Mac runner (free; no hosted minutes).
@@ -37,7 +37,7 @@ No GitHub Actions run on push or PR. The only workflow is a `workflow_dispatch` 
 
 A private repo on the host's account, created by the app. Default name `claude-sync-data` (Mehdi's group is `MehdiMamas/claude-sync-data`). It gets the repo topic `claude-sync-group`, which is how the app recognises group repos.
 
-The data repo is separate from this code repo. `MehdiMamas/claude-sync` holds the app's code and is Mehdi's alone; friends are invited only to the data repo. They reach this repo only through the relay (updates, feedback).
+The data repo is separate from this code repo. `MehdiMamas/claude-sync` is the app's public code repo; members are invited only to their group's data repo. The app reaches this repo only through the relay (updates, feedback).
 
 ```
 claude-sync.json        group file (below)
@@ -125,7 +125,7 @@ Moves the merged group state into `~/.claude` without touching anything it does 
 
 ## 8. Settings merge
 
-`settings.shared.json` is merged into `~/.claude/settings.json`, keeping v0's rules (`README.md`, "Sharing settings") and adding ownership so removals work:
+`settings.shared.json` is merged into `~/.claude/settings.json`, keeping the v0 CLI's rules (`SPEC.md`, `lib/`) and adding ownership so removals work:
 
 - Objects merge key by key. Arrays get the shared items they lack, appended after local items. For plain values, the shared value wins.
 - `~/.claude-sync/settings-owned.json` records, per group, every value the app set (JSON pointer and value) and every array item it added.
@@ -171,12 +171,12 @@ Plain TypeScript functions, no framework. Env:
 
 | Name | What |
 |---|---|
-| `RELAY_GITHUB_TOKEN` | Fine-grained PAT on `MehdiMamas/claude-sync` and the repos in `GROUP_REPOS`: Contents read/write, Issues read/write, Metadata read. Metadata read is enough for the collaborator check (`GET /repos/{owner}/{repo}/collaborators/{username}`); Administration is not needed. |
+| `RELAY_GITHUB_TOKEN` | Fine-grained PAT on `RELEASES_REPO` (and `FEEDBACK_REPO` if set): Contents read/write, Issues read/write, Metadata read |
 | `RELEASES_REPO` | `MehdiMamas/claude-sync` |
-| `ALLOWED_GITHUB_USERS` | Comma-separated logins always allowed |
-| `GROUP_REPOS` | Comma-separated `owner/repo` (starts as `MehdiMamas/claude-sync-data`); their collaborators are allowed |
+| `FEEDBACK_REPO` | Where feedback issues go; defaults to `RELEASES_REPO` |
+| `BLOCKED_GITHUB_USERS` | Comma-separated logins refused with 403 (abuse) |
 
-**Auth.** Every call (except `/api/health`) carries the user's GitHub token: `Authorization: Bearer <token>`. The relay calls `GET /user` to get the login and allows it if it is in `ALLOWED_GITHUB_USERS` or is a collaborator on a repo in `GROUP_REPOS`. Results are cached in memory for 10 minutes. The user token is never logged or stored.
+**Auth.** Every call (except `/api/health`) carries the user's GitHub token: `Authorization: Bearer <token>`. The relay calls `GET /user` to get the login. Any GitHub account may use the relay unless its login is in `BLOCKED_GITHUB_USERS`. The login is cached in memory for 10 minutes. The user token is never logged or stored. Each login gets 120 calls per hour across all endpoints (`429` with `Retry-After` past that).
 
 **`GET /api/update?target=<windows|darwin>&arch=<x86_64|aarch64>&current_version=<semver>`.** Reads the latest non-draft release of `RELEASES_REPO`. Returns `204` if not newer, else the Tauri updater JSON (`version`, `notes`, `pub_date`, `url`, `signature`). `signature` is the contents of the matching `.sig` asset. `url` is `/api/download/<asset-id>` on the relay.
 
@@ -189,7 +189,9 @@ Plain TypeScript functions, no framework. Env:
 4. Put it in the **nearest sprint**: the open milestone titled `Sprint N` with the earliest `due_on` that is today or later. If none, the open milestone with the latest due date. If none, no milestone.
 5. Return `{ number, url }`.
 
-Rate limit per login: 10 feedback posts per hour (in memory; good enough for a hobby).
+Rate limit per login: 5 feedback posts per hour (in memory; good enough for a hobby).
+
+**Feedback is public.** `FEEDBACK_REPO` defaults to the app's own repo, which is public, so the issue (title, description, login, app version, OS), the screenshot and the logs are public. The form says so before sending. Logs are off unless the user ticks the box; the app and the relay both redact tokens from them (§9), but they can still show file paths and repo names.
 
 ## 13. Updates and releases
 

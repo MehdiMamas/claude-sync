@@ -132,9 +132,9 @@ describe("GET /api/update", () => {
     assert.equal(fm.calls.length, 0);
   });
 
-  it("403 for a caller who is not allowed", async () => {
+  it("403 for a blocked login, before touching releases", async () => {
+    setEnv({ BLOCKED_GITHUB_USERS: "stranger" });
     mockUser(fm, "stranger");
-    fm.on("GET", "/repos/MehdiMamas/claude-sync-data/collaborators/stranger", 404);
     assert.equal((await update(updateReq("windows", "x86_64", "0.1.0"))).status, 403);
     assert.equal(fm.calls.filter((c) => c.url.includes("/releases")).length, 0);
   });
