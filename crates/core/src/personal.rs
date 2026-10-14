@@ -1,4 +1,4 @@
-//! Personal memory (§11): one person's own devices share their `~/.claude/CLAUDE.md` (the
+//! Personal memory (docs/architecture.md §16): one person's own devices share their `~/.claude/CLAUDE.md` (the
 //! part outside the managed block) and Claude Code's auto-memory through a private repo
 //! `<login>/claude-sync-personal`. It never touches a group repo, and groups never see it.
 //!
@@ -43,6 +43,9 @@ pub const MAX_TOTAL: usize = 16 * 1024 * 1024;
 /// Shown once when a new device of the same account turns personal memory on by itself.
 pub const JOINED_NOTICE: &str =
     "Personal memory from your other devices is on. Turn off in Settings.";
+/// Shown once when the account's other devices share personal memory but new ones don't join.
+pub const OFFER_NOTICE: &str =
+    "Your other devices share personal memory. Open claude-sync to turn it on here too.";
 /// This device's `lastSeenUnix` in `devices.json` is refreshed at most this often.
 const SEEN_EVERY_SECS: u64 = 24 * 3600;
 
@@ -196,6 +199,8 @@ struct State {
 pub struct PersonalStatus {
     pub enabled: bool,
     pub decided: bool,
+    /// The account's other devices share personal memory and this one was not asked yet.
+    pub offer: bool,
     pub kinds: Kinds,
     /// `owner/repo`.
     pub repo: String,
@@ -363,7 +368,7 @@ impl Engine {
     /// `newDevicesJoin` says.
     pub async fn personal_check_new_device(&self) -> crate::Result<NewDevice> {
         let _busy = self.busy.lock().await;
-        let st = self.load_personal();
+        let mut st = self.load_personal();
         if st.decided || st.enabled {
             return Ok(NewDevice::Nothing);
         }
@@ -387,6 +392,9 @@ impl Engine {
             return Ok(NewDevice::Nothing);
         }
         if !pf.new_devices_join {
+            // Kept so Settings shows the offer until the user answers.
+            st.new_devices_join = Some(false);
+            self.save_personal(&st)?;
             return Ok(NewDevice::Offer);
         }
         self.enable_locked().await?;
@@ -423,6 +431,11 @@ impl Engine {
                 Ok(None) => {
                     let quiet = st.last_error.is_none()
                         && now_unix().saturating_sub(st.seen_pushed_unix) < SEEN_EVERY_SECS
+                        // A rename goes out on the next pass.
+                        && st
+                            .devices
+                            .iter()
+                            .any(|d| d.id == st.device_id && d.name == self.device)
                         && self
                             .scan_local(&st.kinds)
                             .is_ok_and(|s| fingerprint(&s.files) == st.fingerprint);
@@ -495,6 +508,10 @@ impl Engine {
     ) -> PersonalSyncReport {
         let mut report = PersonalSyncReport::default();
         let result = async {
+            // Someone made it public: nothing more goes in, or comes out.
+            if !remote.is_private().await? {
+                return Err(Error::PublicRepo(self.personal_id().to_string()));
+            }
             let head = match head {
                 Some(h) => h,
                 None => remote.head().await?,
@@ -1077,6 +1094,7 @@ impl Engine {
         PersonalStatus {
             enabled: st.enabled,
             decided: st.decided,
+            offer: !st.enabled && !st.decided && st.new_devices_join == Some(false),
             kinds: st.kinds,
             repo: id.to_string(),
             repo_url: format!("https://github.com/{}/{}", id.owner, id.repo),

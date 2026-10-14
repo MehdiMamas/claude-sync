@@ -472,6 +472,15 @@ async fn enable_creates_a_private_repo_without_the_group_topic() {
     assert!(pc.discover().await.unwrap().is_empty());
     assert!(pc.join(&GroupId::new("ana", REPO)).await.is_err());
     assert!(pc.groups().await.unwrap().is_empty());
+
+    // Made public later: nothing more is pushed.
+    repo.set_private(false);
+    pc.set_mem(KLAWLY_WIN, "b.md", "bananas\n");
+    let r = pc.personal_sync(false).await.unwrap().unwrap();
+    assert!(r.error.is_some_and(|e| e.contains("public")));
+    assert!(!r.pushed);
+    assert!(repo.file(&format!("{KLAWLY_KEY}/b.md")).is_none());
+    assert!(pc.personal_status().last_error.is_some());
 }
 
 #[tokio::test]
@@ -721,11 +730,14 @@ async fn new_devices_can_be_offered_instead_of_joining() {
         mac.personal_check_new_device().await.unwrap(),
         NewDevice::Offer
     );
-    assert!(!mac.personal_status().enabled);
+    let st = mac.personal_status();
+    assert!(!st.enabled);
+    assert!(st.offer, "the offer stays until the user answers");
     assert!(personal_repo(&world, "ana")
         .file(&format!("{KLAWLY_KEY}/a.md"))
         .is_none());
     mac.personal_dismiss_offer().await.unwrap();
+    assert!(!mac.personal_status().offer);
     assert_eq!(
         mac.personal_check_new_device().await.unwrap(),
         NewDevice::Nothing
@@ -840,7 +852,11 @@ async fn devices_can_be_renamed_and_removed() {
     let mac_id = mac.personal_status().device_id;
     assert_ne!(mac_id, st.device_id);
 
-    // A rename (the app's device name) reaches devices.json on the next sync.
+    // Nothing changed: the background pass stays quiet.
+    mac.personal_sync(true).await.unwrap();
+    assert!(mac.personal_sync(true).await.unwrap().is_none());
+
+    // A rename (the app's device name) reaches devices.json on the next background pass.
     let renamed = Engine {
         device: "studio".into(),
         ..mac.engine
@@ -849,7 +865,8 @@ async fn devices_can_be_renamed_and_removed() {
         engine: renamed,
         _dir: mac._dir,
     };
-    renamed.sync().await;
+    let r = renamed.personal_sync(true).await.unwrap();
+    assert!(r.is_some_and(|r| r.pushed));
     pc.sync().await;
     let names: Vec<String> = pc
         .personal_status()
