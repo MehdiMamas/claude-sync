@@ -1,8 +1,12 @@
 <#
 .SYNOPSIS
-  Builds a claude-sync Windows release and, with -Publish, uploads it to a DRAFT GitHub release.
+  Builds a claude-sync Windows release locally and, with -Publish, uploads it to a DRAFT GitHub release.
 
 .DESCRIPTION
+  Releases normally come from .github/workflows/release.yml (push the tag v<version> after the
+  version bump PR, made with scripts/bump-version.mjs, is merged). This script is the local
+  Windows build: a test build before tagging, or a fallback when the hosted build is not an option.
+
   Steps (docs/releasing.md has the whole flow, docs/architecture.md section 13 the design):
     1. Checks the version and the build environment.
     2. Runs scripts/check.ps1 (unless -SkipChecks).
@@ -94,7 +98,8 @@ function Compare-Semver($A, $B) {
 }
 
 # --- version files ----------------------------------------------------------------
-# Every place the app version lives (found with an uncapped grep). The app and the core
+# Every place the app version lives (found with an uncapped grep); scripts/bump-version.mjs
+# has the same list, keep them in step. The app and the core
 # take theirs from [workspace.package] (version.workspace = true), and tauri.conf.json has
 # no "version", so Tauri uses the Cargo one. bin/claude-sync is the v0 shell CLI with its
 # own version and is not part of the app release.
@@ -279,7 +284,7 @@ foreach ($a in $assets) {
 }
 Write-Host ''
 if ($Publish) {
-  Write-Host "Draft release v$Version updated on $Repo. Next: trigger release-macos.yml with version $Version, then publish the draft (docs/releasing.md)."
+  Write-Host "Draft release v$Version updated on $Repo with the Windows assets. The macOS assets come from release.yml (push the tag v$Version); then publish the draft (docs/releasing.md)."
 } elseif ($DryRun) {
   Write-Host 'Dry run: nothing was published and the version files are back as they were.'
 } elseif (-not $NoBump) {

@@ -20,11 +20,11 @@ It costs nothing to run. GitHub (free private repos, OAuth device flow) holds al
 crates/core/        Rust library: GitHub client, group format, sync engine, apply layer, settings merge, secret scan
 app/                Tauri 2 app: tray, autostart, updater, UI (app/ui, plain TypeScript + Vite), feedback capture
 relay/              Vercel project (TypeScript functions): /api/update, /api/download, /api/feedback, /api/health
-scripts/            Local checks and the release script (no CI: tests run on our machines)
+scripts/            Local checks, the version bump and the local Windows release script
 bin/ lib/ tests/    v0 bash CLI (SPEC.md), kept for now; the app replaces it
 ```
 
-No GitHub Actions run on push or PR. The only workflow is a `workflow_dispatch` macOS release build on the self-hosted Mac runner (free; no hosted minutes).
+GitHub Actions run on GitHub-hosted runners only (free for a public repo): `ci.yml` runs the checks of `scripts/check.ps1` on Ubuntu, Windows and macOS for every PR and push to `main`, and `release.yml` builds releases (§13). No self-hosted runners, no AI jobs.
 
 ## 3. Identity and auth
 
@@ -195,12 +195,14 @@ Rate limit per login: 5 feedback posts per hour (in memory; good enough for a ho
 
 ## 13. Updates and releases
 
-- Tauri updater with its own signing key pair (minisign). The public key is in `app/src-tauri/tauri.conf.json`. The private key stays on Mehdi's PC outside the repo, plus an Actions secret for the Mac build.
+- Tauri updater with its own signing key pair (minisign). The public key is in `app/src-tauri/tauri.conf.json`. The private key stays on Mehdi's PC outside the repo, plus the Actions secret `TAURI_SIGNING_PRIVATE_KEY` that the release workflow signs with.
 - The app checks `/api/update` at start and every 6 hours, passing the user's GitHub token as a header. An update downloads in the background and installs on the next quit or when the user clicks **Restart to update**.
-- Release (steps in [releasing.md](releasing.md)): `scripts/release.ps1` on the Windows PC bumps the version (workspace `Cargo.toml`, `Cargo.lock`, `app/package.json`, `app/ui/package.json`; `tauri.conf.json` takes the Cargo version), runs `scripts/check.ps1`, builds the NSIS installer with `createUpdaterArtifacts` (the installer is also the Windows update bundle), checks its `.sig` against the public key (`scripts/verify-updater-sig.mjs`), and stages the assets in `dist/release/<version>/` under the names in `relay/lib/assets.ts`. With `-Publish` it uploads them to a **draft** release `v<version>`; it never publishes. Then `workflow_dispatch` on `release-macos.yml` (runs on `[self-hosted, macOS]`) builds `--target universal-apple-darwin` from the draft's target commit and uploads the `.app.tar.gz`, its `.sig` and the `.dmg` to the same draft. Mehdi publishes the draft by hand; until then `/api/update` does not see it.
-- A release build needs `CLAUDE_SYNC_RELAY_URL` and `CLAUDE_SYNC_GITHUB_CLIENT_ID` at compile time; the script refuses `-Publish` without them. The signing key comes from `TAURI_SIGNING_PRIVATE_KEY` or `C:\Users\Mehdi\.claude-sync-keys\updater.key` (empty password, `tauri build --ci`).
+- Release (steps in [releasing.md](releasing.md)): a PR bumps the version with `node scripts/bump-version.mjs <version>` (workspace `Cargo.toml`, `Cargo.lock`, `app/package.json`, `app/ui/package.json`; `tauri.conf.json` takes the Cargo version) and `ci.yml` checks it. After the merge, Mehdi pushes the tag `v<version>` on the merge commit. `.github/workflows/release.yml` checks that the tag equals the version in those files, then builds on GitHub-hosted runners in the environment `release` (required reviewers; it holds the signing secrets): on `windows-latest` the NSIS installer with `createUpdaterArtifacts` (the installer is also the Windows update bundle), on `macos-latest` `--target universal-apple-darwin` (the `.app.tar.gz` update bundle and the `.dmg`). Each `.sig` is checked against the public key (`scripts/verify-updater-sig.mjs`). A last job, the only one with `contents: write`, uploads the assets under the names in `relay/lib/assets.ts` to a **draft** release `v<version>`; it never publishes and never touches a published release. Mehdi publishes the draft by hand; until then `/api/update` does not see it. Release builds restore no caches.
+- `scripts/release.ps1` still builds, stages and verifies the Windows installer locally (`-DryRun` for a test build, `-Publish` to upload it to the draft when the hosted build is not an option).
+- A release build needs `CLAUDE_SYNC_RELAY_URL` and `CLAUDE_SYNC_GITHUB_CLIENT_ID` at compile time (Actions variables for the workflow); the workflow and `release.ps1 -Publish` refuse to build without them. The updater key has an empty password (`tauri build --ci`); locally it comes from `TAURI_SIGNING_PRIVATE_KEY` or `C:\Users\Mehdi\.claude-sync-keys\updater.key`.
 - The update path is tested without GitHub or Vercel: `relay/dev/harness.ts` runs the relay's handlers on a local HTTP server against a stub GitHub API and asset host (`relay/test/e2e.test.ts`), and `node relay/dev/local.ts dist/release/<version>` runs it against real staged assets.
-- Code signing: none in sprint 1. Windows shows SmartScreen once; macOS needs right-click → Open the first time (or ad-hoc signing). Apple notarization is a backlog decision ($99/year).
+- Code signing: `release.yml` signs the macOS app with Developer ID and notarizes it when the `APPLE_*` secrets are set (Tauri imports the certificate into a temporary keychain itself); without them the build is unsigned, macOS needs right-click → Open the first time, and the job summary says so. Windows is not Authenticode-signed: SmartScreen shows once.
+- Linux: `ci.yml` builds, lints and tests on Ubuntu, but no Linux release ships yet. `keyring` in `crates/core` has no Linux backend enabled, so it falls back to its in-memory mock store and a sign-in is lost right away; it needs the `sync-secret-service` (or `linux-native-sync-persistent`) and `crypto-rust` features, a Linux target in `relay/lib/assets.ts` and a runtime test of the tray, webview and screenshot first.
 
 ## 14. First install for a friend
 
@@ -210,7 +212,7 @@ Rate limit per login: 5 feedback posts per hour (in memory; good enough for a ho
 
 ## 15. Testing
 
-All tests run on our own machines (`scripts/check.ps1` on Windows, `scripts/check.sh` on macOS):
+`scripts/check.ps1` (Windows) and `scripts/check.sh` (macOS, Linux) run every check locally; `ci.yml` runs the same checks on GitHub-hosted Ubuntu, Windows and macOS for every PR and push to `main`:
 
 - `cargo test` for `crates/core`. The engine talks to GitHub through a `RemoteRepo` trait with an in-memory fake, so merge, push-retry, membership reconciliation and apply are tested without the network. Apply tests use a temp `CLAUDE_HOME`.
 - `relay`: `node --test` with `fetch` mocked.
