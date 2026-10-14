@@ -79,9 +79,19 @@ The screenshot type is checked by its magic bytes. The app should send at most t
 4. The issue goes to `FEEDBACK_REPO`, opened with the caller's token, so GitHub shows the user as its author. Its body has the description, kind, app version, OS, the screenshot (`https://github.com/<repo>/blob/feedback-assets/<path>?raw=true`) and the logs in a collapsed `<details>` block.
 5. GitHub drops labels and milestone sent by someone without push access, so the relay then sets labels `feedback` and `type:bug` / `type:idea` and the milestone with its own token (`PATCH /issues/{n}`, skipped when GitHub already kept them). This step is best effort: a failure is logged and the post still answers 201.
 6. Milestone: the open milestone titled `Sprint N` with the earliest due date that is today (UTC) or later; else the open `Sprint N` with the latest due date; else none.
-7. Response `201 {"number": 42, "url": "https://github.com/MehdiMamas/claude-sync/issues/42", "asUser": true}`.
+7. Response `201 {"number": 42, "url": "https://github.com/MehdiMamas/claude-sync/issues/42"}`.
 
-**Fallback.** When GitHub refuses the caller's create with 401, 403, 404, 410, 422 or 429 (the token lacks the scope, the user is blocked from the repo, SSO, the user's own rate limit), the relay logs the status and files the issue with its own token, as it did before: labels and milestone set at creation, a `Reporter` row with the login in the body, and `"asUser": false`. 422 falls back too because the retry either works (the cause was the user's account) or fails the same way and answers 502. A 5xx or network error does not fall back: it answers 502/500, and the app keeps the report in its outbox and sends it later.
+**No other author.** The issue is only ever created with the caller's token. The relay token never creates an issue, so a report always sits under the account that wrote it and never under the owner's. When GitHub refuses the caller's create, the relay logs the status and files nothing:
+
+| GitHub answers | Relay answers | App |
+|---|---|---|
+| 401, 403, 404, 410 (no repo scope, blocked from the repo, SSO, issues off) | `403 {"error": "GitHub did not let your account open an issue on <repo>: <reason> (GitHub said: <message>)."}` | Shows the message |
+| 422 | `422` with the same kind of message | Shows the message |
+| 429, or 403 with `Retry-After` or `x-ratelimit-remaining: 0` (a secondary rate limit) | `429` with `Retry-After` | Keeps the report in its outbox, sends it later |
+| 5xx | `502` | Same |
+| Network error | `500` | Same |
+
+GitHub's `message` is redacted, put on one line and cut to 200 characters.
 
 If storing the screenshot fails, the issue is still filed and says so. Rate limit: 5 posts per login per hour (sliding window, in memory per function instance). Invalid posts do not count against it.
 
@@ -119,7 +129,7 @@ GitHub → Settings → Developer settings → Personal access tokens → Fine-g
 - **Repository access:** Only select repositories → `MehdiMamas/claude-sync` (and `FEEDBACK_REPO` if it is another repo). The relay does not need access to any group repo.
 - **Repository permissions:**
   - **Contents: Read and write.** Read: latest release, release assets, git refs. Write: create the `feedback-assets` branch (`POST /git/refs`) and commit screenshots (`PUT /contents/...`).
-  - **Issues: Read and write.** List milestones, set labels and milestone on the issue the user opened, and create the issue itself in the fallback.
+  - **Issues: Read and write.** List milestones, and set labels and milestone on the issue the user opened. The relay token never creates an issue.
   - **Metadata: Read** (always on). Repo info.
 
 No response includes this token. Callers get only release data, a download redirect, or the new issue's number and URL.

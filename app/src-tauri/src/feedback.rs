@@ -255,14 +255,27 @@ async fn send(ctx: &Ctx, payload: &Payload) -> Result<FeedbackResult, SendError>
         });
     }
     let body = resp.text().await.unwrap_or_default();
-    let msg = format!(
-        "relay returned {status}: {}",
-        body.chars().take(300).collect::<String>()
-    );
+    let msg = relay_error(status, &body);
     if status.is_server_error() || status.as_u16() == 429 {
         Err(SendError::Offline(msg))
     } else {
         Err(SendError::Rejected(msg))
+    }
+}
+
+/// The relay's `{"error": "..."}` message as is, so the user reads why (for example that
+/// GitHub refused their account); else the status and the start of the body.
+fn relay_error(status: reqwest::StatusCode, body: &str) -> String {
+    #[derive(Deserialize)]
+    struct Reply {
+        error: String,
+    }
+    match serde_json::from_str::<Reply>(body) {
+        Ok(r) if !r.error.trim().is_empty() => r.error.trim().chars().take(600).collect(),
+        _ => format!(
+            "relay returned {status}: {}",
+            body.chars().take(300).collect::<String>()
+        ),
     }
 }
 
@@ -315,6 +328,11 @@ pub async fn retry_outbox(app: &AppHandle) {
             Err(SendError::Rejected(e)) => {
                 tracing::warn!("outbox: {} rejected: {e}", path.display());
                 let _ = std::fs::rename(&path, path.with_extension("rejected"));
+                notify::show(
+                    app,
+                    "Feedback not sent",
+                    &format!("\"{}\" was not filed: {e}", payload.title),
+                );
             }
         }
     }
@@ -354,6 +372,24 @@ mod tests {
         assert_eq!((s.width, s.height), (1920, 1080));
         assert!(s.bytes <= MAX_BYTES, "{} bytes", s.bytes);
         assert_eq!(s.mime, "image/jpeg");
+    }
+
+    #[test]
+    fn relay_error_shows_the_relay_message() {
+        let forbidden = reqwest::StatusCode::FORBIDDEN;
+        let body = r#"{"error":"GitHub did not let your account open an issue on o/r: x."}"#;
+        assert_eq!(
+            relay_error(forbidden, body),
+            "GitHub did not let your account open an issue on o/r: x."
+        );
+        assert_eq!(
+            relay_error(reqwest::StatusCode::BAD_GATEWAY, "<html>bad gateway</html>"),
+            "relay returned 502 Bad Gateway: <html>bad gateway</html>"
+        );
+        assert_eq!(
+            relay_error(forbidden, r#"{"error":"  "}"#),
+            r#"relay returned 403 Forbidden: {"error":"  "}"#
+        );
     }
 
     #[test]
