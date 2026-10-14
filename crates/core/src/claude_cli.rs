@@ -77,9 +77,9 @@ fn search(home: &Path) -> Vec<PathBuf> {
             .map(|p| {
                 std::env::split_paths(&p)
                     .map(|d| d.join("claude"))
-                    .collect()
+                    .collect::<Vec<_>>()
             })
-            .unwrap_or_else(Vec::new),
+            .unwrap_or_default(),
     )
     .filter(|p| p.is_file())
     .collect();
