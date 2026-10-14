@@ -1,9 +1,10 @@
-// One group: what it gives this device, its scheduled jobs, members, sharing a skill,
-// recent changes, conflicts and collisions.
+// One group: CLAUDE.md changes to review, what it gives this device, its scheduled jobs,
+// members, sharing a skill, recent changes, conflicts and collisions.
 import {
   api,
   errorText,
   groupKey,
+  type ClaudeMdReview,
   type Collision,
   type ContentItem,
   type GroupContents,
@@ -13,10 +14,11 @@ import {
   type JobView,
   type MarketplaceInfo,
   type PermissionMode,
+  type ReviewItem,
 } from "../api";
 import { avatar } from "../avatar";
 import { busy, confirmButton, errorBox, h, relTime, replace, spinner, toast } from "../dom";
-import { go, onRefresh, store } from "../store";
+import { countReview, go, onRefresh, store } from "../store";
 import { claudeMdCard } from "./claude-md";
 import { historyCard } from "./history";
 
@@ -478,6 +480,139 @@ function shareCard(id: GroupId): HTMLElement {
   );
 }
 
+function reviewItem(id: GroupId, item: ReviewItem, done: () => void): HTMLElement {
+  const who = item.author || "Someone";
+  const what = item.kind === "add" ? plural(item.lines.length, "line") + " added" : plural(item.lines.length, "line") + " removed";
+  const decide = (accept: boolean) => {
+    const b = h("button", { class: accept ? "primary" : undefined, "aria-label": `${accept ? "Accept" : "Decline"}: ${who}, ${what}` }, accept ? "Accept" : "Decline");
+    b.addEventListener("click", () =>
+      busy(b, accept ? "Accepting…" : "Declining…", async () => {
+        await api.decideClaudeMd(id, [item.id], accept);
+        done();
+        toast(accept ? "Accepted: your CLAUDE.md has it now" : "Declined: your CLAUDE.md stays as it is");
+      }),
+    );
+    return b;
+  };
+  const sign = item.kind === "add" ? "+" : "−";
+  return h(
+    "li",
+    { class: "review-item" },
+    h(
+      "div",
+      { class: "row" },
+      avatar(item.author, 32),
+      h(
+        "div",
+        { class: "grow" },
+        h("div", null, h("strong", null, who), ` ${item.kind === "add" ? "added" : "removed"} ${plural(item.lines.length, "line")}`),
+        h("div", { class: "muted small" }, [relTime(item.atUnix), item.message.split("\n")[0]].filter(Boolean).join(" · ")),
+      ),
+      h("div", { class: "actions" }, decide(false), decide(true)),
+    ),
+    h(
+      "pre",
+      { class: `diff ${item.kind}`, "aria-label": what },
+      item.lines.map((l) => h("span", { class: "diff-line" }, `${sign} ${l}`)),
+    ),
+  );
+}
+
+function reviewBody(id: GroupId, r: ClaudeMdReview): (HTMLElement | false)[] {
+  // Reload the whole screen: the group list, the nav badge and this card.
+  const done = () => store.bump();
+  const n = r.pending.length;
+  const all = (accept: boolean) => {
+    const b = h("button", { class: accept ? "primary" : undefined }, accept ? "Accept all" : "Decline all");
+    b.addEventListener("click", () =>
+      busy(b, accept ? "Accepting…" : "Declining…", async () => {
+        await api.decideClaudeMd(id, null, accept);
+        toast(accept ? `Accepted ${plural(n, "change")}` : `Declined ${plural(n, "change")}`);
+        done();
+      }),
+    );
+    return b;
+  };
+
+  const toggle = h("input", { type: "checkbox", id: "review-md", checked: r.review });
+  const ask = h("div", { class: "review-ask", hidden: true });
+  const save = async (on: boolean) => {
+    toggle.disabled = true;
+    try {
+      await api.setClaudeMdReview(id, on);
+      toast(on ? "You review changes others make to this CLAUDE.md" : "Changes others make now apply at once");
+      done();
+    } catch (e) {
+      toggle.checked = !on;
+      toast(errorText(e), "error");
+    } finally {
+      toggle.disabled = false;
+    }
+  };
+  toggle.addEventListener("change", () => {
+    if (toggle.checked || n === 0) {
+      save(toggle.checked);
+      return;
+    }
+    // Turning review off accepts what waits: ask first.
+    toggle.checked = true;
+    const yes = h("button", { class: "primary" }, `Accept ${plural(n, "change")} and turn off`);
+    const no = h("button", null, "Keep reviewing");
+    yes.addEventListener("click", () => busy(yes, "Accepting…", () => save(false)));
+    no.addEventListener("click", () => {
+      ask.hidden = true;
+    });
+    replace(
+      ask,
+      h("p", { class: "small" }, `${plural(n, "change")} ${n === 1 ? "is" : "are"} waiting. Turning review off accepts ${n === 1 ? "it" : "them"} into your CLAUDE.md.`),
+      h("div", { class: "actions" }, yes, no),
+    );
+    ask.hidden = false;
+  });
+
+  const useGroup = confirmButton("Use the group's version", "Click again: replace your copy", (btn) =>
+    busy(btn, "Replacing…", async () => {
+      await api.useGroupClaudeMd(id);
+      toast("Your copy is the group's CLAUDE.md again");
+      done();
+    }),
+  );
+  useGroup.classList.remove("danger");
+
+  return [
+    n > 0 && h("p", { class: "muted small" }, "Other members changed the group's CLAUDE.md. Nothing changes in yours until you accept; what you decline stays out and is not asked again."),
+    n > 1 && h("div", { class: "actions review-all" }, all(false), all(true)),
+    n > 0 && h("ul", { class: "list flat review-list", "aria-label": "Changes to review" }, r.pending.map((i) => reviewItem(id, i, done))),
+    n === 0 && h("p", { class: "muted small" }, r.review ? "Nothing to review. Changes other members make to the group's CLAUDE.md wait here for you; yours apply at once." : "Changes other members make to the group's CLAUDE.md apply at once."),
+    n === 0 &&
+      r.differs &&
+      h(
+        "div",
+        { class: "row flat-row" },
+        h("div", { class: "grow muted small" }, r.declined > 0 ? `Your copy leaves out ${plural(r.declined, "change")} you declined.` : "Your copy differs from the group's."),
+        useGroup,
+      ),
+    h("div", { class: "check" }, toggle, h("label", { for: "review-md" }, "Review changes others make to CLAUDE.md")),
+    ask,
+  ];
+}
+
+function reviewCard(id: GroupId): HTMLElement {
+  const title = h("h2", { id: "review-h" }, "CLAUDE.md changes");
+  const body = h("div", null, spinner("Loading CLAUDE.md changes"));
+  const card = h("section", { class: "card review", "aria-labelledby": "review-h" }, title, body);
+  api.claudeMdReview(id).then(
+    (r) => {
+      const n = r.pending.length;
+      replace(title, n > 0 ? ["Changes to review", h("span", { class: "tag warn" }, String(n))] : "CLAUDE.md changes");
+      replace(body, reviewBody(id, r));
+    },
+    // No CLAUDE.md from this group on this device: nothing to review.
+    () => card.remove(),
+  );
+  return card;
+}
+
 function openButton(label: string, path: string, reveal: boolean, ariaLabel?: string): HTMLButtonElement {
   const b = h("button", { "aria-label": ariaLabel }, label);
   b.addEventListener("click", () => api.openPath(path, reveal).catch((e) => toast(errorText(e), "error")));
@@ -525,6 +660,7 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
   const load = async () => {
     try {
       const groups = await api.groups();
+      countReview(groups);
       const g = groups.find((x) => x.id.owner === id.owner && x.id.repo === id.repo);
       if (!g) {
         replace(body, errorBox(`You are not in ${groupKey(id)} on this device.`));
@@ -553,6 +689,7 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
       replace(
         body,
         g.lastError && h("div", { class: "error", role: "alert" }, g.lastError),
+        reviewCard(g.id),
         pluginNotice(g.id),
         contentsCard(contents),
         jobsCard(g.id),

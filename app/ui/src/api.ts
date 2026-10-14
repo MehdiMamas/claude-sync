@@ -27,6 +27,30 @@ export interface GroupStatus {
   collisions: Collision[];
   /** Only on the status a join returns: plugin files were placed or changed. */
   pluginsChanged: boolean;
+  /** Changes others made to the group's CLAUDE.md that wait for this user. */
+  reviewPending: number;
+  /** "Review changes others make to CLAUDE.md" (on by default). */
+  reviewClaudeMd: boolean;
+}
+/** One block of lines another member added to or removed from the group's CLAUDE.md. */
+export interface ReviewItem {
+  id: string;
+  kind: "add" | "remove";
+  lines: string[];
+  /** GitHub login; empty when unknown. */
+  author: string;
+  commit: string;
+  message: string;
+  atUnix: number;
+}
+export interface ClaudeMdReview {
+  review: boolean;
+  /** Oldest first. */
+  pending: ReviewItem[];
+  /** How many changes the user declined (never asked again). */
+  declined: number;
+  /** The user's copy differs from the group's (declined or pending changes). */
+  differs: boolean;
 }
 export interface PluginInfo {
   name: string;
@@ -82,6 +106,8 @@ export interface GroupSyncReport {
   conflicts: ConflictInfo[];
   error: string | null;
   lostAccess: boolean;
+  /** CLAUDE.md changes from others that this sync found; they wait for review. */
+  review: ReviewItem[];
 }
 export interface SyncReport {
   groups: GroupSyncReport[];
@@ -335,6 +361,12 @@ export const api = {
   claudeMdPreview: () => call<string>("claude_md_preview"),
   shareClaudeMd: (group: GroupId, share: ClaudeMdShare) => call<ClaudeMdShared>("share_claude_md", { group, share }),
   recentCommits: (group: GroupId, limit = 20) => call<CommitInfo[]>("recent_commits", { group, limit }),
+  claudeMdReview: (group: GroupId) => call<ClaudeMdReview>("claude_md_review", { group }),
+  /** Accept or decline `ids`, or every pending change when `ids` is null. */
+  decideClaudeMd: (group: GroupId, ids: string[] | null, accept: boolean) =>
+    call<ClaudeMdReview>("decide_claude_md", { group, ids, accept }),
+  setClaudeMdReview: (group: GroupId, on: boolean) => call<ClaudeMdReview>("set_claude_md_review", { group, on }),
+  useGroupClaudeMd: (group: GroupId) => call<ClaudeMdReview>("use_group_claude_md", { group }),
   syncNow: () => call<SyncReport>("sync_now"),
   getSettings: () => call<Settings>("get_settings"),
   setSettings: (settings: Partial<Settings>) => call<Settings>("set_settings", { settings }),

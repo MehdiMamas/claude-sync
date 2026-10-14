@@ -11,7 +11,7 @@ use crate::updates::{self, UpdateInfo};
 use claude_sync_core::apply::Manifest;
 use claude_sync_core::contents::{self, GroupContents};
 use claude_sync_core::engine::{
-    ClaudeMdShare, ClaudeMdShared, CommitInfo, GroupStatus, SyncReport,
+    ClaudeMdReview, ClaudeMdShare, ClaudeMdShared, CommitInfo, GroupStatus, SyncReport,
 };
 use claude_sync_core::github::Invitation;
 use claude_sync_core::jobs::JobsOverview;
@@ -332,6 +332,66 @@ pub async fn recent_commits(
     e.recent_commits(&group, limit.unwrap_or(20).min(100))
         .await
         .map_err(guard::logged("recent changes"))
+}
+
+/// Changes others made to the group's CLAUDE.md that wait for this user (§7a).
+#[tauri::command]
+pub fn claude_md_review(ctx: CtxState, group: GroupId) -> Res<ClaudeMdReview> {
+    let e = ctx.engine()?;
+    e.claude_md_review(&group)
+        .map_err(guard::logged("CLAUDE.md review"))
+}
+
+/// Accept or decline pending CLAUDE.md changes (`ids`, or all of them).
+#[tauri::command]
+pub async fn decide_claude_md(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    group: GroupId,
+    ids: Option<Vec<String>>,
+    accept: bool,
+) -> Res<ClaudeMdReview> {
+    let e = ctx.engine()?;
+    let r = e
+        .decide_claude_md(&group, ids.as_deref(), accept)
+        .await
+        .map_err(guard::logged("CLAUDE.md review"))?;
+    background::refresh_status(&app);
+    Ok(r)
+}
+
+/// The group setting "Review changes others make to CLAUDE.md".
+#[tauri::command]
+pub async fn set_claude_md_review(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    group: GroupId,
+    on: bool,
+) -> Res<ClaudeMdReview> {
+    let e = ctx.engine()?;
+    let r = e
+        .set_claude_md_review(&group, on)
+        .await
+        .map_err(guard::logged("CLAUDE.md review"))?;
+    background::refresh_status(&app);
+    Ok(r)
+}
+
+/// Make the copy the group's CLAUDE.md again, forgetting declined changes.
+#[tauri::command]
+pub async fn use_group_claude_md(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    group: GroupId,
+) -> Res<ClaudeMdReview> {
+    let e = ctx.engine()?;
+    let r = e
+        .use_group_claude_md(&group)
+        .await
+        .map_err(guard::logged("CLAUDE.md review"))?;
+    background::refresh_status(&app);
+    background::check_local_edits(&app);
+    Ok(r)
 }
 
 #[tauri::command]

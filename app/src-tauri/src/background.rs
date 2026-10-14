@@ -6,6 +6,7 @@ use crate::guard::{self, Error};
 use crate::notify::{self, Kind};
 use crate::{feedback, tray, updates};
 use claude_sync_core::engine::SyncReport;
+use claude_sync_core::review;
 use claude_sync_core::watch::WatchHandle;
 use claude_sync_core::GroupId;
 use std::sync::Arc;
@@ -94,6 +95,7 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
                 .iter()
                 .filter_map(|g| g.error.as_ref().map(|e| format!("{}: {e}", g.id)))
                 .collect();
+            let groups = engine.groups().await.unwrap_or_default();
             for g in &report.groups {
                 for c in &g.conflicts {
                     notify::show(
@@ -105,6 +107,19 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
                             "{} ({}): the group's version won; yours was saved.",
                             c.path, g.id
                         ),
+                    );
+                }
+                let name = groups
+                    .iter()
+                    .find(|s| s.id == g.id)
+                    .map_or(&*g.id.repo, |s| &s.name);
+                if let Some(body) = review::notification(name, &g.review) {
+                    notify::show(
+                        app,
+                        Kind::Group,
+                        Some(&g.id),
+                        "CLAUDE.md changes to review",
+                        &body,
                     );
                 }
                 if g.lost_access {
@@ -189,7 +204,13 @@ pub fn refresh_status(app: &AppHandle) {
 fn publish(app: &AppHandle, s: Status) {
     let ctx = app.state::<Arc<Ctx>>();
     let paused = ctx.paused();
-    tray::update(app, &format!("claude-sync: {}", s.text), paused);
+    let pending = ctx.engine().map_or(0, |e| e.claude_md_pending());
+    let text = match pending {
+        0 => format!("claude-sync: {}", s.text),
+        1 => format!("claude-sync: {} · 1 CLAUDE.md change to review", s.text),
+        n => format!("claude-sync: {} · {n} CLAUDE.md changes to review", s.text),
+    };
+    tray::update(app, &text, paused);
     if ctx.set_status(s.clone()) {
         let _ = app.emit("status", &s);
     }

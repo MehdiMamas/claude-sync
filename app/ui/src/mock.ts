@@ -5,8 +5,9 @@
 // online and fall back to initials offline, as in the app.
 // `?noNotifications` starts with an empty notification history.
 // `?noClaudeMd` shows a user whose CLAUDE.md has no text of their own.
+// `?noReview` shows no CLAUDE.md changes waiting.
 // The first group has one job waiting for consent, one accepted job and a plugin warning.
-import type { Backend, ClaudeMdShare, CommitInfo, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, Notification, PersonalStatus } from "./api";
+import type { Backend, ClaudeMdReview, ClaudeMdShare, CommitInfo, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, Notification, PersonalStatus, ReviewItem } from "./api";
 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
@@ -26,6 +27,8 @@ const groups: GroupStatus[] = q.has("empty")
         conflicts: [{ path: "skills/review/SKILL.md", savedTo: "C:/Users/me/.claude/skills/review/SKILL.conflict-laptop.md", atUnix: now - 3600 }],
         collisions: [{ kind: "userFile", path: "agents/scout.md" }],
         pluginsChanged: false,
+        reviewPending: 0,
+        reviewClaudeMd: true,
       },
       {
         id: { owner: "acme", repo: "claude-team" },
@@ -38,6 +41,8 @@ const groups: GroupStatus[] = q.has("empty")
         conflicts: [],
         collisions: [],
         pluginsChanged: false,
+        reviewPending: 0,
+        reviewClaudeMd: true,
       },
     ];
 
@@ -210,7 +215,60 @@ const commits: CommitInfo[] = (
   ] as const
 ).map(([message, author, ago], i) => ({ sha: `${(0x3f2a9c1d + i * 7919).toString(16)}e0a7b55c`, message, author, atUnix: now - ago }));
 
+// CLAUDE.md changes others made, waiting for review (in the first group).
+let pending: ReviewItem[] = q.has("noReview")
+  ? []
+  : [
+      {
+        id: "r1",
+        kind: "add",
+        lines: ["- Run `pnpm typecheck` before you open a PR.", "- Keep PR titles under 60 characters."],
+        author: "sara-dev",
+        commit: "3f2a9c1d0e",
+        message: "CLAUDE.md: PR checklist",
+        atUnix: now - 900,
+      },
+      {
+        id: "r2",
+        kind: "remove",
+        lines: ["- Answer in French when the user writes in French."],
+        author: "yassine",
+        commit: "77b01e4c9a",
+        message: "CLAUDE.md: drop language rule",
+        atUnix: now - 5400,
+      },
+    ];
+const review: ClaudeMdReview = { review: true, pending, declined: 1, differs: true };
+const syncReview = () => {
+  review.pending = pending;
+  if (groups[0]) groups[0].reviewPending = pending.length;
+  if (groups[0]) groups[0].reviewClaudeMd = review.review;
+  return { ...review };
+};
+syncReview();
+
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
+  claude_md_review: (a) => {
+    if ((a.group as GroupId).owner === "acme") throw "acme/claude-team has no CLAUDE.md on this device to review";
+    return syncReview();
+  },
+  decide_claude_md: (a) => {
+    const ids = a.ids as string[] | null;
+    const hit = (i: ReviewItem) => !ids || ids.includes(i.id);
+    if (!a.accept) review.declined += pending.filter(hit).length;
+    pending = pending.filter((i) => !hit(i));
+    return syncReview();
+  },
+  set_claude_md_review: (a) => {
+    review.review = a.on as boolean;
+    if (!review.review) pending = [];
+    return syncReview();
+  },
+  use_group_claude_md: () => {
+    pending = [];
+    Object.assign(review, { declined: 0, differs: false });
+    return syncReview();
+  },
   personal_status: () => personal,
   personal_enable: () => setPersonal({ enabled: true, decided: true, offer: false }),
   personal_disable: () => setPersonal({ enabled: false, decided: true, offer: false }),
@@ -243,6 +301,8 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
       conflicts: [],
       collisions: [],
       pluginsChanged: false,
+      reviewPending: 0,
+      reviewClaudeMd: true,
     };
     groups.push(g);
     return g;

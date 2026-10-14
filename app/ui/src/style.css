@@ -888,3 +888,64 @@ button.act-more {
 .list.notifications {
   overflow: hidden;
 }
+
+/* CLAUDE.md review */
+.nav-badge {
+  display: inline-block;
+  min-width: 1.3rem;
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.3rem;
+  text-align: center;
+}
+.card.review > h2 .tag {
+  vertical-align: middle;
+}
+.review-all {
+  margin: 0.5rem 0;
+  justify-content: flex-end;
+}
+.review-list > li.review-item {
+  padding: 0.25rem 0 0.75rem;
+}
+.review-item > .row {
+  padding-bottom: 0.4rem;
+}
+.diff {
+  margin: 0;
+  padding: 0.4rem 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.diff-line {
+  display: block;
+  padding: 0 0.6rem;
+}
+.diff.add .diff-line {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.diff.remove .diff-line {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+.review-ask {
+  margin-top: 0.25rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+}
+.review-ask[hidden] {
+  display: none;
+}
+.review-ask p {
+  margin: 0 0 0.5rem;
+}
