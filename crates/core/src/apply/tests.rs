@@ -1219,3 +1219,406 @@ fn write_atomic_leaves_no_temp_file() {
     assert_eq!(read(&p).unwrap(), b"2");
     assert_eq!(fs::read_dir(&e.paths.state_dir).unwrap().count(), 1);
 }
+
+// ---------------------------------------------------------------- plugins (§4, issue #30)
+
+const MP_JSON: &str = "plugins/mods/.claude-plugin/marketplace.json";
+const PLUGIN_JSON: &str = "plugins/mods/mods/router/.claude-plugin/plugin.json";
+const HOOKS: &str = "plugins/mods/mods/router/hooks/hooks.json";
+
+fn mp_files() -> FileSet {
+    set(&[
+        (
+            MP_JSON,
+            br#"{"name":"mods","plugins":[{"name":"router","source":"./mods/router"}]}"#,
+        ),
+        (PLUGIN_JSON, br#"{"name":"router"}"#),
+        (HOOKS, b"{\"hooks\":{}}\n"),
+        ("plugins/mods/.gitignore", b"node_modules/\n"),
+        ("agents/reviewer.md", b"reviewer\n"),
+    ])
+}
+
+fn mp_dir(e: &Env) -> PathBuf {
+    e.paths.state_dir.join("marketplaces").join("mods")
+}
+
+fn mp_source(e: &Env) -> Value {
+    json!({"source": {"source": "directory", "path": mp_dir(e).to_string_lossy()}})
+}
+
+#[test]
+fn plugins_are_placed_under_the_state_dir_and_registered() {
+    let e = env();
+    let a = g("a");
+    let r = apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
+    assert!(r.plugins_changed);
+    assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+    assert_eq!(
+        read(&mp_dir(&e).join("mods/router/hooks/hooks.json")).unwrap(),
+        b"{\"hooks\":{}}\n"
+    );
+    assert!(mp_dir(&e).join(".gitignore").exists());
+    assert!(mp_dir(&e).join(".claude-plugin/marketplace.json").exists());
+    assert!(!e.paths.claude_home.join("plugins").exists());
+    assert!(home(&e, "agents/reviewer.md").exists());
+    assert_eq!(
+        settings_json(&e)["extraKnownMarketplaces"]["mods"],
+        mp_source(&e)
+    );
+    let m = Manifest::load(&e.paths).unwrap();
+    assert_eq!(m.files[HOOKS].group, a);
+    assert_eq!(m.marketplaces["mods"].group, a);
+    assert_eq!(m.marketplaces["mods"].setting, Some(mp_source(&e)));
+    assert!(target_of(&e.paths, HOOKS).ends_with("marketplaces/mods/mods/router/hooks/hooks.json"));
+    assert!(crate::watch::local_edits(&e.paths).unwrap().is_empty());
+
+    // Idempotent: nothing written, nothing to reload.
+    let before = writes();
+    let r = apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
+    assert_eq!(writes(), before);
+    assert!(!r.plugins_changed);
+    assert!(r.written.is_empty());
+}
+
+#[test]
+fn a_changed_plugin_file_asks_for_a_reload() {
+    let e = env();
+    let a = g("a");
+    apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
+    let mut f = mp_files();
+    f.insert(HOOKS.into(), b"{\"hooks\":{\"v\":2}}\n".to_vec());
+    let r = apply_group(&e.paths, &a, only(&a), &f).unwrap();
+    assert_eq!(r.written, vec![HOOKS.to_string()]);
+    assert!(r.plugins_changed);
+    // A change outside plugins does not.
+    f.insert("agents/reviewer.md".into(), b"v2\n".to_vec());
+    let r = apply_group(&e.paths, &a, only(&a), &f).unwrap();
+    assert!(!r.plugins_changed);
+}
+
+#[test]
+fn a_dropped_marketplace_is_removed_and_unregistered() {
+    let e = env();
+    let a = g("a");
+    put(&home(&e, "settings.json"), br#"{"theme": "dark"}"#);
+    apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
+    let r = apply_group(
+        &e.paths,
+        &a,
+        only(&a),
+        &set(&[("agents/reviewer.md", b"reviewer\n")]),
+    )
+    .unwrap();
+    assert!(r.plugins_changed);
+    assert!(r.removed.contains(&HOOKS.to_string()));
+    assert!(!mp_dir(&e).exists(), "created folders are pruned");
+    assert_eq!(settings_json(&e), json!({"theme": "dark"}));
+    let m = Manifest::load(&e.paths).unwrap();
+    assert!(m.marketplaces.is_empty());
+    assert!(!m.files.keys().any(|p| p.starts_with("plugins/")));
+}
+
+#[test]
+fn removing_the_group_removes_its_marketplace() {
+    let e = env();
+    let a = g("a");
+    put(&home(&e, "settings.json"), br#"{"theme": "dark"}"#);
+    apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
+    let r = remove_group(&e.paths, &a).unwrap();
+    assert!(r.plugins_changed);
+    assert!(!mp_dir(&e).exists());
+    assert_eq!(settings_json(&e), json!({"theme": "dark"}));
+    assert!(Manifest::load(&e.paths).unwrap().marketplaces.is_empty());
+}
+
+#[test]
+fn an_existing_local_entry_is_replaced_with_a_backup() {
+    let e = env();
+    let a = g("a");
+    let old = br#"{"extraKnownMarketplaces": {"mods": {"source": {"source": "directory", "path": "C:/Users/me/Projects/mods"}}, "other": {"source": {"source": "github", "repo": "o/r"}}}}"#;
+    put(&home(&e, "settings.json"), old);
+    let r = apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
+    let s = settings_json(&e);
+    assert_eq!(s["extraKnownMarketplaces"]["mods"], mp_source(&e));
+    assert_eq!(
+        s["extraKnownMarketplaces"]["other"]["source"]["repo"],
+        "o/r"
+    );
+    assert!(
+        r.skipped
+            .iter()
+            .any(|n| n.contains("extraKnownMarketplaces.mods")),
+        "{:?}",
+        r.skipped
+    );
+    let saved: Vec<_> = backups(&e)
+        .into_iter()
+        .filter(|p| p.ends_with("settings.json"))
+        .collect();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(read(&saved[0]).unwrap(), old);
+    // Leaving removes the app's entry and keeps the user's other one.
+    remove_group(&e.paths, &a).unwrap();
+    let s = settings_json(&e);
+    assert_eq!(s["extraKnownMarketplaces"].get("mods"), None);
+    assert_eq!(
+        s["extraKnownMarketplaces"]["other"]["source"]["repo"],
+        "o/r"
+    );
+}
+
+#[test]
+fn an_entry_the_user_changed_after_the_app_set_it_stays_on_removal() {
+    let e = env();
+    let a = g("a");
+    apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
+    let mine = json!({"source": {"source": "github", "repo": "me/mods"}});
+    put(
+        &home(&e, "settings.json"),
+        &settings::to_bytes(&json!({"extraKnownMarketplaces": {"mods": mine}})),
+    );
+    remove_group(&e.paths, &a).unwrap();
+    assert_eq!(settings_json(&e)["extraKnownMarketplaces"]["mods"], mine);
+}
+
+#[test]
+fn the_same_marketplace_in_two_groups_first_applied_wins() {
+    let e = env();
+    let (a, b) = (g("a"), g("b"));
+    // b is first in the join order, but a placed the marketplace first.
+    let order = [b.clone(), a.clone()];
+    apply_group(&e.paths, &a, &order, &mp_files()).unwrap();
+    let mut fb = mp_files();
+    fb.insert("plugins/mods/only-in-b.txt".into(), b"b\n".to_vec());
+    fb.insert(HOOKS.into(), b"{\"from\":\"b\"}\n".to_vec());
+    let r = apply_group(&e.paths, &b, &order, &fb).unwrap();
+    assert_eq!(
+        r.collisions,
+        vec![Collision::OtherGroup {
+            path: "plugins/mods".into(),
+            owner: a.clone()
+        }]
+    );
+    assert!(!r.plugins_changed);
+    assert!(!mp_dir(&e).join("only-in-b.txt").exists());
+    assert_eq!(
+        read(&mp_dir(&e).join("mods/router/hooks/hooks.json")).unwrap(),
+        b"{\"hooks\":{}}\n"
+    );
+    let excluded = excluded_paths(&e.paths, &b).unwrap();
+    assert!(excluded.contains(HOOKS) && excluded.contains("plugins/mods/only-in-b.txt"));
+    assert!(local_files(&e.paths, &b)
+        .unwrap()
+        .keys()
+        .all(|p| !p.starts_with("plugins/")));
+
+    // Once a leaves, b's next apply takes the marketplace.
+    remove_group(&e.paths, &a).unwrap();
+    let r = apply_group(&e.paths, &b, only(&b), &fb).unwrap();
+    assert!(r.collisions.is_empty(), "{:?}", r.collisions);
+    assert!(r.plugins_changed);
+    assert_eq!(read(&mp_dir(&e).join("only-in-b.txt")).unwrap(), b"b\n");
+    assert_eq!(
+        settings_json(&e)["extraKnownMarketplaces"]["mods"],
+        mp_source(&e)
+    );
+    assert_eq!(
+        Manifest::load(&e.paths).unwrap().marketplaces["mods"].group,
+        b
+    );
+}
+
+#[test]
+fn the_bundled_marketplace_wins_over_shared_settings() {
+    let e = env();
+    let (a, b) = (g("a"), g("b"));
+    let shared = br#"{"extraKnownMarketplaces": {"mods": {"source": {"source": "github", "repo": "o/mods"}}, "other": {"source": {"source": "github", "repo": "o/other"}}}, "enabledPlugins": {"router@mods": true}}"#;
+    let mut f = mp_files();
+    f.insert(SHARED_SETTINGS.into(), shared.to_vec());
+    let r = apply_group(&e.paths, &a, only(&a), &f).unwrap();
+    let s = settings_json(&e);
+    assert_eq!(s["extraKnownMarketplaces"]["mods"], mp_source(&e));
+    assert_eq!(
+        s["extraKnownMarketplaces"]["other"]["source"]["repo"],
+        "o/other"
+    );
+    assert_eq!(s["enabledPlugins"]["router@mods"], true);
+    assert!(
+        r.settings_skipped
+            .iter()
+            .any(|n| n.contains("extraKnownMarketplaces.mods") && n.contains("plugins/mods")),
+        "{:?}",
+        r.settings_skipped
+    );
+    assert!(crate::watch::local_edits(&e.paths).unwrap().is_empty());
+    assert_eq!(
+        local_files(&e.paths, &a).unwrap()[SHARED_SETTINGS],
+        shared.to_vec()
+    );
+    let before = writes();
+    apply_group(&e.paths, &a, only(&a), &f).unwrap();
+    assert_eq!(writes(), before);
+
+    // Another group's settings.shared.json naming the same marketplace loses too.
+    let order = [a.clone(), b.clone()];
+    let rb = apply_group(
+        &e.paths,
+        &b,
+        &order,
+        &set(&[(SHARED_SETTINGS, br#"{"extraKnownMarketplaces": {"mods": {"source": {"source": "github", "repo": "x/y"}}}}"#)]),
+    )
+    .unwrap();
+    assert_eq!(
+        settings_json(&e)["extraKnownMarketplaces"]["mods"],
+        mp_source(&e)
+    );
+    assert!(
+        rb.settings_skipped
+            .iter()
+            .any(|n| n.contains("plugins/mods")),
+        "{:?}",
+        rb.settings_skipped
+    );
+}
+
+#[test]
+fn a_group_that_set_the_entry_through_shared_settings_hands_it_over() {
+    let e = env();
+    let a = g("a");
+    let shared = br#"{"extraKnownMarketplaces": {"mods": {"source": {"source": "github", "repo": "o/mods"}}}}"#;
+    apply_group(&e.paths, &a, only(&a), &set(&[(SHARED_SETTINGS, shared)])).unwrap();
+    assert_eq!(
+        settings_json(&e)["extraKnownMarketplaces"]["mods"]["source"]["repo"],
+        "o/mods"
+    );
+    // The group now bundles the marketplace instead.
+    let mut f = mp_files();
+    f.insert(SHARED_SETTINGS.into(), shared.to_vec());
+    apply_group(&e.paths, &a, only(&a), &f).unwrap();
+    assert_eq!(
+        settings_json(&e)["extraKnownMarketplaces"]["mods"],
+        mp_source(&e)
+    );
+    let owned = load_owned(&e.paths).unwrap();
+    assert!(owned.values().all(|o| !o
+        .values
+        .keys()
+        .any(|p| p.starts_with("/extraKnownMarketplaces/mods"))));
+    assert!(crate::watch::local_edits(&e.paths).unwrap().is_empty());
+}
+
+#[test]
+fn an_invalid_marketplace_is_not_installed() {
+    let e = env();
+    let a = g("a");
+    for manifest in [&br#"{"name":"other"}"#[..], b"not json"] {
+        let mut f = mp_files();
+        f.insert(MP_JSON.into(), manifest.to_vec());
+        let r = apply_group(&e.paths, &a, only(&a), &f).unwrap();
+        assert!(!mp_dir(&e).exists());
+        assert!(
+            r.skipped.iter().any(|n| n.contains("plugins/mods")),
+            "{:?}",
+            r.skipped
+        );
+        assert!(excluded_paths(&e.paths, &a).unwrap().contains(HOOKS));
+        assert!(Manifest::load(&e.paths).unwrap().marketplaces.is_empty());
+    }
+    let mut f = mp_files();
+    f.remove(MP_JSON);
+    let r = apply_group(&e.paths, &a, only(&a), &f).unwrap();
+    assert!(!mp_dir(&e).exists());
+    assert!(!r.skipped.is_empty());
+}
+
+#[test]
+fn an_oversize_plugin_file_is_skipped() {
+    let e = env();
+    let a = g("a");
+    let mut f = mp_files();
+    f.insert(
+        "plugins/mods/big.bin".into(),
+        vec![0; group::MAX_PLUGIN_FILE + 1],
+    );
+    let r = apply_group(&e.paths, &a, only(&a), &f).unwrap();
+    assert!(!mp_dir(&e).join("big.bin").exists());
+    assert!(mp_dir(&e).join("mods/router/hooks/hooks.json").exists());
+    assert!(
+        r.skipped
+            .iter()
+            .any(|n| n.contains("plugins/mods/big.bin") && n.contains("1 MiB")),
+        "{:?}",
+        r.skipped
+    );
+}
+
+#[test]
+fn a_stray_file_in_the_marketplace_folder_is_backed_up_and_replaced() {
+    let e = env();
+    let a = g("a");
+    put(&mp_dir(&e).join("mods/router/hooks/hooks.json"), b"stale\n");
+    let r = apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
+    assert!(r.collisions.is_empty(), "{:?}", r.collisions);
+    assert_eq!(
+        read(&mp_dir(&e).join("mods/router/hooks/hooks.json")).unwrap(),
+        b"{\"hooks\":{}}\n"
+    );
+    assert!(backups(&e)
+        .iter()
+        .any(|p| read(p).as_deref() == Some(&b"stale\n"[..])));
+}
+
+#[test]
+fn a_file_added_in_the_marketplace_folder_is_a_local_change() {
+    let e = env();
+    let a = g("a");
+    apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
+    let new = "plugins/mods/mods/router/hooks/extra.ts";
+    put(&target_of(&e.paths, new), b"export {}\n");
+    // Never synced: dependencies, git internals, env files, temp files.
+    put(&mp_dir(&e).join("node_modules/x/index.js"), b"x");
+    put(&mp_dir(&e).join(".env"), b"SECRET=1");
+    put(&mp_dir(&e).join("mods/.x.claude-sync-tmp-1"), b"t");
+    assert_eq!(local_files(&e.paths, &a).unwrap()[new], b"export {}\n");
+    assert_eq!(
+        crate::watch::local_edits(&e.paths).unwrap(),
+        vec![crate::watch::LocalEdit {
+            group: a.clone(),
+            path: new.into(),
+            deleted: false
+        }]
+    );
+    // An apply that does not ship it leaves it alone.
+    apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
+    assert!(target_of(&e.paths, new).exists());
+
+    // Keep local: no longer listed, and it stays.
+    keep_local(&e.paths, &a, new).unwrap();
+    assert!(crate::watch::local_edits(&e.paths).unwrap().is_empty());
+    apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
+    assert!(target_of(&e.paths, new).exists());
+    assert!(!local_files(&e.paths, &a).unwrap().contains_key(new));
+
+    // Undo of another new file removes it (with a backup).
+    let other = "plugins/mods/notes.md";
+    put(&target_of(&e.paths, other), b"draft\n");
+    undo(&e.paths, &a, other, None).unwrap();
+    assert!(!target_of(&e.paths, other).exists());
+    assert!(backups(&e)
+        .iter()
+        .any(|p| read(p).as_deref() == Some(&b"draft\n"[..])));
+    // A path outside an owned marketplace is still refused.
+    assert!(undo(&e.paths, &a, "plugins/nope/x.md", None).is_err());
+}
+
+#[test]
+fn a_backup_keeps_the_first_copy_of_a_path() {
+    let e = env();
+    let mut b = Backups::new(&e.paths);
+    b.save("settings.json", b"original").unwrap();
+    b.save("settings.json", b"second").unwrap();
+    let all = backups(&e);
+    assert_eq!(all.len(), 1);
+    assert_eq!(read(&all[0]).unwrap(), b"original");
+}
