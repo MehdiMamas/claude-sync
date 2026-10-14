@@ -1,5 +1,6 @@
 // One group: CLAUDE.md changes to review, what it gives this device, its scheduled jobs,
-// members, sharing a skill, recent changes, conflicts and collisions.
+// members, sharing a skill, rules that clash with other groups, copying to another group,
+// recent changes, conflicts and collisions.
 import {
   api,
   errorText,
@@ -20,6 +21,7 @@ import { avatar } from "../avatar";
 import { busy, confirmButton, errorBox, h, relTime, replace, spinner, toast } from "../dom";
 import { countReview, go, onRefresh, store } from "../store";
 import { claudeMdCard } from "./claude-md";
+import { conflictsCard, copyCard } from "./conflicts";
 import { historyCard } from "./history";
 
 function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
@@ -694,9 +696,11 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
         contentsCard(contents),
         jobsCard(g.id),
         problemsCard(g),
+        conflictsCard(g.id),
         membersCard(g, load),
         shareCard(g.id),
         claudeMdCard(g.id),
+        copyCard(g, groups),
         historyCard(g.id, contents),
       );
     } catch (e) {

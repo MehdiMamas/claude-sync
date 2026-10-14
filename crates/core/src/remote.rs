@@ -68,6 +68,10 @@ pub trait RemoteRepo: Send + Sync {
         message: &str,
     ) -> crate::Result<Head>;
     async fn is_private(&self) -> crate::Result<bool>;
+    /// The signed-in account may push to the repo (not a read-only collaborator).
+    async fn can_push(&self) -> crate::Result<bool> {
+        Ok(true)
+    }
     async fn owner_login(&self) -> crate::Result<String>;
     async fn collaborators(&self) -> crate::Result<Vec<Collaborator>>;
     async fn invite(&self, login: &str) -> crate::Result<()>;
@@ -163,6 +167,15 @@ struct RepoInfo {
     default_branch: String,
     private: bool,
     owner: Owner,
+    /// The signed-in account's rights; GitHub sends them to an authenticated caller.
+    #[serde(default)]
+    permissions: Option<Permissions>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Permissions {
+    #[serde(default)]
+    push: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -506,6 +519,10 @@ impl RemoteRepo for GitHubRepo {
         Ok(self.info().await?.private)
     }
 
+    async fn can_push(&self) -> crate::Result<bool> {
+        Ok(self.info().await?.permissions.is_none_or(|p| p.push))
+    }
+
     async fn owner_login(&self) -> crate::Result<String> {
         Ok(self.info().await?.owner.login)
     }
@@ -767,6 +784,24 @@ mod tests {
             gone.head().await,
             Err(Error::GitHub { status: 404, .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn can_push_follows_the_repos_permissions() {
+        let (server, repo) = setup().await;
+        // No `permissions` in the answer: assume yes, the push itself says otherwise.
+        assert!(repo.can_push().await.unwrap());
+        Mock::given(method("GET"))
+            .and(path("/repos/o/ro"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "default_branch": "main", "private": true, "owner": {"login": "o"},
+                "permissions": {"admin": false, "push": false, "pull": true}
+            })))
+            .mount(&server)
+            .await;
+        let gh = GitHub::with_api("tok".into(), server.uri());
+        let read_only = GitHubRepo::new(gh, GroupId::new("o", "ro"));
+        assert!(!read_only.can_push().await.unwrap());
     }
 
     #[tokio::test]

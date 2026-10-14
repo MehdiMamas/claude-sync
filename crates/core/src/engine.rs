@@ -23,7 +23,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod claude_md;
+mod conflicts;
+mod copy;
 pub use claude_md::{ClaudeMdShare, ClaudeMdShared};
+pub use copy::{Copied, CopyFile, CopyPreview, CopyRequest, CopySetting, CopySyncs};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -140,6 +143,11 @@ pub trait ApplyLayer: Send + Sync {
     fn excluded_paths(&self, _paths: &Paths, _group: &GroupId) -> crate::Result<BTreeSet<String>> {
         Ok(BTreeSet::new())
     }
+    /// Paths and settings pointers (`settings.shared.json#/model`) this device keeps local
+    /// for the group.
+    fn kept_local(&self, _paths: &Paths, _group: &GroupId) -> crate::Result<BTreeSet<String>> {
+        Ok(BTreeSet::new())
+    }
 }
 
 /// `crate::apply` and `crate::watch` on the real `~/.claude`.
@@ -187,6 +195,13 @@ impl ApplyLayer for FsApply {
     }
     fn excluded_paths(&self, paths: &Paths, group: &GroupId) -> crate::Result<BTreeSet<String>> {
         crate::apply::excluded_paths(paths, group)
+    }
+    fn kept_local(&self, paths: &Paths, group: &GroupId) -> crate::Result<BTreeSet<String>> {
+        Ok(crate::apply::Manifest::load(paths)?
+            .groups
+            .remove(&group.to_string())
+            .map(|e| e.keep_local)
+            .unwrap_or_default())
     }
 }
 
@@ -573,16 +588,7 @@ impl Engine {
             )));
         }
         self.scan(&files)?;
-        let remote = self.remotes.open(id);
-        let message = self.message(&format!("share skills/{skill}"));
-        let mut attempt = 0;
-        loop {
-            let head = remote.head().await?;
-            let current = remote.files_at(&head.commit).await?;
-            let (gf, read_only) = read_group_file(id, &current)?;
-            if let Some(e) = read_only {
-                return Err(e);
-            }
+        self.commit_to_group(id, &format!("share skills/{skill}"), |gf, current| {
             if !gf.sync.skills {
                 return Err(Error::Invalid(format!("{id} does not sync skills")));
             }
@@ -591,12 +597,9 @@ impl Engine {
                     "{id} already has a skill named {skill}"
                 )));
             }
-            match remote.commit(&head, &files, &message).await {
-                Ok(_) => break,
-                Err(Error::PushRace) if attempt < PUSH_RETRIES => attempt += 1,
-                Err(e) => return Err(e),
-            }
-        }
+            Ok(Some(files.clone()))
+        })
+        .await?;
         // The group's copy replaces the user's folder, which is kept as a backup.
         let backup = self
             .paths
@@ -764,6 +767,44 @@ impl Engine {
             match remote.commit(&head, &changes, &message).await {
                 Ok(_) => return Ok(true),
                 Err(Error::PushRace) if attempt < PUSH_RETRIES => attempt += 1,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// Commit what `change` makes of the group's files at its head, retrying when someone
+    /// else pushed first. `change` gets the group file and those files; `None` commits
+    /// nothing (`false`). Callers scan what they add. A push GitHub refuses (read access
+    /// only) is said plainly.
+    pub(crate) async fn commit_to_group(
+        &self,
+        id: &GroupId,
+        summary: &str,
+        mut change: impl FnMut(&GroupFile, &FileSet) -> crate::Result<Option<Changes>>,
+    ) -> crate::Result<bool> {
+        let remote = self.remotes.open(id);
+        let message = self.message(summary);
+        let mut attempt = 0;
+        loop {
+            let head = remote.head().await?;
+            let current = remote.files_at(&head.commit).await?;
+            let (gf, read_only) = read_group_file(id, &current)?;
+            if let Some(e) = read_only {
+                return Err(e);
+            }
+            let Some(files) = change(&gf, &current)? else {
+                return Ok(false);
+            };
+            match remote.commit(&head, &files, &message).await {
+                Ok(_) => return Ok(true),
+                Err(Error::PushRace) if attempt < PUSH_RETRIES => attempt += 1,
+                Err(e) if is_lost_access(&e) => {
+                    let host = remote
+                        .owner_login()
+                        .await
+                        .unwrap_or_else(|_| id.owner.clone());
+                    return Err(no_push(&gf.name, &host));
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -1491,6 +1532,13 @@ fn read_group_file(id: &GroupId, files: &FileSet) -> crate::Result<(GroupFile, O
     }
 }
 
+/// The error when GitHub refuses a push to a group the user can read.
+pub(crate) fn no_push(group: &str, host: &str) -> Error {
+    Error::Invalid(format!(
+        "You can't push to {group}: your GitHub account can read it but not write to it. Ask its host ({host}) for write access."
+    ))
+}
+
 pub(crate) fn is_lost_access(e: &Error) -> bool {
     matches!(
         e,
@@ -1614,6 +1662,8 @@ mod tests {
         /// The group's version of each file as last applied.
         applied: HashMap<GroupId, FileSet>,
         kept: BTreeSet<String>,
+        /// What `keep_local` was called with, per group.
+        kept_in: HashMap<GroupId, BTreeSet<String>>,
         collide: BTreeSet<String>,
         removed: Vec<GroupId>,
     }
@@ -1723,9 +1773,20 @@ mod tests {
             };
             Ok(())
         }
-        fn keep_local(&self, _: &Paths, _: &GroupId, path: &str) -> crate::Result<()> {
-            self.st.lock().unwrap().kept.insert(path.into());
+        fn keep_local(&self, _: &Paths, group: &GroupId, path: &str) -> crate::Result<()> {
+            let mut st = self.st.lock().unwrap();
+            st.kept_in
+                .entry(group.clone())
+                .or_default()
+                .insert(path.into());
+            if !path.starts_with(crate::apply::SETTINGS_POINTER_PREFIX) {
+                st.kept.insert(path.into());
+            }
             Ok(())
+        }
+        fn kept_local(&self, _: &Paths, group: &GroupId) -> crate::Result<BTreeSet<String>> {
+            let st = self.st.lock().unwrap();
+            Ok(st.kept_in.get(group).cloned().unwrap_or_default())
         }
         fn write_claude_md(
             &self,

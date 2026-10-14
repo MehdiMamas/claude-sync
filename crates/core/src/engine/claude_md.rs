@@ -6,7 +6,7 @@
 //! it is committed. Since the group's copy comes back through the managed block, the user
 //! can also have the shared lines taken out of their own text so Claude does not read them
 //! twice; the block stays as it is and the old file is backed up first.
-use super::{read_group_file, Engine, PUSH_RETRIES};
+use super::Engine;
 use crate::apply::Backups;
 use crate::personal::claude_md as own;
 use crate::remote::Changes;
@@ -47,6 +47,23 @@ fn normalized(text: &str) -> String {
     lines.join("\n")
 }
 
+/// The group's `CLAUDE.md` in `files` with `text` added under `## {heading}` (just `text`
+/// when the file is empty). `None` when the file already has the text.
+pub(super) fn appended(files: &crate::FileSet, text: &str, heading: &str) -> Option<Vec<u8>> {
+    let old = files
+        .get(group::CLAUDE_MD)
+        .map(|b| String::from_utf8_lossy(b).replace("\r\n", "\n"))
+        .unwrap_or_default();
+    if normalized(&old).contains(&normalized(text)) {
+        return None;
+    }
+    let new = match old.trim_end() {
+        "" => text.to_string(),
+        old => format!("{old}\n\n## {heading}\n\n{text}"),
+    };
+    Some(new.into_bytes())
+}
+
 fn non_blank_lines(text: &str) -> usize {
     text.lines().filter(|l| !l.trim().is_empty()).count()
 }
@@ -79,37 +96,16 @@ impl Engine {
             group::CLAUDE_MD.to_string(),
             Some(text.clone().into_bytes()),
         )]))?;
-        let remote = self.remotes.open(id);
-        let message = self.message("share CLAUDE.md");
-        let mut attempt = 0;
-        let appended = loop {
-            let head = remote.head().await?;
-            let current = remote.files_at(&head.commit).await?;
-            let (gf, read_only) = read_group_file(id, &current)?;
-            if let Some(e) = read_only {
-                return Err(e);
-            }
-            if !gf.sync.claude_md {
-                return Err(Error::Invalid(format!("{id} does not sync CLAUDE.md")));
-            }
-            let old = current
-                .get(group::CLAUDE_MD)
-                .map(|b| String::from_utf8_lossy(b).replace("\r\n", "\n"))
-                .unwrap_or_default();
-            if normalized(&old).contains(&normalized(&text)) {
-                break false;
-            }
-            let new = match old.trim_end() {
-                "" => text.clone(),
-                old => format!("{old}\n\n## From {}\n\n{text}", self.login),
-            };
-            let files = Changes::from([(group::CLAUDE_MD.to_string(), Some(new.into_bytes()))]);
-            match remote.commit(&head, &files, &message).await {
-                Ok(_) => break true,
-                Err(Error::PushRace) if attempt < PUSH_RETRIES => attempt += 1,
-                Err(e) => return Err(e),
-            }
-        };
+        let heading = format!("From {}", self.login);
+        let appended = self
+            .commit_to_group(id, "share CLAUDE.md", |gf, current| {
+                if !gf.sync.claude_md {
+                    return Err(Error::Invalid(format!("{id} does not sync CLAUDE.md")));
+                }
+                Ok(appended(current, &text, &heading)
+                    .map(|new| Changes::from([(group::CLAUDE_MD.to_string(), Some(new))])))
+            })
+            .await?;
         if let (_, Some(e)) = self.sync_group(id, None).await {
             return Err(e);
         }
@@ -131,6 +127,30 @@ impl Engine {
         {
             return Ok(false);
         }
+        self.rewrite_own_claude_md(|mine| {
+            let left = own::without_lines(mine, shared);
+            let changed =
+                non_blank_lines(left.as_deref().unwrap_or_default()) != non_blank_lines(mine);
+            changed.then_some(left)
+        })
+    }
+
+    /// The user's own text in `~/.claude/CLAUDE.md`: without the managed block and group
+    /// import lines. `None` when there is none.
+    pub(super) fn own_claude_md(&self) -> crate::Result<Option<String>> {
+        let file = self.paths.claude_home.join(group::CLAUDE_MD);
+        Ok(read_opt(&file)?
+            .and_then(|b| own::strip(&b))
+            .map(|t| String::from_utf8_lossy(&t).into_owned()))
+    }
+
+    /// Rewrite the user's own text with `edit`; the managed block and import lines stay and
+    /// the old file is backed up first. `edit` returns `None` to leave the file alone, and
+    /// `Some(None)` when no text is left. `false` when nothing was written.
+    pub(super) fn rewrite_own_claude_md(
+        &self,
+        edit: impl FnOnce(&str) -> Option<Option<String>>,
+    ) -> crate::Result<bool> {
         let file = self.paths.claude_home.join(group::CLAUDE_MD);
         let Some(existing) = read_opt(&file)? else {
             return Ok(false);
@@ -138,11 +158,9 @@ impl Engine {
         let Some(mine) = own::strip(&existing) else {
             return Ok(false);
         };
-        let mine = String::from_utf8_lossy(&mine);
-        let left = own::without_lines(&mine, shared);
-        if non_blank_lines(left.as_deref().unwrap_or_default()) == non_blank_lines(&mine) {
+        let Some(left) = edit(&String::from_utf8_lossy(&mine)) else {
             return Ok(false);
-        }
+        };
         Backups::new(&self.paths).save(group::CLAUDE_MD, &existing)?;
         match own::compose(Some(&existing), left.as_deref().map(str::as_bytes)) {
             Some(bytes) => write_atomic(&file, &bytes)?,

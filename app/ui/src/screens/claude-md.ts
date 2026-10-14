@@ -2,6 +2,7 @@
 // imports, secrets redacted) in an editable preview, for a new group or a group they are in.
 import { api, errorText, groupKey, type ClaudeMdShare, type GroupId } from "../api";
 import { busy, errorBox, h, replace, spinner, toast } from "../dom";
+import { checker } from "./conflicts";
 
 const PRIVACY_WARNING =
   "Everyone in the group will see this text, so remove personal details such as emails, names and tokens.";
@@ -12,18 +13,24 @@ export interface ClaudeMdEditor {
   value(): ClaudeMdShare | null;
 }
 
-/** With `optional`, a "Share my CLAUDE.md with the group" box turns the preview on and off. */
-export function claudeMdEditor(id: string, optional: boolean): ClaudeMdEditor {
+/** With `optional`, a "Share my CLAUDE.md with the group" box turns the preview on and off.
+ * With `group`, lines that would clash with that group or the user's other groups are
+ * listed under the text (§7b). */
+export function claudeMdEditor(id: string, optional: boolean, group?: GroupId): ClaudeMdEditor {
   const share = h("input", { id: `${id}-share`, type: "checkbox", checked: false });
   const text = h("textarea", { id: `${id}-text`, rows: 10, class: "mono", spellcheck: "false", "aria-describedby": `${id}-warn` });
   const removeOwn = h("input", { id: `${id}-remove`, type: "checkbox", checked: true, "aria-describedby": `${id}-remove-hint` });
   const note = h("div", null, spinner("Reading your CLAUDE.md"));
+  const warnings = h("div");
+  const check = group ? checker(warnings, (t) => api.claudeMdCheck(group, t, null)) : () => {};
+  text.addEventListener("input", () => check(text.value));
   const fields = h(
     "div",
     { class: "form", hidden: optional },
     h("label", { for: text.id }, "Text the group gets"),
     h("p", { class: "warn-text small", id: `${id}-warn` }, PRIVACY_WARNING),
     text,
+    warnings,
     h(
       "div",
       { class: "check" },
@@ -40,6 +47,7 @@ export function claudeMdEditor(id: string, optional: boolean): ClaudeMdEditor {
   api.claudeMdPreview().then(
     (t) => {
       text.value = t;
+      check(t);
       const empty = t.trim() === "";
       share.checked = !empty;
       fields.hidden = optional && empty;
@@ -65,7 +73,7 @@ export function claudeMdCard(id: GroupId): HTMLElement {
   const open = h("button", null, "Share my CLAUDE.md…");
   const slot = h("div");
   open.addEventListener("click", () => {
-    const editor = claudeMdEditor("share-md", false);
+    const editor = claudeMdEditor("share-md", false, id);
     const submit = h("button", { class: "primary" }, "Share");
     const cancel = h("button", null, "Cancel");
     const close = () => {

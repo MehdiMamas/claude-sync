@@ -3,6 +3,7 @@
 
 pub mod apply;
 pub mod claude_cli;
+pub mod conflicts;
 pub mod contents;
 pub mod engine;
 pub mod error;

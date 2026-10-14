@@ -123,6 +123,64 @@ export interface ClaudeMdShared {
   appended: boolean;
   removedOwn: boolean;
 }
+/** Where a clashing line or value comes from (§7b). */
+export type ClashSource = { kind: "group"; id: GroupId } | { kind: "own" };
+export interface ClashSide {
+  source: ClashSource;
+  /** The group's name, or "Your CLAUDE.md". */
+  name: string;
+  /** The line as written, or a setting's value as JSON. */
+  text: string;
+}
+/** Two rules Claude reads on this device that say the same thing or the opposite, or a
+ * setting two groups set differently. For a setting, `a` is the value that applies. */
+export interface Clash {
+  id: string;
+  kind: "duplicate" | "contradiction" | "setting";
+  pointer: string | null;
+  a: ClashSide;
+  b: ClashSide;
+}
+export interface CopyFile {
+  name: string;
+  inTarget: boolean;
+  /** The target has the same one: copying it changes nothing. */
+  same: boolean;
+}
+export interface CopySetting {
+  pointer: string;
+  value: string;
+  target: string | null;
+  /** The target sets it to a different plain value. */
+  clash: boolean;
+}
+/** What "Copy to another group" would bring to `to`. */
+export interface CopyPreview {
+  to: GroupId;
+  toName: string;
+  host: string;
+  /** False: the user can read the target but not push to it. */
+  canPush: boolean;
+  syncs: { claudeMd: boolean; skills: boolean; agents: boolean; settings: boolean };
+  /** The source group's CLAUDE.md, secrets redacted. */
+  claudeMd: string;
+  skills: CopyFile[];
+  agents: CopyFile[];
+  settings: CopySetting[];
+}
+export interface CopyRequest {
+  claudeMd: string;
+  skills: string[];
+  agents: string[];
+  settings: string[];
+}
+export interface Copied {
+  /** False: the target already had all of it. */
+  committed: boolean;
+  claudeMd: boolean;
+  files: number;
+  settings: number;
+}
 export interface CommitInfo {
   sha: string;
   message: string;
@@ -368,6 +426,14 @@ export const api = {
   setClaudeMdReview: (group: GroupId, on: boolean) => call<ClaudeMdReview>("set_claude_md_review", { group, on }),
   useGroupClaudeMd: (group: GroupId) => call<ClaudeMdReview>("use_group_claude_md", { group }),
   syncNow: () => call<SyncReport>("sync_now"),
+  conflicts: () => call<Clash[]>("conflicts"),
+  /** How `text` would clash once in `group`; `from` is the group it is copied from, null for the user's own text. */
+  claudeMdCheck: (group: GroupId, text: string, from: GroupId | null) => call<Clash[]>("claude_md_check", { group, text, from }),
+  dropClaudeMdLine: (source: ClashSource, line: string) => call<void>("drop_claude_md_line", { source, line }),
+  editClaudeMdLine: (source: ClashSource, line: string, text: string) => call<void>("edit_claude_md_line", { source, line, text }),
+  keepSetting: (keep: GroupId, drop: GroupId, pointer: string) => call<void>("keep_setting", { keep, drop, pointer }),
+  copyPreview: (from: GroupId, to: GroupId) => call<CopyPreview>("copy_preview", { from, to }),
+  copyToGroup: (from: GroupId, to: GroupId, request: CopyRequest) => call<Copied>("copy_to_group", { from, to, request }),
   getSettings: () => call<Settings>("get_settings"),
   setSettings: (settings: Partial<Settings>) => call<Settings>("set_settings", { settings }),
   notifications: () => call<Notification[]>("notifications"),
