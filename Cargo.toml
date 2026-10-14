@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "app/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+authors = ["El Mehdi Mamas <mehdimamasxd@gmail.com>"]
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs"] }
+# 0.13 with the ring provider, as tauri-plugin-updater uses it, so the app links one HTTP stack.
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+tracing = "0.1"
+async-trait = "0.1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+# Must stay "unwind": the app catches panics from the engine (std::panic::catch_unwind).
+panic = "unwind"

@@ -45,6 +45,34 @@ Keys that make sense to share are the ones that are the same on every machine: `
 
 The merge needs [jq](https://jqlang.org/). macOS 15 and later ship it as `/usr/bin/jq`. On Linux install the `jq` package. On Windows run `winget install jqlang.jq`, or set `CLAUDE_SYNC_JQ` to the path of a `jq` binary. Without jq, `pull` still pulls and links, prints one line saying jq is needed, exits 2, and does not touch `settings.json`. A session-start hook still exits 0. `settings=1` is the only feature that needs a tool other than bash and git.
 
+## Developing
+
+Layout:
+- `crates/core`: the sync engine (Rust library `claude-sync-core`).
+- `app/src-tauri`: the desktop app (Tauri 2, binary `claude-sync`): tray, background sync loop, commands for the UI.
+- `app/ui`: the app's window (TypeScript + Vite, no framework).
+- `relay/`: the small web service for updates and feedback, when present.
+- `bin/`, `lib/`, `tests/`: the bash CLI and its tests.
+
+Needs Rust (stable), Node 22+ and pnpm. Run every check before a PR:
+
+```
+pwsh scripts/check.ps1     # Windows
+scripts/check.sh           # macOS, Linux, Git Bash
+```
+
+They run `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, the relay's tests and typecheck (if `relay/` exists) and the UI build, then print a summary and exit non-zero if anything failed.
+
+Run the app:
+
+```
+pnpm -C app/ui install
+pnpm -C app install
+pnpm -C app tauri dev
+```
+
+`pnpm -C app/ui dev` alone serves the UI in a browser with a fake backend (`?signedOut` and `?empty` show other states). A release build is `pnpm -C app tauri build`; it signs update bundles, so set `TAURI_SIGNING_PRIVATE_KEY` (path or contents of the updater key) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Set `CLAUDE_SYNC_GITHUB_CLIENT_ID` (GitHub OAuth app with device flow) and `CLAUDE_SYNC_RELAY_URL` at build time; without the client ID the app cannot sign in, and without the relay URL updates and feedback are off. Releases go through `scripts/release.ps1` and the `release-macos.yml` workflow; see [docs/releasing.md](docs/releasing.md).
+
 ## How this repo is built
 Numbered phases, one PR each:
 - `SPEC.md`: the design, in numbered sections cited as §N.
