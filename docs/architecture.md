@@ -8,6 +8,7 @@ A small desktop app (Windows and macOS first, Linux later) that lives in the tra
 
 - **Groups.** A group is a set of friends who share Claude Code settings: `settings.json` keys, skills, subagents, slash commands, output styles and `CLAUDE.md` instructions. One person **hosts** the group: the group repo lives on their GitHub account. Everyone else **joins**. Every member has the same say: anyone can change the shared settings and anyone can add or remove members.
 - **Devices.** Each person can run the app on as many PCs as they like. Every device signs in with the person's own GitHub account and has full access.
+- **Personal memory.** A person's own `CLAUDE.md` text and Claude's memories follow them to their other devices through a private repo of their own, never through a group (§16).
 - **Live.** The app watches the remote for changes and applies them within about a minute. It watches the local files it manages, and when you edit one it asks whether to share the change with the group.
 - **Updates.** The app checks for new versions and updates itself.
 - **Feedback.** A feedback form sends a description, and optionally the app's recent logs and a screenshot, to this repo as a public issue, put into the nearest sprint.
@@ -162,7 +163,7 @@ v0 used `~/.claude-sync/` as a git clone of the personal repo. The app checks fo
 
 - **Tauri 2**, Rust backend plus a plain TypeScript UI. Tray icon with: status, Sync now, Open, Pause, Send feedback, Quit. Single instance. Starts at login (autostart plugin, on by default, can be turned off).
 - Closing the window destroys the webview, so the idle app is just the Rust process (target: under 30 MB RAM idle, under 15 MB installer).
-- Screens: Sign in (device code), Groups (list, status, last sync), Group (members, invite by GitHub login, pending invitations, recent changes, conflicts, leave), Settings (device name, poll interval, start at login, pause), Feedback.
+- Screens: Sign in (device code), Groups (list, status, last sync), Group (members, invite by GitHub login, pending invitations, recent changes, conflicts, leave), Settings (device name, poll interval, start at login, pause, personal memory §16), Feedback.
 - Logs: `tracing` to `~/.claude-sync/logs/claude-sync.log`, rotated daily, 7 kept, redacted (§9).
 
 ## 12. Relay (Vercel, free tier)
@@ -218,3 +219,43 @@ Rate limit per login: 5 feedback posts per hour (in memory; good enough for a ho
 - `relay`: `node --test` with `fetch` mocked.
 - `app`: `cargo check` and `pnpm build` for the UI. Manual smoke test per release, written down in the PR.
 - Proof in every PR: the commands run, their exit codes and test counts, and the OS that ran them.
+
+## 16. Personal memory
+
+**Two scopes.** A **group** shares how Claude works for everyone in it: settings, skills, mods, shared instructions (§4). **Personal memory** is one person's own: the text they wrote in `~/.claude/CLAUDE.md` and the memories Claude Code saved for them ("remember that I like apples"). Other members never want it, but the same person's other computers do. Personal memory goes only to that person's devices, the ones signed in to the same GitHub account. It never goes through a group repo, and nothing from a group goes into it.
+
+**Repo.** A private repo `<login>/claude-sync-personal`, created by the app the first time the user turns personal memory on. It has no `claude-sync-group` topic, so it is never listed as a group. The app refuses to use it if it is public or if its `claude-sync-personal.json` has a format the app does not know.
+
+```
+claude-sync-personal.json   {"format": 1, "newDevicesJoin": true}
+devices.json                {"devices": [{"id", "name", "os", "lastSeenUnix"}]}
+README.md                   what this is (generated)
+CLAUDE.md                   the user's own text of ~/.claude/CLAUDE.md
+memory/<key>/**             ~/.claude/projects/<folder>/memory/**
+```
+
+**What syncs.** Two kinds, each on its own switch, both on by default:
+
+- `CLAUDE.md`: everything outside the managed block (§7), without stray group import lines. On the way back in, this device's block and imports stay where they are; the synced text goes under them, in the file's line ends. A file with only the block in it syncs nothing.
+- Memory: `~/.claude/projects/<folder>/memory/**`. Claude Code names `<folder>` after the project path, with every character that is not an ASCII letter or digit turned into `-`. That cannot be decoded, so the app never decodes it. A folder under the home folder gets the key `home<rest>` (`C--Users-ana-Projects-app` and `-Users-ana-Projects-app` are both `home-Projects-app`); another device maps the key to its own `<encoded home><rest>`, and reuses an existing folder whose name differs only in case (Windows has both `C--Users-…` and `c--Users-…`). Folders outside the home folder (`/tmp`, `/private/var/folders`), temp and app-data folders, background job folders and worktree folders are per machine and never sync.
+
+Never synced, and reported in Settings as "stays on this device": a file over 256 KiB (or past 16 MiB in all), a symlink, a file the secret scan (§9) flags, and a path that is not a safe file name. These are never written over on this device either.
+
+**Merge.** The same three-way merge as a group (§6), with its own base in `<state>/personal/base/`. `MEMORY.md` is an index of one line per memory, and two devices adding memories at the same time is normal, so it merges as a set of lines: a line one side removed is dropped, every other line of either side is kept, and the remote's new lines go after the line that precedes them on the remote. It never conflicts. Any other file both devices changed is a conflict: the other device's version wins and this device's is saved to `<state>/conflicts/personal/<UTC time>/`. Before the first change to `CLAUDE.md` the app saves a copy to `<state>/backups/personal/<UTC time>/`.
+
+**When it runs.** After each group sync: a conditional `GET` of the head (`304` costs nothing), and a pass only when the remote moved, the local files changed, this device was renamed, or a day passed (to refresh `lastSeenUnix`). Sync now always runs a pass.
+
+**Turning it on and off.** Settings → Personal memory has the master switch "Sync my personal memory between my devices", the two kinds, the device list (this device marked; rename it with the Device name field; remove an old one), "New devices of mine join automatically", the last sync and "Open repo". Turning it off on a device stops syncing there and leaves its files and the repo alone. A kind turned off is remembered as it was; turned back on, it merges against that, so nothing is lost or re-added by mistake.
+
+**A new device.** After sign-in, a device that never decided checks for `<login>/claude-sync-personal`. If the repo says `newDevicesJoin: true`, personal memory turns on by itself, the repo and the local files are merged (never overwriting either side's memories), and the app says: "Personal memory from your other devices is on. Turn off in Settings." If it says `false`, the app shows a notice offering to turn it on; "Not now" stops asking on that device. Another account on the same computer starts over with its own repo.
+
+**Local state.**
+
+```
+<state>/personal/state.json        on/off, decided, kinds, device id, last sync, the devices seen
+<state>/personal/base/             base snapshot
+<state>/personal/off-claude-md/    a kind as it was when it was turned off
+<state>/personal/off-memory/
+```
+
+The v0 bash CLI's personal repo (§10) is not migrated.
