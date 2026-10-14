@@ -13,7 +13,7 @@ SECRET_REGEX=()
 secret_add github_pat 'github_pat_[A-Za-z0-9_]{50,}'
 secret_add sk-ant 'sk-ant-[A-Za-z0-9_-]{20,}'
 secret_add ghp 'ghp_[A-Za-z0-9]{36}'
-secret_add gh-token 'gh[osu]_[A-Za-z0-9]{36}'
+secret_add gh-token 'gh[orsu]_[A-Za-z0-9]{36}'
 secret_add aws-access-key 'AKIA[0-9A-Z]{16}'
 secret_add slack-token 'xox[abpr]-[A-Za-z0-9-]{10,}'
 secret_add private-key '-----BEGIN[[:space:]][A-Z[:space:]]*PRIVATE[[:space:]]KEY-----'

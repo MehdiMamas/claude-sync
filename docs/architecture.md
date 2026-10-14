@@ -31,7 +31,9 @@ GitHub Actions run on GitHub-hosted runners only (free for a public repo): `ci.y
 
 - The app signs in with the **GitHub OAuth device flow** (no client secret in the app). It needs a GitHub OAuth App with device flow enabled. Its client ID is public and is compiled in (`CLAUDE_SYNC_GITHUB_CLIENT_ID`).
 - Scope: `repo` (needed to read and write private repos and to manage collaborators and invitations) and `read:user`. This is broad. A GitHub App with per-repo access is in the backlog.
-- The token is stored in the OS keychain (Windows Credential Manager, macOS Keychain) through the `keyring` crate, under service `claude-sync`, account = GitHub login. It is never written to a file or a log.
+- The tokens are stored in the OS keychain (Windows Credential Manager, macOS Keychain) through the `keyring` crate, under service `claude-sync`, account = GitHub login, as one entry: a JSON object with the access token and, when GitHub sends them, the refresh token (`ghr_…`) and both expiry times. An entry saved by 0.1.1 or earlier is the bare access token and still loads. Tokens are never written to a file or a log.
+- **Token refresh.** When the OAuth App has expiring user tokens on, the access token lasts 8 hours and the refresh token 6 months. The app refreshes 5 minutes before the access token expires, and again after a `401`, with `POST https://github.com/login/oauth/access_token` (`grant_type=refresh_token`, `client_id`, `refresh_token`; no client secret, as in the device flow), then saves the new pair to the keychain and retries the call once. All GitHub calls of a sign-in share one session (`github::Session`), so concurrent calls wait for a single refresh instead of each spending the refresh token (GitHub rotates it on every use).
+- **Expired sign-in.** A `401` that a refresh cannot cure (no refresh token, or GitHub refuses it, e.g. `bad_refresh_token`) and that `GET /user` confirms means GitHub no longer accepts the sign-in. The app then signs out as *expired*: background GitHub calls (sync loop, update check, feedback outbox) stop, the dead tokens are removed from the keychain, `state.json` and the groups stay, one notification says so, and the window shows "Your GitHub sign-in expired" with a **Sign in again** button instead of an error every minute. The tray says "Sign-in expired". Signing in again clears it and syncing resumes where it left off. A network error or a GitHub 5xx during a refresh is not an expiry: the call fails and the next pass tries again.
 - Each device signs in on its own. Signing out on one device does not affect the others.
 
 ## 4. Group repo
@@ -221,7 +223,7 @@ Plugins and marketplaces:
 
 ## 9. Secret scan
 
-Ported from v0 (`lib/secrets.sh`, `SPEC.md` §7): `github_pat_…`, `sk-ant-…`, `ghp_…`, `gh[osu]_…`, `AKIA…`, `xox[abpr]-…`, private key headers, `"access_token"`/`"refresh_token"` fields. A line containing `claude-sync: allow-secret` is skipped. The same redaction patterns clean logs before they are written and before feedback is sent.
+Ported from v0 (`lib/secrets.sh`, `SPEC.md` §7): `github_pat_…`, `sk-ant-…`, `ghp_…`, `gh[orsu]_…` (OAuth, refresh, server and user tokens), `AKIA…`, `xox[abpr]-…`, private key headers, `"access_token"`/`"refresh_token"` fields. A line containing `claude-sync: allow-secret` is skipped. The same redaction patterns clean logs before they are written and before feedback is sent.
 
 ## 10. Local state
 

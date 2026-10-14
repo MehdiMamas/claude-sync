@@ -6,6 +6,9 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub enum Error {
     #[error("not signed in")]
     NotSignedIn,
+    /// GitHub no longer accepts the sign-in and it could not be refreshed.
+    #[error("Your GitHub sign-in expired. Sign in again.")]
+    SignInExpired,
     #[error("GitHub returned {status}: {message}")]
     GitHub { status: u16, message: String },
     #[error("rate limited by GitHub until {reset_unix}")]

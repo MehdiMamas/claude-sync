@@ -1,5 +1,5 @@
 // A fake backend for `pnpm dev` in a plain browser (never bundled into the app).
-// `?signedOut` shows the sign-in screen; `?empty` shows a user with no groups; `?plugins`
+// `?signedOut` shows the sign-in screen; `?expired` shows it after an expired sign-in; `?empty` shows a user with no groups; `?plugins`
 // shows the plugins reload notice; `?noSkills` shows a user with no skills to share;
 // `?noHistory` shows a group with no recent changes. Avatars load from GitHub when
 // online and fall back to initials offline, as in the app.
@@ -13,7 +13,8 @@ import type { Backend, Clash, ClashSide, ClashSource, ClaudeMdReview, ClaudeMdSh
 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
-let signedIn = !q.has("signedOut");
+let signedIn = !q.has("signedOut") && !q.has("expired");
+let expiredLogin = q.has("expired") ? "mehdimamas" : null;
 
 const groups: GroupStatus[] = q.has("empty")
   ? []
@@ -344,11 +345,12 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     setPersonal({ decided: true, offer: false });
   },
   app_info: () => ({ version: "0.1.0", os: "windows 11 (x86_64)", relayConfigured: true, clientIdMissing: false, stateDir: "C:/Users/me/.claude-sync/app" }),
-  auth_status: () => ({ signedIn, login: signedIn ? "mehdimamas" : null, clientIdMissing: false }),
+  auth_status: () => ({ signedIn, login: signedIn ? "mehdimamas" : null, expiredLogin, clientIdMissing: false }),
   start_sign_in: () => ({ userCode: "WDJB-MJHT", verificationUri: "https://github.com/login/device", expiresIn: 900 }),
   cancel_sign_in: () => null,
   sign_out: () => {
     signedIn = false;
+    expiredLogin = null;
   },
   status: () => ({ state: "ok", text: "Up to date", lastSyncUnix: now - 120, error: null }),
   groups: () => groups,

@@ -174,6 +174,7 @@ fn main() {
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
+            auth::init(&handle);
             first_run_autostart(&handle, &ctx);
             #[cfg(debug_assertions)]
             if let Some(token) = auth::dev_token() {

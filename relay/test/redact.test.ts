@@ -12,6 +12,7 @@ describe("redact", () => {
     ["gh-token", "gho_" + "b".repeat(36)],
     ["gh-token", "ghu_" + "c".repeat(36)],
     ["gh-token", "ghs_" + "d".repeat(36)],
+    ["gh-token", "ghr_" + "e".repeat(76)],
     ["aws-access-key", "AKIA" + "Q".repeat(16)],
     ["slack-token", "xoxb-1234567890-abcdef"],
   ];

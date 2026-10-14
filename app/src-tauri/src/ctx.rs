@@ -1,7 +1,7 @@
 //! Shared app state: paths, saved state, sign-in, the cached engine and the status line.
 use crate::config;
 use crate::guard::Error;
-use claude_sync_core::github::GitHub;
+use claude_sync_core::github::{self, GitHub, Session};
 use claude_sync_core::state::AppState;
 use claude_sync_core::watch::LocalEdit;
 use claude_sync_core::{Engine, Paths};
@@ -14,14 +14,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Clone)]
 pub struct Auth {
     pub login: String,
-    pub token: String,
+    /// The tokens; every GitHub client of this sign-in shares them (refresh, expiry).
+    pub session: Arc<Session>,
 }
 
 /// What the tray's status line and the UI header show.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
-    /// `signedOut`, `paused`, `syncing`, `ok`, `error` or `idle`.
+    /// `signedOut`, `expired`, `paused`, `syncing`, `ok`, `error` or `idle`.
     pub state: &'static str,
     pub text: String,
     pub last_sync_unix: Option<u64>,
@@ -76,6 +77,8 @@ pub struct Ctx {
     pub paths: Paths,
     state: Mutex<AppState>,
     auth: Mutex<Option<Auth>>,
+    /// The login whose sign-in GitHub stopped accepting. Set while signed out that way.
+    expired: Mutex<Option<String>>,
     engine: Mutex<Option<Arc<Engine>>>,
     status: Mutex<Status>,
     /// Serialises sync passes (loop, tray, UI).
@@ -115,17 +118,28 @@ impl Ctx {
         } else {
             Ok(None)
         };
-        let auth = match keychain {
-            Ok(a) => a.map(|(login, token)| Auth { login, token }),
+        let (auth, expired) = match keychain {
+            Ok(Some((login, tokens))) => (
+                Some(Auth {
+                    login,
+                    session: crate::auth::new_session(tokens, true),
+                }),
+                None,
+            ),
+            // Signed in before (sign-out clears the login) but the keychain has no tokens:
+            // the sign-in expired.
+            Ok(None) if use_keychain => (None, state.login.clone()),
+            Ok(None) => (None, None),
             Err(e) => {
                 tracing::warn!("could not read the sign-in from the keychain: {e}");
-                None
+                (None, None)
             }
         };
         Self {
             paths,
             state: Mutex::new(state),
             auth: Mutex::new(auth),
+            expired: Mutex::new(expired),
             engine: Mutex::new(None),
             status: Mutex::new(Status::default()),
             sync_lock: tokio::sync::Mutex::new(()),
@@ -157,9 +171,38 @@ impl Ctx {
         lock(&self.auth).as_ref().map(|a| a.login.clone())
     }
 
+    /// Sign in or out. Either way the sign-in is no longer "expired".
     pub fn set_auth(&self, auth: Option<Auth>) {
         *lock(&self.auth) = auth;
+        *lock(&self.expired) = None;
         *lock(&self.engine) = None;
+    }
+
+    /// The login of `session` when it is the current sign-in (not one replaced since).
+    pub fn current_login(&self, session: &Session) -> Option<String> {
+        lock(&self.auth)
+            .as_ref()
+            .filter(|a| std::ptr::eq(Arc::as_ptr(&a.session), session))
+            .map(|a| a.login.clone())
+    }
+
+    /// `session` expired: sign out without forgetting the login or the groups. Returns the
+    /// login, or `None` when `session` is no longer the current sign-in.
+    pub fn expire(&self, session: &Session) -> Option<String> {
+        let mut auth = lock(&self.auth);
+        let login = auth
+            .as_ref()
+            .filter(|a| std::ptr::eq(Arc::as_ptr(&a.session), session))
+            .map(|a| a.login.clone())?;
+        *auth = None;
+        *lock(&self.expired) = Some(login.clone());
+        *lock(&self.engine) = None;
+        Some(login)
+    }
+
+    /// The login whose sign-in expired, while signed out that way.
+    pub fn expired_login(&self) -> Option<String> {
+        lock(&self.expired).clone()
     }
 
     pub fn poll_seconds(&self) -> u64 {
@@ -193,7 +236,7 @@ impl Ctx {
         let auth = self.auth().ok_or_else(|| "Not signed in".to_string())?;
         let engine = Arc::new(Engine::new(
             self.paths.clone(),
-            GitHub::new(auth.token),
+            GitHub::with_session(auth.session, github::API),
             auth.login,
             self.device_name(),
         ));

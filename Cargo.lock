@@ -629,7 +629,7 @@ dependencies = [
 
 [[package]]
 name = "claude-sync-app"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arboard",
@@ -659,7 +659,7 @@ dependencies = [
 
 [[package]]
 name = "claude-sync-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
