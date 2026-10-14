@@ -477,6 +477,12 @@ impl Engine {
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
         let dir = self.paths.claude_home.join("skills").join(skill);
+        if !dir.join("SKILL.md").is_file() {
+            return Err(Error::Invalid(format!(
+                "{} has no SKILL.md, so it is not a skill",
+                dir.display()
+            )));
+        }
         let files: Changes = read_tree(&dir)?
             .into_iter()
             .map(|(rel, bytes)| (format!("{prefix}{rel}"), Some(bytes)))
@@ -1920,6 +1926,14 @@ mod tests {
             assert!(bo.engine.share_skill(&id, bad).await.is_err(), "{bad:?}");
         }
         assert!(bo.engine.share_skill(&id, "missing").await.is_err());
+
+        // Claude Code's `synced` folder holds account skills one level down: not a skill.
+        let synced = bo.engine.paths.claude_home.join("skills").join("synced");
+        std::fs::create_dir_all(synced.join("org").join("pdf")).unwrap();
+        std::fs::write(synced.join("org").join("pdf").join("SKILL.md"), "pdf\n").unwrap();
+        let err = bo.engine.share_skill(&id, "synced").await.unwrap_err();
+        assert!(err.to_string().contains("no SKILL.md"), "{err}");
+        assert!(!repo.files().keys().any(|p| p.starts_with("skills/synced/")));
     }
 
     #[tokio::test]

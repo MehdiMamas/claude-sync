@@ -240,7 +240,9 @@ pub fn group_contents(ctx: CtxState, group: GroupId) -> Res<GroupContents> {
 }
 
 /// The user's own skill folders in `~/.claude/skills`, for the "Share one of your skills" picker.
-/// Skills a group put there are left out: they are shared already.
+/// Skills a group put there are left out: they are shared already. So are folders without a
+/// `SKILL.md` of their own, such as `synced`, where Claude Code keeps the skills of the
+/// claude.ai account in one subfolder per organization.
 #[tauri::command]
 pub fn local_skills(ctx: CtxState) -> Res<Vec<String>> {
     let manifest = Manifest::load(&ctx.paths).map_err(guard::logged("read the manifest"))?;
@@ -252,6 +254,7 @@ pub fn local_skills(ctx: CtxState) -> Res<Vec<String>> {
     let mut names: Vec<String> = rd
         .flatten()
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter(|e| e.path().join("SKILL.md").is_file())
         .filter_map(|e| e.file_name().into_string().ok())
         .filter(|n| !n.starts_with('.') && !group_managed(&manifest, n))
         .collect();
