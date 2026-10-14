@@ -50,6 +50,7 @@ agents/*.md             shared subagents
 commands/*.md           shared slash commands
 output-styles/*.md      shared output styles
 plugins/<marketplace>/  shared plugin marketplaces (below)
+schedules.json          scheduled Claude Code jobs (§16); repo only, never placed in ~/.claude
 ```
 
 `claude-sync.json`:
@@ -154,7 +155,10 @@ Ported from v0 (`lib/secrets.sh`, `SPEC.md` §7): `github_pat_…`, `sk-ant-…`
   groups/<owner>__<repo>/base/   base snapshot (§6)
   groups/<owner>__<repo>/CLAUDE.md
   marketplaces/<name>/   plugin marketplaces bundled in a group repo (§4, §7)
-  conflicts/  backups/  logs/
+  jobs.json              per job: group, accepted hash, on/off, claude path, registered task (§16)
+  jobs/<id>/             run lock and last-run.json of a job (§16)
+  plugins.json           group plugin installs: what was last done, warnings (§17)
+  conflicts/  backups/  logs/   (logs/jobs/<id>/<UTC stamp>.log: job output, §16)
 ```
 
 v0 used `~/.claude-sync/` as a git clone of the personal repo. The app checks for a `.git` folder there first and, if found, leaves it alone and stores its own state in `~/.claude-sync/app/` until personal sync is migrated.
@@ -163,7 +167,7 @@ v0 used `~/.claude-sync/` as a git clone of the personal repo. The app checks fo
 
 - **Tauri 2**, Rust backend plus a plain TypeScript UI. Tray icon with: status, Sync now, Open, Pause, Send feedback, Quit. Single instance. Starts at login (autostart plugin, on by default, can be turned off).
 - Closing the window destroys the webview, so the idle app is just the Rust process (target: under 30 MB RAM idle, under 15 MB installer).
-- Screens: Sign in (device code), Groups (list, status, last sync), Group (members, invite by GitHub login, pending invitations, recent changes, conflicts, leave), Settings (device name, poll interval, start at login, pause, personal memory §16), Feedback.
+- Screens: Sign in (device code), Groups (list, status, last sync), Group (what the group gives this device, plugins that failed to install (§18), scheduled jobs (§17), members, invite by GitHub login, pending invitations, recent changes, conflicts, leave), Settings (device name, poll interval, start at login, pause, personal memory §16), Feedback.
 - Logs: `tracing` to `~/.claude-sync/logs/claude-sync.log`, rotated daily, 7 kept, redacted (§9).
 
 ## 12. Relay (Vercel, free tier)
@@ -259,3 +263,49 @@ Never synced, and reported in Settings as "stays on this device": a file over 25
 ```
 
 The v0 bash CLI's personal repo (§10) is not migrated.
+
+## 17. Scheduled jobs
+
+A group can ask Claude Code to run a prompt on a schedule on each member's device, for example a twice-weekly refresh of everyone's setup. Code: `crates/core/src/jobs/` (format, consent, reconcile, OS layer, runner), `app/src-tauri/src/jobs.rs` (commands, headless subcommands, notification).
+
+**Format.** Optional `schedules.json` at the repo root, versioned like the other repo files (repo only: it is read from the base snapshot and never placed in `~/.claude`).
+
+```json
+{"jobs":[{"id":"setup-scout","title":"Claude setup refresh","cron":"17 10 * * 1,4",
+  "prompt":"/setup-scout:setup-scout unattended","cwd":"~","permissionMode":"bypassPermissions",
+  "timeoutMinutes":60,"report":"~/.claude/setup-scout/reports/latest.md","args":["--chrome"]}]}
+```
+
+Strict validation; a bad job is skipped and listed on the group screen, never half-registered:
+
+- `id` matches `^[a-z0-9][a-z0-9-]{0,40}$`. Ids are global on a device (they name the OS task): if two groups use one id, the first joined group keeps it.
+- `cron` has 5 fields. Minute and hour are numbers or comma lists; day of month and month are `*`; day of week is `*` or 0-6 lists and ranges. Times are local. The screen shows it in words ("Mon and Thu at 10:17").
+- `permissionMode` is one of `default`, `acceptEdits`, `plan`, `bypassPermissions`.
+- `cwd` and `report` are `~` or `~/...` with no `..`.
+- `timeoutMinutes` 1 to 240, default 60. `prompt` non-empty, at most 4 KiB. At most 20 jobs.
+- `args` (optional) are extra `claude` options, passed after the prompt and before `--permission-mode`. Allowlist only: `--chrome` (Claude in Chrome tools, which `claude -p` lacks otherwise), `--model <id>` and `--effort <low|medium|high|xhigh|max>`, each at most once. Any other option is rejected, because flags such as `--dangerously-skip-permissions`, `--settings` or `--mcp-config` would get around the permission mode the member accepted. No shell is involved: arguments go to `claude` as they are.
+
+**Consent.** Nothing is registered until the member accepts the job on the group screen, which shows the full prompt, the permission mode (`bypassPermissions` in warning style), the folder and the schedule. Everyone accepts, the host included. The acceptance stored in `jobs.json` is a SHA-256 of `[cron, prompt, cwd, permissionMode, timeoutMinutes, args]`; any change revokes it and unregisters the task until the member accepts the new version. The runner checks the hash again before every run. A per-job toggle turns an accepted job off (unregisters it) and on.
+
+**Reconcile.** After every sync, at app start (checking that the tasks still exist) and after accept, toggle or leave: register accepted and enabled jobs, unregister the rest, drop the records of left groups. A group whose `schedules.json` can't be read keeps its tasks.
+
+**Runner.** The task runs the app binary headless: `claude-sync run-job <owner/repo> <id>` (no tray, no single-instance check; "Run now" adds `--now`). It takes `jobs/<id>/lock` (a lock older than the timeout plus 5 minutes is stale), skips with `skipped: offline` when `HEAD https://api.github.com` fails, and runs `claude -p <prompt> [args] --permission-mode <mode>` in `cwd` with `CREATE_NO_WINDOW`, killing the process tree at the timeout. `claude` is resolved at registration (`where.exe` on Windows, an `.exe` before a `.cmd`; known install folders and the login shell elsewhere) and again if that path is gone. Output goes to `logs/jobs/<id>/<UTC stamp>.log` (20 kept), the outcome to `jobs/<id>/last-run.json`. If the run wrote the report file, a desktop notification says so; clicking it opens the report on Windows. The task does not get `CLAUDE_SYNC_HOME`, so it always uses the default `~/.claude-sync`.
+
+**OS layer** (behind the `Scheduler` trait; tests use a fake and never register real tasks):
+
+- Windows: `schtasks /Create /F /TN "\claude-sync\<id>" /XML <file>`. Weekly calendar triggers, start when available, run on battery, `IgnoreNew` for overlapping runs, execution limit = timeout + 10 minutes, interactive token of the current user, hidden. `schtasks /Delete /F` to remove.
+- macOS: `~/Library/LaunchAgents/dev.claude-sync.job.<id>.plist` with `StartCalendarInterval`, then `launchctl bootout` / `bootstrap gui/<uid>`.
+- Linux: not supported yet; the screen says so and Accept is disabled.
+- Debug builds use `\claude-sync-dev\` and `dev.claude-sync.dev-job.`, so a dev run never touches the installed app's tasks. The ignored integration test uses `\claude-sync-test-<random hex>\`.
+
+**Uninstall.** The NSIS pre-uninstall hook (`app/src-tauri/windows/hooks.nsh`) runs `claude-sync.exe remove-jobs`, which deletes the tasks and keeps the acceptances, so a reinstall registers them again. Updates run no uninstaller, and the hook skips `/UPDATE` anyway. On macOS, deleting the app leaves the LaunchAgents; their runs fail until removed.
+
+## 18. Group plugin install
+
+Placing a group's marketplace (§7) and its `enabledPlugins` (§8) is not enough: Claude Code loads only plugins installed in its plugin cache. So after a sync whose apply changed a group's bundled marketplaces (fingerprint) or added a plugin the group turns on (`true` in the group's `settings.shared.json` and in the local `settings.json`), the app runs in the background, through the same `claude` resolver as §16:
+
+1. `claude plugin marketplace update <mp>` once per changed marketplace;
+2. `claude plugin install <name>@<mp> --scope user` for each group-enabled plugin that `claude plugin list --json` does not show;
+3. `claude plugin update <name>@<mp>` when the plugin's marketplace entry or declared version changed.
+
+Each command has a 2-minute timeout and no console window; its output goes to the app log, redacted (§9). Nothing is uninstalled, and `enabledPlugins` handling stays as in §8. `-y` is never passed: a plugin that asks for confirmation is reported as needing it. Failures become warnings on the group screen ("couldn't install X: reason") with a Retry, and never fail the sync. Without `claude` the screen says "Claude Code not found" and the next sync tries again. State is in `plugins.json`; the CLI sits behind the `PluginCli` trait, and tests use a fake.

@@ -16,6 +16,10 @@ pub const GITHUB_CLIENT_ID: &str = match option_env!("CLAUDE_SYNC_GITHUB_CLIENT_
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// `identifier` in tauri.conf.json: the app id of notifications sent outside Tauri (the job
+/// runner).
+pub const IDENTIFIER: &str = "com.mehdimamas.claudesync";
+
 pub const DEFAULT_POLL_SECONDS: u64 = 60;
 pub const MIN_POLL_SECONDS: u64 = 15;
 pub const INVITATIONS_EVERY_SECONDS: u64 = 5 * 60;
@@ -35,4 +39,14 @@ pub fn relay(path: &str) -> String {
 
 pub fn os_label() -> String {
     format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn identifier_matches_the_tauri_config() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(conf["identifier"], super::IDENTIFIER);
+    }
 }

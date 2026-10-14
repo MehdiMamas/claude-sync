@@ -37,3 +37,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
+tauri-winrt-notification = "0.8"
+
+[target.'cfg(not(windows))'.dependencies]
+notify-rust = "4.18"

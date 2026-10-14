@@ -108,6 +108,7 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
             if report.groups.iter().any(|g| g.apply.plugins_changed) {
                 plugins_changed(app);
             }
+            crate::jobs::after_sync(app);
             if errors.is_empty() {
                 publish(
                     app,

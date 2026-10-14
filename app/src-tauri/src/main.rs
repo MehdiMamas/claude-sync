@@ -8,6 +8,7 @@ mod config;
 mod ctx;
 mod feedback;
 mod guard;
+mod jobs;
 mod notify;
 mod personal;
 mod tray;
@@ -21,17 +22,30 @@ use tauri::{RunEvent, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 /// Log to `<state>/logs` (§11). If that fails the app still runs, logging to stderr.
-fn init_logging(paths: &Paths) {
+/// The returned guard flushes the log when dropped.
+fn init_logging(paths: &Paths) -> Option<Box<dyn std::any::Any + Send>> {
     match claude_sync_core::logging::init(paths) {
-        // The guard flushes the log on drop; it must live as long as the process.
-        Ok(log_guard) => std::mem::forget(log_guard),
+        Ok(log_guard) => Some(log_guard),
         Err(e) => {
             let _ = tracing_subscriber::fmt()
                 .with_writer(std::io::stderr)
                 .with_ansi(false)
                 .try_init();
             tracing::warn!("could not open the log file, logging to stderr: {e}");
+            None
         }
+    }
+}
+
+/// The headless subcommands (§16): started by the OS scheduler, "Run now" and the
+/// uninstaller. They run before Tauri starts, so there is no tray, no window and no
+/// single-instance check. `None`: start the app.
+fn headless(paths: &Paths) -> Option<i32> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some(claude_sync_core::jobs::RUN_JOB_ARG) => Some(jobs::run_job_main(paths, &args[1..])),
+        Some(jobs::REMOVE_JOBS_ARG) => Some(jobs::remove_jobs_main(paths)),
+        _ => None,
     }
 }
 
@@ -65,7 +79,13 @@ fn main() {
             std::process::exit(1);
         }
     };
-    init_logging(&paths);
+    let log_guard = init_logging(&paths);
+    if let Some(code) = headless(&paths) {
+        drop(log_guard);
+        std::process::exit(code);
+    }
+    // The guard must live as long as the app.
+    std::mem::forget(log_guard);
     let ctx = Arc::new(Ctx::load(paths));
     tracing::info!(version = config::VERSION, state = %ctx.paths.state_dir.display(), "claude-sync starting");
     let background_start = std::env::args().any(|a| a == config::BACKGROUND_ARG);
@@ -125,6 +145,13 @@ fn main() {
             personal::personal_set_new_devices_join,
             personal::personal_remove_device,
             personal::personal_dismiss_offer,
+            commands::jobs,
+            commands::accept_job,
+            commands::set_job_enabled,
+            commands::run_job_now,
+            commands::open_job_file,
+            commands::plugin_warnings,
+            commands::retry_plugins,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -136,6 +163,7 @@ fn main() {
             tray::build(&handle)?;
             background::refresh_status(&handle);
             background::start(&handle);
+            jobs::reconcile_soon(&handle, true);
             if !background_start || ctx.auth().is_none() {
                 window::open(&handle, None);
             } else {

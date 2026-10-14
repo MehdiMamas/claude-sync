@@ -28,6 +28,11 @@ pub const MAX_PROMPT: usize = 4096;
 pub const MAX_JOBS: usize = 20;
 pub const DEFAULT_TIMEOUT: u32 = 60;
 pub const MAX_TIMEOUT: u32 = 240;
+/// The `claude` options a job may add after its prompt. Anything else could undo the
+/// permission mode (`--dangerously-skip-permissions`, `--settings`, `--mcp-config`, ...), so
+/// this is an allowlist, not a denylist.
+pub const ALLOWED_ARGS: [&str; 3] = ["--chrome", "--model", "--effort"];
+pub const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 /// The subcommand of the app binary a task runs: `claude-sync run-job <owner/repo> <id>`.
 pub const RUN_JOB_ARG: &str = "run-job";
 
@@ -48,6 +53,8 @@ pub struct Job {
     pub timeout_minutes: u32,
     pub report: Option<String>,
     pub report_path: Option<PathBuf>,
+    /// Extra `claude` options, passed after the prompt (see [`valid_args`]).
+    pub args: Vec<String>,
 }
 
 impl Job {
@@ -58,7 +65,8 @@ impl Job {
             self.prompt,
             self.cwd,
             self.permission_mode,
-            self.timeout_minutes
+            self.timeout_minutes,
+            self.args
         ]);
         crate::apply::sha256_hex(&serde_json::to_vec(&fields).expect("serializes"))
     }
@@ -101,6 +109,48 @@ struct RawJob {
     timeout_minutes: Option<u64>,
     #[serde(default)]
     report: Option<String>,
+    #[serde(default)]
+    args: Option<Vec<String>>,
+}
+
+/// `args`: only `--chrome`, `--model <id>` and `--effort <level>`, each at most once.
+pub fn valid_args(args: &[String]) -> Result<(), String> {
+    let mut seen = Vec::new();
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        if !ALLOWED_ARGS.contains(&flag.as_str()) {
+            return Err(format!(
+                "args: {flag:?} is not allowed; only --chrome, --model <id> and --effort <level>"
+            ));
+        }
+        if seen.contains(&flag) {
+            return Err(format!("args: {flag} is given twice"));
+        }
+        seen.push(flag);
+        match flag.as_str() {
+            "--model" => {
+                let v = it.next().map(String::as_str).unwrap_or("");
+                let ok = (1..=64).contains(&v.len())
+                    && v.as_bytes()[0].is_ascii_alphanumeric()
+                    && v.bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"-._[]".contains(&c));
+                if !ok {
+                    return Err(format!("args: --model needs a model id, not {v:?}"));
+                }
+            }
+            "--effort" => {
+                let v = it.next().map(String::as_str).unwrap_or("");
+                if !EFFORTS.contains(&v) {
+                    return Err(format!(
+                        "args: --effort {v:?} must be one of {}",
+                        EFFORTS.join(", ")
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 pub fn valid_id(id: &str) -> bool {
@@ -180,6 +230,8 @@ fn validate(group: &GroupId, raw: RawJob, home: &Path) -> Result<Job, String> {
     if report_path.as_deref() == Some(home) {
         return Err("report must be a file, not ~".into());
     }
+    let args = raw.args.unwrap_or_default();
+    valid_args(&args)?;
     let title = raw
         .title
         .map(|t| t.trim().to_string())
@@ -198,6 +250,7 @@ fn validate(group: &GroupId, raw: RawJob, home: &Path) -> Result<Job, String> {
         timeout_minutes,
         report: raw.report,
         report_path,
+        args,
     })
 }
 
@@ -348,6 +401,10 @@ pub struct JobView {
     pub permission_mode: String,
     pub timeout_minutes: u32,
     pub report: Option<String>,
+    /// Extra `claude` options, shown on the accept card.
+    pub args: Vec<String>,
+    /// What "Accept" sends back: the consent hash of the version shown.
+    pub hash: String,
     /// Accepted in this version.
     pub accepted: bool,
     /// Accepted before, but the job changed since.
@@ -465,7 +522,9 @@ impl Jobs<'_> {
                     cwd: job.cwd.clone(),
                     permission_mode: job.permission_mode.clone(),
                     timeout_minutes: job.timeout_minutes,
+                    args: job.args.clone(),
                     report: job.report.clone(),
+                    hash: job.consent_hash(),
                     accepted,
                     changed: !accepted && rec.is_some_and(|r| r.accepted.is_some()),
                     enabled: rec.is_none_or(|r| r.enabled),
@@ -776,7 +835,7 @@ pub(crate) mod tests {
         GroupId::new("acme", name)
     }
 
-    pub const SCOUT: &str = r#"{"jobs":[{"id":"setup-scout","title":"Claude setup refresh","cron":"17 10 * * 1,4","prompt":"/setup-scout:setup-scout unattended","cwd":"~","permissionMode":"bypassPermissions","timeoutMinutes":60,"report":"~/.claude/setup-scout/reports/latest.md"}]}"#;
+    pub const SCOUT: &str = r#"{"jobs":[{"id":"setup-scout","title":"Claude setup refresh","cron":"17 10 * * 1,4","prompt":"/setup-scout:setup-scout unattended","cwd":"~","permissionMode":"bypassPermissions","timeoutMinutes":60,"report":"~/.claude/setup-scout/reports/latest.md","args":["--chrome"]}]}"#;
 
     fn hash_of(e: &Env, g: &GroupId, id: &str) -> String {
         e.jobs().find(g, id).unwrap().consent_hash()
@@ -881,6 +940,48 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn args_allowlist() {
+        let ok = |a: &[&str]| valid_args(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        for good in [
+            &[][..],
+            &["--chrome"],
+            &["--chrome", "--model", "claude-opus-5-5", "--effort", "high"],
+            &["--model", "sonnet[1m]"],
+            &["--effort", "max", "--chrome"],
+        ] {
+            assert!(ok(good).is_ok(), "{good:?}");
+        }
+        for (bad, why) in [
+            (&["--dangerously-skip-permissions"][..], "not allowed"),
+            (&["--permission-mode", "plan"], "not allowed"),
+            (&["--mcp-config", "x.json"], "not allowed"),
+            (&["--settings", "{}"], "not allowed"),
+            (&["--model=opus"], "not allowed"),
+            (&["chrome"], "not allowed"),
+            (&["--chrome", "--chrome"], "twice"),
+            (&["--model"], "model id"),
+            (&["--model", "--chrome"], "model id"),
+            (&["--model", "a;rm -rf ~"], "model id"),
+            (&["--model", "-x"], "model id"),
+            (&["--effort", "huge"], "one of"),
+            (&["--effort"], "one of"),
+        ] {
+            let e = ok(bad).unwrap_err();
+            assert!(e.contains(why), "{bad:?}: {e}");
+        }
+        let (jobs, problems) = parse_file(
+            &group("a"),
+            br#"{"jobs":[{"id":"a","cron":"0 9 * * *","prompt":"p","args":["--chrome","--model","opus"]},
+                {"id":"b","cron":"0 9 * * *","prompt":"p","args":["--add-dir","/"]},
+                {"id":"c","cron":"0 9 * * *","prompt":"p","args":"--chrome"}]}"#,
+            Path::new("/h"),
+        );
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].args, ["--chrome", "--model", "opus"]);
+        assert_eq!(problems.len(), 2, "{problems:?}");
+    }
+
+    #[test]
     fn home_paths() {
         let h = Path::new("/h");
         assert_eq!(resolve_home_path("~", h).unwrap(), h);
@@ -933,6 +1034,7 @@ pub(crate) mod tests {
             ("cwd", "~/x".into()),
             ("permissionMode", "bypassPermissions".into()),
             ("timeoutMinutes", 31.into()),
+            ("args", serde_json::json!(["--chrome"])),
         ] {
             let mut j = base.clone();
             j[k] = v;

@@ -11,6 +11,10 @@ use std::time::Duration;
 pub const TASK_FOLDER: &str = r"\claude-sync\";
 /// launchd labels are `dev.claude-sync.job.<id>`.
 pub const LAUNCHD_PREFIX: &str = "dev.claude-sync.job.";
+/// Debug builds of the app use these, so a dev run never replaces or removes the tasks of
+/// the installed app.
+pub const TASK_FOLDER_DEV: &str = r"\claude-sync-dev\";
+pub const LAUNCHD_PREFIX_DEV: &str = "dev.claude-sync.dev-job.";
 /// The task may run this much longer than the job's own timeout before the OS stops it.
 pub const OS_GRACE_MINUTES: u32 = 10;
 
@@ -65,13 +69,22 @@ pub trait Scheduler: Send + Sync {
     fn exists(&self, id: &str) -> crate::Result<bool>;
 }
 
-/// The scheduler of this OS.
-pub fn system(home: &Path) -> Box<dyn Scheduler> {
+/// The scheduler of this OS; `dev` (debug builds) uses its own folder and labels.
+pub fn system(home: &Path, dev: bool) -> Box<dyn Scheduler> {
     if cfg!(windows) {
-        Box::new(TaskScheduler::new(TASK_FOLDER))
+        Box::new(TaskScheduler::new(if dev {
+            TASK_FOLDER_DEV
+        } else {
+            TASK_FOLDER
+        }))
     } else if cfg!(target_os = "macos") {
         Box::new(Launchd {
             agents_dir: home.join("Library").join("LaunchAgents"),
+            prefix: if dev {
+                LAUNCHD_PREFIX_DEV
+            } else {
+                LAUNCHD_PREFIX
+            },
         })
     } else {
         Box::new(Unsupported)
@@ -317,7 +330,7 @@ impl Scheduler for TaskScheduler {
 
 /// The launchd agent of `task`: one `StartCalendarInterval` entry per weekday and time.
 /// launchd runs a missed interval when the Mac wakes up.
-pub fn launchd_plist(task: &TaskSpec) -> String {
+pub fn launchd_plist(task: &TaskSpec, prefix: &str) -> String {
     let mut args = String::new();
     for a in std::iter::once(task.program.to_string_lossy().into_owned()).chain(task.args.clone()) {
         args.push_str(&format!("\t\t<string>{}</string>\n", xml_escape(&a)));
@@ -346,7 +359,7 @@ pub fn launchd_plist(task: &TaskSpec) -> String {
 <plist version=\"1.0\">\n\
 <dict>\n\
 \t<key>Label</key>\n\
-\t<string>{LAUNCHD_PREFIX}{id}</string>\n\
+\t<string>{prefix}{id}</string>\n\
 \t<key>ProgramArguments</key>\n\
 \t<array>\n\
 {args}\t</array>\n\
@@ -364,11 +377,13 @@ pub fn launchd_plist(task: &TaskSpec) -> String {
 /// launchd agents in `~/Library/LaunchAgents`, loaded with `launchctl bootstrap gui/<uid>`.
 pub struct Launchd {
     pub agents_dir: PathBuf,
+    /// [`LAUNCHD_PREFIX`], or [`LAUNCHD_PREFIX_DEV`].
+    pub prefix: &'static str,
 }
 
 impl Launchd {
     fn plist(&self, id: &str) -> PathBuf {
-        self.agents_dir.join(format!("{LAUNCHD_PREFIX}{id}.plist"))
+        self.agents_dir.join(format!("{}{id}.plist", self.prefix))
     }
 
     fn domain() -> crate::Result<String> {
@@ -393,9 +408,9 @@ impl Scheduler for Launchd {
     fn register(&self, task: &TaskSpec) -> crate::Result<()> {
         let domain = Self::domain()?;
         let file = self.plist(&task.id);
-        crate::state::write_atomic(&file, launchd_plist(task).as_bytes())?;
+        crate::state::write_atomic(&file, launchd_plist(task, self.prefix).as_bytes())?;
         // A loaded agent keeps its old definition until it is booted out.
-        let _ = Self::launchctl(&["bootout", &format!("{domain}/{LAUNCHD_PREFIX}{}", task.id)]);
+        let _ = Self::launchctl(&["bootout", &format!("{domain}/{}{}", self.prefix, task.id)]);
         let out = Self::launchctl(&["bootstrap", &domain, &file.to_string_lossy()])?;
         if !out.ok() {
             return Err(failed("launchctl bootstrap", &out));
@@ -405,7 +420,7 @@ impl Scheduler for Launchd {
 
     fn unregister(&self, id: &str) -> crate::Result<()> {
         let domain = Self::domain()?;
-        let _ = Self::launchctl(&["bootout", &format!("{domain}/{LAUNCHD_PREFIX}{id}")]);
+        let _ = Self::launchctl(&["bootout", &format!("{domain}/{}{id}", self.prefix)]);
         match std::fs::remove_file(self.plist(id)) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
             _ => Ok(()),
@@ -557,8 +572,8 @@ pub(crate) mod tests {
 </dict>
 </plist>
 ";
-        assert_eq!(launchd_plist(&task), want);
-        let daily = launchd_plist(&spec("0 8,20 * * *"));
+        assert_eq!(launchd_plist(&task, LAUNCHD_PREFIX), want);
+        let daily = launchd_plist(&spec("0 8,20 * * *"), LAUNCHD_PREFIX);
         assert_eq!(daily.matches("<dict>").count(), 3);
         assert!(!daily.contains("Weekday"));
     }
@@ -588,7 +603,7 @@ pub(crate) mod tests {
             nanos,
             std::process::id() & 0xffff
         );
-        assert!(!folder.starts_with(TASK_FOLDER));
+        assert!(!folder.starts_with(TASK_FOLDER) && !folder.starts_with(TASK_FOLDER_DEV));
         let s = TaskScheduler::new(&folder);
         let mut task = spec("17 10 * * 1,4");
         task.id = "round-trip".into();

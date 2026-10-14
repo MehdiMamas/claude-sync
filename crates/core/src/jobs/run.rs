@@ -1,6 +1,6 @@
 //! The runner behind `claude-sync run-job <owner/repo> <id>` (§16). It checks the
 //! acceptance again, takes the job's lock, skips when offline, runs
-//! `claude -p <prompt> --permission-mode <mode>` in the job's folder without a window, kills
+//! `claude -p <prompt> [args] --permission-mode <mode>` in the job's folder without a window, kills
 //! it at the timeout, and keeps the output and the outcome.
 use super::{job_dir, log_dir, Job, Jobs, JobsState};
 use crate::claude_cli;
@@ -247,23 +247,23 @@ impl Jobs<'_> {
         last.log = Some(log_path);
         let inv = Invocation {
             program: claude,
-            args: vec![
-                "-p".into(),
-                job.prompt.clone(),
-                "--permission-mode".into(),
-                job.permission_mode.clone(),
-            ],
+            args: ["-p".to_string(), job.prompt.clone()]
+                .into_iter()
+                .chain(job.args.iter().cloned())
+                .chain(["--permission-mode".to_string(), job.permission_mode.clone()])
+                .collect(),
             cwd: job.cwd_path.clone(),
             timeout: Duration::from_secs(u64::from(job.timeout_minutes) * 60),
         };
         let _ = writeln!(
             log,
-            "[claude-sync] job {} of {} started {} ({}): {} -p <prompt> --permission-mode {} in {}\n",
+            "[claude-sync] job {} of {} started {} ({}): {} -p <prompt> {}--permission-mode {} in {}\n",
             job.id,
             job.group,
             utc_stamp(start),
             if manual { "run now" } else { "scheduled" },
             inv.program.display(),
+            job.args.iter().map(|a| format!("{a} ")).collect::<String>(),
             job.permission_mode,
             job.cwd_path.display(),
         );
@@ -361,6 +361,7 @@ mod tests {
             [
                 "-p",
                 "/setup-scout:setup-scout unattended",
+                "--chrome",
                 "--permission-mode",
                 "bypassPermissions"
             ]
