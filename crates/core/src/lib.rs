@@ -2,6 +2,7 @@
 //! Design: docs/architecture.md. Section numbers below (§N) refer to it.
 
 pub mod apply;
+pub mod contents;
 pub mod engine;
 pub mod error;
 pub mod github;
