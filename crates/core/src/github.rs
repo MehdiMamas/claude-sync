@@ -14,9 +14,19 @@ pub const SCOPES: &str = "repo read:user";
 pub const USER_AGENT: &str = "claude-sync";
 const API_VERSION: &str = "2022-11-28";
 
+/// A client builder with TLS ready. reqwest is built without a default crypto provider
+/// (as tauri-plugin-updater uses it), so install ring once before building any client.
+pub fn client_builder() -> reqwest::ClientBuilder {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        // Err means another thread installed one first, which is just as good.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+    reqwest::Client::builder()
+}
+
 /// The HTTP client every request goes through.
 pub fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    client_builder()
         .user_agent(USER_AGENT)
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(60))

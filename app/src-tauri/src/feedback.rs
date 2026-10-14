@@ -205,7 +205,7 @@ async fn send(ctx: &Ctx, payload: &Payload) -> Result<FeedbackResult, SendError>
     let auth = ctx
         .auth()
         .ok_or_else(|| SendError::Rejected("sign in to send feedback".into()))?;
-    let http = reqwest::Client::builder()
+    let http = claude_sync_core::github::client_builder()
         .timeout(Duration::from_secs(60))
         .build()
         .map_err(|e| SendError::Offline(e.to_string()))?;
