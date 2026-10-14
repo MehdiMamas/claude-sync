@@ -124,6 +124,8 @@ fn main() {
             commands::group_contents,
             commands::local_skills,
             commands::share_skill,
+            commands::claude_md_preview,
+            commands::share_claude_md,
             commands::recent_commits,
             commands::sync_now,
             commands::get_settings,

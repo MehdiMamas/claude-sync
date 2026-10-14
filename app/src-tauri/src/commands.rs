@@ -10,7 +10,9 @@ use crate::notify;
 use crate::updates::{self, UpdateInfo};
 use claude_sync_core::apply::Manifest;
 use claude_sync_core::contents::{self, GroupContents};
-use claude_sync_core::engine::{CommitInfo, GroupStatus, SyncReport};
+use claude_sync_core::engine::{
+    ClaudeMdShare, ClaudeMdShared, CommitInfo, GroupStatus, SyncReport,
+};
 use claude_sync_core::github::Invitation;
 use claude_sync_core::jobs::JobsOverview;
 use claude_sync_core::notifications::{self, Notification};
@@ -97,6 +99,7 @@ pub async fn create_group(
     ctx: CtxState<'_>,
     name: String,
     repo: Option<String>,
+    claude_md: Option<ClaudeMdShare>,
 ) -> Res<GroupStatus> {
     let name = name.trim();
     if name.is_empty() {
@@ -108,7 +111,7 @@ pub async fn create_group(
         .unwrap_or_else(|| group::DEFAULT_REPO.into());
     let e = ctx.engine()?;
     let g = e
-        .create_group(name, &repo)
+        .create_group(name, &repo, claude_md.as_ref())
         .await
         .map_err(guard::logged("create group"))?;
     background::sync_soon(&app, true);
@@ -292,6 +295,31 @@ pub async fn share_skill(
         .map_err(guard::logged("share skill"))?;
     background::sync_soon(&app, true);
     Ok(())
+}
+
+/// The user's own CLAUDE.md text as a group would get it (no managed block or group imports,
+/// secrets redacted), for the "Share my CLAUDE.md" preview. Empty when there is none.
+#[tauri::command]
+pub fn claude_md_preview(ctx: CtxState) -> Res<String> {
+    let e = ctx.engine()?;
+    e.claude_md_preview()
+        .map_err(guard::logged("CLAUDE.md preview"))
+}
+
+#[tauri::command]
+pub async fn share_claude_md(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    group: GroupId,
+    share: ClaudeMdShare,
+) -> Res<ClaudeMdShared> {
+    let e = ctx.engine()?;
+    let done = e
+        .share_claude_md(&group, &share)
+        .await
+        .map_err(guard::logged("share CLAUDE.md"))?;
+    background::sync_soon(&app, true);
+    Ok(done)
 }
 
 #[tauri::command]

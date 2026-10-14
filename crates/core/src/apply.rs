@@ -1298,21 +1298,21 @@ pub(crate) fn utc_stamp() -> String {
 
 /// One `backups/<UTC time>/` folder per operation, created on the first save.
 /// A path saved twice in one operation keeps its first (original) copy.
-struct Backups {
+pub(crate) struct Backups {
     root: PathBuf,
     dir: Option<PathBuf>,
     saved: BTreeSet<String>,
 }
 
 impl Backups {
-    fn new(paths: &Paths) -> Self {
+    pub(crate) fn new(paths: &Paths) -> Self {
         Self {
             root: paths.state_dir.join("backups"),
             dir: None,
             saved: BTreeSet::new(),
         }
     }
-    fn save(&mut self, rel: &str, bytes: &[u8]) -> io::Result<()> {
+    pub(crate) fn save(&mut self, rel: &str, bytes: &[u8]) -> io::Result<()> {
         if !self.saved.insert(rel.to_string()) {
             return Ok(());
         }

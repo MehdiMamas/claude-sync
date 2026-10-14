@@ -17,6 +17,7 @@ import {
 import { avatar } from "../avatar";
 import { busy, confirmButton, errorBox, h, relTime, replace, spinner, toast } from "../dom";
 import { go, onRefresh, store } from "../store";
+import { claudeMdCard } from "./claude-md";
 import { historyCard } from "./history";
 
 function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
@@ -558,6 +559,7 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
         problemsCard(g),
         membersCard(g, load),
         shareCard(g.id),
+        claudeMdCard(g.id),
         historyCard(g.id, contents),
       );
     } catch (e) {

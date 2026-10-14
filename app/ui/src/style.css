@@ -281,6 +281,14 @@ legend {
 .check label {
   font-weight: normal;
 }
+.warn-text {
+  color: var(--warn);
+  margin: 0;
+}
+textarea.mono {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+}
 .radios {
   margin-bottom: 0.5rem;
 }
