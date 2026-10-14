@@ -468,22 +468,29 @@ pub async fn jobs(ctx: CtxState<'_>, group: GroupId) -> Res<JobsOverview> {
 /// Accept the version of a job the screen showed (`hash`), turn it on and register it.
 #[tauri::command]
 pub async fn accept_job(
-    ctx: CtxState<'_>,
+    app: AppHandle,
     group: GroupId,
     id: String,
     hash: String,
 ) -> Res<JobsOverview> {
-    app_jobs::accept(ctx.inner().clone(), group, id, hash).await
+    app_jobs::accept(app, group, id, hash).await
 }
 
 #[tauri::command]
 pub async fn set_job_enabled(
-    ctx: CtxState<'_>,
+    app: AppHandle,
     group: GroupId,
     id: String,
     enabled: bool,
 ) -> Res<JobsOverview> {
-    app_jobs::set_enabled(ctx.inner().clone(), group, id, enabled).await
+    app_jobs::set_enabled(app, group, id, enabled).await
+}
+
+/// "Run this group's jobs without asking": on accepts its new and changed jobs from now on
+/// (each one notified); off asks again for the next change.
+#[tauri::command]
+pub async fn set_jobs_auto_accept(app: AppHandle, group: GroupId, on: bool) -> Res<JobsOverview> {
+    app_jobs::set_auto_accept(app, group, on).await
 }
 
 #[tauri::command]

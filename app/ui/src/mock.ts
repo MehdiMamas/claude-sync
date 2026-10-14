@@ -145,8 +145,9 @@ const mehdiJobs: JobsOverview = {
     },
   ],
   problems: [{ group: { owner: "mehdimamas", repo: "claude-sync-data" }, id: "nightly", message: 'cron "0 3 1 * *": day of month and month must be *; only weekly schedules are supported' }],
+  autoAccept: false,
 };
-const emptyJobs: JobsOverview = { unsupported: null, jobs: [], problems: [] };
+const emptyJobs: JobsOverview = { unsupported: null, jobs: [], problems: [], autoAccept: false };
 let pluginWarnings = ["couldn't install session-manager@claude-mods: it needs your confirmation (it declares commands); install it in a terminal with claude plugin install"];
 
 function job(a: Record<string, unknown>): JobView {
@@ -192,6 +193,13 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   },
   set_job_enabled: (a) => {
     Object.assign(job(a), { enabled: a.enabled, registered: a.enabled });
+    return mehdiJobs;
+  },
+  set_jobs_auto_accept: (a) => {
+    mehdiJobs.autoAccept = a.on as boolean;
+    if (mehdiJobs.autoAccept) {
+      for (const j of mehdiJobs.jobs.filter((x) => !x.accepted)) Object.assign(j, { accepted: true, changed: false, registered: j.enabled });
+    }
     return mehdiJobs;
   },
   run_job_now: (a) => {

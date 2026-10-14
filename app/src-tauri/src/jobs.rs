@@ -3,7 +3,9 @@
 //! reconcile after every sync, join and leave, and the commands of the group screen.
 use crate::ctx::Ctx;
 use crate::guard::{self, Error};
-use claude_sync_core::jobs::{self, os, run, Jobs, JobsOverview, JobsState, ReconcileReport};
+use claude_sync_core::jobs::{
+    self, os, run, AutoAccepted, Jobs, JobsOverview, JobsState, ReconcileReport,
+};
 use claude_sync_core::plugin_install::{self, PluginCli, RealCli};
 use claude_sync_core::state::AppState;
 use claude_sync_core::{claude_cli, GroupId, Paths};
@@ -195,9 +197,11 @@ fn ctx(app: &AppHandle) -> Arc<Ctx> {
 /// Make the OS tasks match the groups (after a sync, join or leave). `verify` also checks
 /// that registered tasks still exist (at startup).
 pub fn reconcile_soon(app: &AppHandle, verify: bool) {
-    let ctx = ctx(app);
+    let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = with_jobs(&ctx.paths, "reconcile jobs", |j| j.reconcile(verify));
+        if let Ok(r) = with_jobs(&ctx(&app).paths, "reconcile jobs", |j| j.reconcile(verify)) {
+            handled(&app, r);
+        }
     });
 }
 
@@ -261,11 +265,28 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| e.to_string())?
 }
 
-/// Registration errors are shown on the job itself; this only logs them.
-fn logged(r: ReconcileReport) {
+/// Registration errors are shown on the job itself; this logs them. Jobs accepted without
+/// asking (the group's "without asking" setting) get a notification each.
+fn handled(app: &AppHandle, r: ReconcileReport) {
+    for a in &r.auto_accepted {
+        notify_auto(app, a);
+    }
     for e in r.errors {
         tracing::warn!("job registration: {e}");
     }
+}
+
+fn notify_auto(app: &AppHandle, a: &AutoAccepted) {
+    let (title, what) = if a.changed {
+        (format!("Job changed in {}", a.group), "This new version")
+    } else {
+        (format!("New job from {}", a.group), "It")
+    };
+    let body = format!(
+        "{}: {what} will run without asking, because this group's jobs are allowed. See the group's Scheduled jobs.",
+        a.title
+    );
+    crate::notify::show(app, &title, &body);
 }
 
 pub async fn list(ctx: Arc<Ctx>, group: GroupId) -> Result<JobsOverview, Error> {
@@ -273,30 +294,49 @@ pub async fn list(ctx: Arc<Ctx>, group: GroupId) -> Result<JobsOverview, Error> 
 }
 
 pub async fn accept(
-    ctx: Arc<Ctx>,
+    app: AppHandle,
     group: GroupId,
     id: String,
     hash: String,
 ) -> Result<JobsOverview, Error> {
     blocking(move || {
-        logged(with_jobs(&ctx.paths, "accept job", |j| {
-            j.accept(&group, &id, &hash)
-        })?);
+        let ctx = ctx(&app);
+        let r = with_jobs(&ctx.paths, "accept job", |j| j.accept(&group, &id, &hash))?;
+        handled(&app, r);
         overview(&ctx.paths, &group)
     })
     .await
 }
 
 pub async fn set_enabled(
-    ctx: Arc<Ctx>,
+    app: AppHandle,
     group: GroupId,
     id: String,
     enabled: bool,
 ) -> Result<JobsOverview, Error> {
     blocking(move || {
-        logged(with_jobs(&ctx.paths, "turn job on or off", |j| {
+        let ctx = ctx(&app);
+        let r = with_jobs(&ctx.paths, "turn job on or off", |j| {
             j.set_enabled(&group, &id, enabled)
-        })?);
+        })?;
+        handled(&app, r);
+        overview(&ctx.paths, &group)
+    })
+    .await
+}
+
+/// "Run this group's jobs without asking" on or off.
+pub async fn set_auto_accept(
+    app: AppHandle,
+    group: GroupId,
+    on: bool,
+) -> Result<JobsOverview, Error> {
+    blocking(move || {
+        let ctx = ctx(&app);
+        let r = with_jobs(&ctx.paths, "allow jobs without asking", |j| {
+            j.set_auto_accept(&group, on)
+        })?;
+        handled(&app, r);
         overview(&ctx.paths, &group)
     })
     .await

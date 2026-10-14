@@ -398,6 +398,13 @@ li.job .check {
 .logs.prompt {
   margin: 0.3rem 0;
 }
+.jobs-auto {
+  margin: 0.4rem 0 0.6rem;
+}
+.jobs-auto p,
+.jobs-auto .notice {
+  margin: 0.3rem 0 0;
+}
 li.job .spin {
   display: inline-block;
   vertical-align: middle;

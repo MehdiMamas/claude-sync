@@ -148,6 +148,7 @@ fn main() {
             commands::jobs,
             commands::accept_job,
             commands::set_job_enabled,
+            commands::set_jobs_auto_accept,
             commands::run_job_now,
             commands::open_job_file,
             commands::plugin_warnings,

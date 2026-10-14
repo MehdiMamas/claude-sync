@@ -283,6 +283,13 @@ function pendingJob(id: GroupId, j: JobView, unsupported: boolean, show: (o: Job
       toast(`${j.title} runs ${j.schedule}`);
     }),
   );
+  const always = h("button", { disabled: unsupported }, `Always allow jobs from ${groupKey(id)}`);
+  always.addEventListener("click", () =>
+    busy(always, "Allowing…", async () => {
+      show(await api.setJobsAutoAccept(id, true));
+      toast(`Jobs from ${groupKey(id)} now run without asking`);
+    }),
+  );
   return h(
     "li",
     { class: "job pending" },
@@ -294,7 +301,8 @@ function pendingJob(id: GroupId, j: JobView, unsupported: boolean, show: (o: Job
     j.args.length > 0 && h("p", { class: "small" }, "Claude Code options: ", h("code", null, j.args.join(" ")), j.args.includes("--chrome") && " (uses Chrome through Claude in Chrome when it is running)"),
     j.report && h("p", { class: "muted small" }, "Its report: ", h("code", null, j.report)),
     h("p", { class: "muted small" }, "It only runs on this device after you accept it. If the group changes it, it stops until you accept it again."),
-    h("div", { class: "actions" }, accept),
+    h("div", { class: "actions" }, accept, always),
+    h("p", { class: "muted small" }, `"Always allow" accepts this job and every new or changed job of ${groupKey(id)} from now on, without showing it to you first. You get a notification each time.`),
   );
 }
 
@@ -351,13 +359,43 @@ function acceptedJob(id: GroupId, j: JobView, show: (o: JobsOverview) => void): 
   );
 }
 
+/** "Run this group's jobs without asking": per device, off by default. */
+function autoAcceptSetting(id: GroupId, o: JobsOverview, show: (o: JobsOverview) => void): HTMLElement {
+  const box = h("input", { id: "jobs-auto", type: "checkbox", checked: o.autoAccept, disabled: o.unsupported !== null });
+  box.addEventListener("change", () => {
+    const on = box.checked;
+    box.disabled = true;
+    api.setJobsAutoAccept(id, on).then(
+      (next) => {
+        show(next);
+        toast(on ? `Jobs from ${groupKey(id)} now run without asking` : `New or changed jobs from ${groupKey(id)} need your OK again`);
+      },
+      (e) => {
+        box.checked = !on;
+        box.disabled = false;
+        toast(errorText(e), "error");
+      },
+    );
+  });
+  const warning = "New or changed jobs from this group then run on this device without your review, with the permissions the group gives them (bypassPermissions included). You get a notification each time. Jobs you turned off stay off.";
+  return h(
+    "div",
+    { class: "jobs-auto" },
+    h("div", { class: "check" }, box, h("label", { for: "jobs-auto" }, "Run this group's jobs without asking")),
+    o.autoAccept
+      ? h("div", { class: "notice perm" }, h("div", { class: "notice-text" }, warning))
+      : h("p", { class: "muted small" }, warning),
+  );
+}
+
 function jobsBody(id: GroupId, o: JobsOverview, show: (o: JobsOverview) => void): (HTMLElement | false | null | HTMLElement[])[] {
   if (o.jobs.length === 0 && o.problems.length === 0) {
-    return [h("p", { class: "muted" }, "This group schedules no jobs.")];
+    return [h("p", { class: "muted" }, "This group schedules no jobs."), o.autoAccept && autoAcceptSetting(id, o, show)];
   }
   const pending = o.jobs.filter((j) => !j.accepted);
   const accepted = o.jobs.filter((j) => j.accepted);
   return [
+    autoAcceptSetting(id, o, show),
     o.unsupported !== null && h("div", { class: "notice" }, h("div", { class: "notice-text" }, o.unsupported)),
     pending.length > 0 && h("ul", { class: "list flat jobs", "aria-label": "Jobs waiting for your OK" }, pending.map((j) => pendingJob(id, j, o.unsupported !== null, show))),
     accepted.length > 0 && h("ul", { class: "list flat jobs", "aria-label": "Accepted jobs" }, accepted.map((j) => acceptedJob(id, j, show))),
@@ -379,7 +417,7 @@ function jobsCard(id: GroupId): HTMLElement {
     "section",
     { class: "card", "aria-labelledby": "jobs-h" },
     h("h2", { id: "jobs-h" }, "Scheduled jobs"),
-    h("p", { class: "muted small" }, "Claude Code tasks this group runs on a schedule. Each one needs your OK on this device first."),
+    h("p", { class: "muted small" }, "Claude Code tasks this group runs on a schedule. Each one needs your OK on this device first, unless you let this group's jobs run without asking."),
     body,
   );
   let timer: number | undefined;

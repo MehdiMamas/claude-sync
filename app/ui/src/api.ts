@@ -236,6 +236,8 @@ export interface JobsOverview {
   unsupported: string | null;
   jobs: JobView[];
   problems: JobProblem[];
+  /** "Run this group's jobs without asking" is on for this device. */
+  autoAccept: boolean;
 }
 export interface AppInfo {
   version: string;
@@ -328,6 +330,7 @@ export const api = {
   jobs: (group: GroupId) => call<JobsOverview>("jobs", { group }),
   acceptJob: (group: GroupId, id: string, hash: string) => call<JobsOverview>("accept_job", { group, id, hash }),
   setJobEnabled: (group: GroupId, id: string, enabled: boolean) => call<JobsOverview>("set_job_enabled", { group, id, enabled }),
+  setJobsAutoAccept: (group: GroupId, on: boolean) => call<JobsOverview>("set_jobs_auto_accept", { group, on }),
   runJobNow: (group: GroupId, id: string) => call<JobsOverview>("run_job_now", { group, id }),
   openJobFile: (group: GroupId, id: string, kind: "log" | "report") => call<void>("open_job_file", { group, id, kind }),
   pluginWarnings: (group: GroupId) => call<string[]>("plugin_warnings", { group }),

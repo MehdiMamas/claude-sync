@@ -8,6 +8,10 @@
 //! - `<state_dir>/jobs/<id>/`: the run lock and `last-run.json`, written by the runner.
 //! - `<state_dir>/logs/jobs/<id>/<UTC stamp>.log`: the output of each run (last 20 kept).
 //!
+//! A member can also let a group's jobs through without asking ("Run this group's jobs
+//! without asking", off by default, per device): reconcile then accepts new and changed jobs
+//! of that group itself and reports them, so the app can say what was added or changed.
+//!
 //! Job ids are global on a device (they name the OS task): when two groups use the same id,
 //! the first group in the joined order keeps it and the other is reported.
 pub mod cron;
@@ -330,6 +334,9 @@ fn yes() -> bool {
 pub struct JobsState {
     #[serde(default)]
     pub jobs: BTreeMap<String, Record>,
+    /// Groups whose new and changed jobs this device accepts without asking.
+    #[serde(default)]
+    pub auto_accept: BTreeSet<GroupId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -350,6 +357,19 @@ pub struct Record {
     /// Why the last registration failed.
     #[serde(default)]
     pub error: Option<String>,
+}
+
+impl Record {
+    fn new(group: &GroupId) -> Self {
+        Self {
+            group: group.clone(),
+            accepted: None,
+            enabled: true,
+            claude: None,
+            registered: None,
+            error: None,
+        }
+    }
 }
 
 impl JobsState {
@@ -425,6 +445,8 @@ pub struct JobsOverview {
     pub unsupported: Option<String>,
     pub jobs: Vec<JobView>,
     pub problems: Vec<Problem>,
+    /// This device runs the group's new and changed jobs without asking.
+    pub auto_accept: bool,
 }
 
 /// What `reconcile` changed.
@@ -434,6 +456,19 @@ pub struct ReconcileReport {
     pub registered: Vec<String>,
     pub unregistered: Vec<String>,
     pub errors: Vec<String>,
+    /// Jobs accepted without asking, because their group is in [`JobsState::auto_accept`].
+    pub auto_accepted: Vec<AutoAccepted>,
+}
+
+/// A job a group's "without asking" setting accepted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoAccepted {
+    pub group: GroupId,
+    pub id: String,
+    pub title: String,
+    /// An earlier version was accepted; `false`: a new job.
+    pub changed: bool,
 }
 
 /// Jobs on one device: `schedules.json` of every joined group, `jobs.json`, the OS scheduler.
@@ -506,6 +541,7 @@ impl Jobs<'_> {
     pub fn overview(&self, group: &GroupId) -> crate::Result<JobsOverview> {
         let (jobs, problems, _) = self.all()?;
         let state = JobsState::load(self.paths)?;
+        let auto_accept = state.auto_accept.contains(group);
         let views = jobs
             .iter()
             .filter(|j| &j.group == group)
@@ -544,7 +580,26 @@ impl Jobs<'_> {
             unsupported: self.scheduler.supported().err(),
             jobs: views,
             problems: problems.into_iter().filter(|p| &p.group == group).collect(),
+            auto_accept,
         })
+    }
+
+    /// Turn "Run this group's jobs without asking" on or off for `group`. On accepts its
+    /// current jobs right away (the report lists them); off keeps what was accepted.
+    pub fn set_auto_accept(&self, group: &GroupId, on: bool) -> crate::Result<ReconcileReport> {
+        if !AppState::load(self.paths)?.groups.contains(group) {
+            return Err(crate::Error::Invalid(format!(
+                "you are not in {group} on this device"
+            )));
+        }
+        let mut state = JobsState::load(self.paths)?;
+        if on {
+            state.auto_accept.insert(group.clone());
+        } else {
+            state.auto_accept.remove(group);
+        }
+        state.save(self.paths)?;
+        self.reconcile(false)
     }
 
     /// Accept the current version of a job and turn it on, then register it.
@@ -557,14 +612,10 @@ impl Jobs<'_> {
             )));
         }
         let mut state = JobsState::load(self.paths)?;
-        let rec = state.jobs.entry(id.to_string()).or_insert_with(|| Record {
-            group: group.clone(),
-            accepted: None,
-            enabled: true,
-            claude: None,
-            registered: None,
-            error: None,
-        });
+        let rec = state
+            .jobs
+            .entry(id.to_string())
+            .or_insert_with(|| Record::new(group));
         if &rec.group != group {
             // A left group's record that reconcile has not cleaned up yet.
             rec.group = group.clone();
@@ -635,6 +686,33 @@ impl Jobs<'_> {
                 state.jobs.remove(&id);
             }
         }
+        // Rejoining a group starts with asking again.
+        state.auto_accept.retain(|g| joined.contains(g));
+
+        // Groups whose jobs run without asking: accept their new and changed versions. A job
+        // the member turned off stays off.
+        for job in &jobs {
+            if !state.auto_accept.contains(&job.group) || state.accepted(job) {
+                continue;
+            }
+            let rec = state
+                .jobs
+                .entry(job.id.clone())
+                .or_insert_with(|| Record::new(&job.group));
+            let changed = rec.group == job.group && rec.accepted.is_some();
+            if rec.group != job.group {
+                rec.group = job.group.clone();
+                rec.registered = None;
+                rec.enabled = true;
+            }
+            rec.accepted = Some(job.consent_hash());
+            report.auto_accepted.push(AutoAccepted {
+                group: job.group.clone(),
+                id: job.id.clone(),
+                title: job.title.clone(),
+                changed,
+            });
+        }
 
         for job in &jobs {
             let accepted = state.accepted(job);
@@ -695,8 +773,12 @@ impl Jobs<'_> {
             unregister(&id, rec, &mut report);
         }
         state.save(self.paths)?;
-        if !report.registered.is_empty() || !report.unregistered.is_empty() {
-            tracing::info!(registered = ?report.registered, unregistered = ?report.unregistered, "jobs reconciled");
+        if !report.registered.is_empty()
+            || !report.unregistered.is_empty()
+            || !report.auto_accepted.is_empty()
+        {
+            let auto: Vec<&str> = report.auto_accepted.iter().map(|a| &*a.id).collect();
+            tracing::info!(registered = ?report.registered, unregistered = ?report.unregistered, auto_accepted = ?auto, "jobs reconciled");
         }
         for e in &report.errors {
             tracing::warn!(error = %e, "job registration failed");
@@ -937,6 +1019,110 @@ pub(crate) mod tests {
         }
         let (jobs, problems) = parse_file(&group("a"), b"{}", Path::new("/h"));
         assert!(jobs.is_empty() && problems.is_empty());
+    }
+
+    #[test]
+    fn auto_accept_is_off_by_default() {
+        let e = Env::new();
+        let g = group("a");
+        e.groups(&[(&g, Some(SCOUT))]);
+        let r = e.jobs().reconcile(false).unwrap();
+        assert!(r.auto_accepted.is_empty());
+        assert!(e.registered().is_empty());
+        assert!(JobsState::load(&e.paths).unwrap().auto_accept.is_empty());
+        let o = e.jobs().overview(&g).unwrap();
+        assert!(!o.auto_accept);
+        assert!(!o.jobs[0].accepted);
+        // An older jobs.json without the field still loads.
+        std::fs::write(state_file(&e.paths), br#"{"jobs":{}}"#).unwrap();
+        assert!(JobsState::load(&e.paths).unwrap().auto_accept.is_empty());
+    }
+
+    #[test]
+    fn auto_accept_accepts_new_jobs_when_on() {
+        let e = Env::new();
+        let (g, other) = (group("a"), group("b"));
+        let two = format!(
+            r#"{},{{"id":"digest","cron":"0 9 * * 1","prompt":"p"}}]}}"#,
+            SCOUT.strip_suffix("]}").unwrap()
+        );
+        let theirs = two
+            .replace("setup-scout", "scout-b")
+            .replace("digest", "digest-b");
+        e.groups(&[(&g, Some(SCOUT)), (&other, Some(&theirs))]);
+        assert!(e.jobs().set_auto_accept(&group("nope"), true).is_err());
+        let r = e.jobs().set_auto_accept(&g, true).unwrap();
+        assert_eq!(r.auto_accepted.len(), 1);
+        assert_eq!(r.auto_accepted[0].id, "setup-scout");
+        assert!(!r.auto_accepted[0].changed);
+        assert_eq!(r.registered, ["setup-scout"]);
+        // Only that group: the other one still asks.
+        assert_eq!(e.registered(), ["setup-scout"]);
+        assert!(e.jobs().overview(&g).unwrap().auto_accept);
+        assert!(!e.jobs().overview(&other).unwrap().auto_accept);
+
+        // A job added later is accepted by the next reconcile (after the sync that brings it).
+        e.groups(&[(&g, Some(&two)), (&other, None)]);
+        let r = e.jobs().reconcile(false).unwrap();
+        let ids: Vec<_> = r
+            .auto_accepted
+            .iter()
+            .map(|a| (&*a.id, a.changed))
+            .collect();
+        assert_eq!(ids, [("digest", false)]);
+        assert_eq!(e.registered(), ["digest", "setup-scout"]);
+        // Nothing new: nothing to report.
+        assert!(e.jobs().reconcile(false).unwrap().auto_accepted.is_empty());
+
+        // Off: what was accepted stays; leaving forgets the setting.
+        e.jobs().set_auto_accept(&g, false).unwrap();
+        assert_eq!(e.registered(), ["digest", "setup-scout"]);
+        e.jobs().set_auto_accept(&g, true).unwrap();
+        e.groups(&[(&other, None)]);
+        e.jobs().reconcile(false).unwrap();
+        assert!(JobsState::load(&e.paths).unwrap().auto_accept.is_empty());
+    }
+
+    #[test]
+    fn changed_job_is_reaccepted_only_when_on() {
+        let e = Env::new();
+        let g = group("a");
+        e.groups(&[(&g, Some(SCOUT))]);
+        e.jobs()
+            .accept(&g, "setup-scout", &hash_of(&e, &g, "setup-scout"))
+            .unwrap();
+        let changed = SCOUT.replace("unattended", "unattended now");
+
+        // Off: a change revokes the acceptance and removes the task.
+        e.groups(&[(&g, Some(&changed))]);
+        let r = e.jobs().reconcile(false).unwrap();
+        assert!(r.auto_accepted.is_empty());
+        assert_eq!(r.unregistered, ["setup-scout"]);
+        let v = &e.jobs().overview(&g).unwrap().jobs[0];
+        assert!(!v.accepted && v.changed);
+
+        // On: the changed version is accepted and reported as a change.
+        let r = e.jobs().set_auto_accept(&g, true).unwrap();
+        assert_eq!(r.auto_accepted.len(), 1);
+        assert!(r.auto_accepted[0].changed);
+        assert_eq!(e.registered(), ["setup-scout"]);
+        let changed_again = SCOUT.replace("unattended", "unattended again");
+        e.groups(&[(&g, Some(&changed_again))]);
+        let r = e.jobs().reconcile(false).unwrap();
+        assert!(r.auto_accepted[0].changed);
+        assert!(e.jobs().overview(&g).unwrap().jobs[0].accepted);
+        let task = e.sched.tasks.lock().unwrap()["setup-scout"].clone();
+        assert_eq!(task.args, ["run-job", "acme/a", "setup-scout"]);
+
+        // A job the member turned off stays off when it changes.
+        e.jobs().set_enabled(&g, "setup-scout", false).unwrap();
+        assert!(e.registered().is_empty());
+        e.groups(&[(&g, Some(SCOUT))]);
+        let r = e.jobs().reconcile(false).unwrap();
+        assert_eq!(r.auto_accepted.len(), 1);
+        let v = &e.jobs().overview(&g).unwrap().jobs[0];
+        assert!(v.accepted && !v.enabled);
+        assert!(e.registered().is_empty());
     }
 
     #[test]

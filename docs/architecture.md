@@ -155,7 +155,8 @@ Ported from v0 (`lib/secrets.sh`, `SPEC.md` §7): `github_pat_…`, `sk-ant-…`
   groups/<owner>__<repo>/base/   base snapshot (§6)
   groups/<owner>__<repo>/CLAUDE.md
   marketplaces/<name>/   plugin marketplaces bundled in a group repo (§4, §7)
-  jobs.json              per job: group, accepted hash, on/off, claude path, registered task (§16)
+  jobs.json              per job: group, accepted hash, on/off, claude path, registered task;
+                         groups whose jobs run without asking (§16)
   jobs/<id>/             run lock and last-run.json of a job (§16)
   plugins.json           group plugin installs: what was last done, warnings (§17)
   conflicts/  backups/  logs/   (logs/jobs/<id>/<UTC stamp>.log: job output, §16)
@@ -286,6 +287,8 @@ Strict validation; a bad job is skipped and listed on the group screen, never ha
 - `args` (optional) are extra `claude` options, passed after the prompt and before `--permission-mode`. Allowlist only: `--chrome` (Claude in Chrome tools, which `claude -p` lacks otherwise), `--model <id>` and `--effort <low|medium|high|xhigh|max>`, each at most once. Any other option is rejected, because flags such as `--dangerously-skip-permissions`, `--settings` or `--mcp-config` would get around the permission mode the member accepted. No shell is involved: arguments go to `claude` as they are.
 
 **Consent.** Nothing is registered until the member accepts the job on the group screen, which shows the full prompt, the permission mode (`bypassPermissions` in warning style), the folder and the schedule. Everyone accepts, the host included. The acceptance stored in `jobs.json` is a SHA-256 of `[cron, prompt, cwd, permissionMode, timeoutMinutes, args]`; any change revokes it and unregisters the task until the member accepts the new version. The runner checks the hash again before every run. A per-job toggle turns an accepted job off (unregisters it) and on.
+
+**Without asking.** A member can turn on "Run this group's jobs without asking" for one group on one device: from a pending job ("Always allow jobs from <group>") or from the top of the group's Scheduled jobs section, which says plainly that new or changed jobs then run without review. It is off by default, stored in `jobs.json` (`auto_accept`), never synced, and forgotten when the member leaves the group. While it is on, every reconcile (after each sync, and when it is turned on) accepts the current version of each of that group's jobs itself, storing the same hash an Accept stores, and the app shows a notification per job ("New job from <group>" or "Job changed in <group>"). A job the member turned off stays off. Turning it off keeps what was accepted; the next change asks again. The runner is unchanged: it still checks the stored hash.
 
 **Reconcile.** After every sync, at app start (checking that the tasks still exist) and after accept, toggle or leave: register accepted and enabled jobs, unregister the rest, drop the records of left groups. A group whose `schedules.json` can't be read keeps its tasks.
 
