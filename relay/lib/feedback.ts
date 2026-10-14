@@ -107,14 +107,15 @@ function lastChars(text: string, max: number): string {
 
 export interface IssueBodyInput {
   feedback: Feedback;
-  login: string;
+  /** Login for the Reporter row, or null when the issue is opened as that user (GitHub shows the author). */
+  reporter: string | null;
   /** Markdown image URL, "failed" when the upload failed, or null when there was no screenshot. */
   screenshotUrl: string | null | "failed";
   /** Link to the full log file when the logs had to be cut to fit the issue body. */
   fullLogsUrl: string | null | "failed";
 }
 
-export function buildIssueBody({ feedback, login, screenshotUrl, fullLogsUrl }: IssueBodyInput): string {
+export function buildIssueBody({ feedback, reporter, screenshotUrl, fullLogsUrl }: IssueBodyInput): string {
   const head: string[] = [
     feedback.description,
     "",
@@ -122,7 +123,7 @@ export function buildIssueBody({ feedback, login, screenshotUrl, fullLogsUrl }: 
     "",
     "| | |",
     "|---|---|",
-    `| Reporter | [${login}](https://github.com/${login}) |`,
+    ...(reporter ? [`| Reporter | [${reporter}](https://github.com/${reporter}) |`] : []),
     `| Kind | ${feedback.kind} |`,
     `| App version | ${cell(feedback.appVersion)} |`,
     `| OS | ${cell(feedback.os)} |`,

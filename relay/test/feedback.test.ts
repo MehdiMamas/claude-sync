@@ -11,6 +11,7 @@ const MILESTONES = `${REPO}/milestones?state=open&per_page=100`;
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("fake png body")]);
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from("fake jpeg body")]);
 const NOW = Date.parse("2026-10-13T15:00:00Z");
+const ISSUE_URL = "https://github.com/MehdiMamas/claude-sync/issues/42";
 
 interface Issue {
   title: string;
@@ -43,10 +44,27 @@ function valid(extra: Record<string, unknown> = {}): Record<string, unknown> {
   };
 }
 
+function issueCalls(): Array<Call & { body: Issue }> {
+  return fm.calls.filter((c) => c.method === "POST" && c.url.endsWith(`${REPO}/issues`)) as Array<Call & { body: Issue }>;
+}
+
 function issueCall(): Call & { body: Issue } {
-  const call = fm.calls.find((c) => c.method === "POST" && c.url.endsWith(`${REPO}/issues`));
+  const call = issueCalls()[0];
   assert.ok(call, "issue created");
-  return call as Call & { body: Issue };
+  return call;
+}
+
+function patchCalls(): Array<Call & { body: { labels: string[]; milestone?: number } }> {
+  return fm.calls.filter((c) => c.method === "PATCH") as Array<Call & { body: { labels: string[]; milestone?: number } }>;
+}
+
+/** The user's create answers `status`; the relay token's create succeeds. */
+function refuseUser(status: number): void {
+  fm.on("POST", `${REPO}/issues`, (call) =>
+    call.headers.authorization === `Bearer ${USER_TOKEN}`
+      ? Response.json({ message: "refused" }, { status })
+      : Response.json({ number: 43, html_url: ISSUE_URL.replace("42", "43") }, { status: 201 }),
+  );
 }
 
 function putCalls(): Call[] {
@@ -69,9 +87,11 @@ beforeEach(() => {
     { number: 2, title: "Sprint 2", state: "open", due_on: "2026-10-20T07:00:00Z" },
     { number: 3, title: "Sprint 3", state: "open", due_on: "2026-10-27T07:00:00Z" },
   ]);
+  // As for a user without push access: GitHub drops the labels and milestone.
   fm.on("POST", `${REPO}/issues`, () =>
-    Response.json({ number: 42, html_url: "https://github.com/MehdiMamas/claude-sync/issues/42" }, { status: 201 }),
+    Response.json({ number: 42, html_url: ISSUE_URL, labels: [], milestone: null }, { status: 201 }),
   );
+  fm.on("PATCH", `${REPO}/issues/42`, (call) => Response.json({ number: 42, ...(call.body as object) }));
   logs = [];
   for (const level of ["log", "warn", "error", "info", "debug"] as const) {
     mock.method(console, level, (...args: unknown[]) => logs.push(args.map(String).join(" ")));
@@ -88,19 +108,30 @@ afterEach(() => {
 });
 
 describe("POST /api/feedback", () => {
-  it("creates the issue with labels, the nearest sprint and the details, and returns 201 {number, url}", async () => {
+  it("opens the issue as the caller, then sets labels and the nearest sprint with the relay token", async () => {
     const res = await feedback(post(valid()));
     assert.equal(res.status, 201);
-    assert.deepEqual(await res.json(), { number: 42, url: "https://github.com/MehdiMamas/claude-sync/issues/42" });
+    assert.deepEqual(await res.json(), { number: 42, url: ISSUE_URL, asUser: true });
 
+    assert.equal(issueCalls().length, 1);
     const call = issueCall();
-    assert.equal(call.headers.authorization, `Bearer ${RELAY_TOKEN}`);
+    assert.equal(call.headers.authorization, `Bearer ${USER_TOKEN}`);
     assert.equal(call.body.title, "Sync stops after sleep");
     assert.deepEqual(call.body.labels, ["feedback", "type:bug"]);
     assert.equal(call.body.milestone, 2);
+
+    const patches = patchCalls();
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0]?.headers.authorization, `Bearer ${RELAY_TOKEN}`);
+    assert.deepEqual(patches[0]?.body, { labels: ["feedback", "type:bug"], milestone: 2 });
+    // The labels are set after the issue exists.
+    assert.ok(fm.calls.indexOf(call) < fm.calls.indexOf(patches[0] as Call));
+
     const body = call.body.body;
     assert.match(body, /^After the laptop wakes up/);
-    assert.match(body, /\| Reporter \| \[MehdiMamas\]\(https:\/\/github\.com\/MehdiMamas\) \|/);
+    // GitHub shows the author, so there is no Reporter row.
+    assert.ok(!body.includes("Reporter"));
+    assert.match(body, /\| Kind \| bug \|/);
     assert.match(body, /\| App version \| `0\.3\.0` \|/);
     assert.match(body, /\| OS \| `Windows 11 Pro 10\.0\.26200` \|/);
     assert.match(body, /<details>\n<summary>Logs \(redacted\)<\/summary>\n\n```text\n2026-10-13T10:00:00Z INFO started\n/);
@@ -113,6 +144,66 @@ describe("POST /api/feedback", () => {
   it("labels ideas type:idea", async () => {
     assert.equal((await feedback(post(valid({ kind: "idea" })))).status, 201);
     assert.deepEqual(issueCall().body.labels, ["feedback", "type:idea"]);
+    assert.deepEqual(patchCalls()[0]?.body.labels, ["feedback", "type:idea"]);
+  });
+
+  it("skips the label call when GitHub kept the labels and milestone (a collaborator)", async () => {
+    fm.on("POST", `${REPO}/issues`, () =>
+      Response.json(
+        { number: 42, html_url: ISSUE_URL, labels: [{ name: "feedback" }, { name: "type:bug" }], milestone: { number: 2 } },
+        { status: 201 },
+      ),
+    );
+    assert.equal((await feedback(post(valid()))).status, 201);
+    assert.equal(patchCalls().length, 0);
+  });
+
+  it("still answers 201 when setting the labels fails, and logs it", async () => {
+    fm.on("PATCH", `${REPO}/issues/42`, 403);
+    const res = await feedback(post(valid()));
+    assert.equal(res.status, 201);
+    assert.deepEqual(await res.json(), { number: 42, url: ISSUE_URL, asUser: true });
+    assert.ok(logs.some((l) => l.includes("feedback labels") && l.includes("403")), logs.join("\n"));
+  });
+
+  it("files the issue with the relay token, with a Reporter row, when GitHub refuses the caller with 403", async () => {
+    refuseUser(403);
+    const res = await feedback(post(valid({ screenshot: PNG.toString("base64") })));
+    assert.equal(res.status, 201);
+    assert.deepEqual(await res.json(), { number: 43, url: ISSUE_URL.replace("42", "43"), asUser: false });
+
+    const [asUser, asRelay] = issueCalls();
+    assert.equal(asUser?.headers.authorization, `Bearer ${USER_TOKEN}`);
+    assert.equal(asRelay?.headers.authorization, `Bearer ${RELAY_TOKEN}`);
+    assert.deepEqual(asRelay?.body.labels, ["feedback", "type:bug"]);
+    assert.equal(asRelay?.body.milestone, 2);
+    assert.match(asRelay?.body.body ?? "", /\| Reporter \| \[MehdiMamas\]\(https:\/\/github\.com\/MehdiMamas\) \|/);
+    // The screenshot is committed once, and both bodies link it.
+    assert.equal(putCalls().length, 1);
+    assert.match(asRelay?.body.body ?? "", /!\[screenshot\]\(https:\/\/github\.com\/MehdiMamas\/claude-sync\/blob\/feedback-assets\//);
+    // The relay token sets labels at creation; no follow-up call.
+    assert.equal(patchCalls().length, 0);
+    assert.ok(logs.some((l) => l.includes("as MehdiMamas returned 403")), logs.join("\n"));
+  });
+
+  it("falls back to the relay token for 401, 404, 410, 422 and 429 from the caller's create", async () => {
+    for (const status of [401, 404, 410, 422, 429]) {
+      resetRateLimits();
+      fm.calls.length = 0;
+      refuseUser(status);
+      const res = await feedback(post(valid()));
+      assert.equal(res.status, 201, `status ${status}`);
+      assert.equal(((await res.json()) as { asUser: boolean }).asUser, false);
+      assert.equal(issueCalls()[1]?.headers.authorization, `Bearer ${RELAY_TOKEN}`, `status ${status}`);
+    }
+  });
+
+  it("does not fall back on a GitHub 5xx: answers 502 so the app retries later", async () => {
+    refuseUser(503);
+    const res = await feedback(post(valid()));
+    assert.equal(res.status, 502);
+    assert.equal(issueCalls().length, 1);
+    assert.equal(issueCall().headers.authorization, `Bearer ${USER_TOKEN}`);
   });
 
   it("commits a PNG screenshot to feedback-assets and links it in the issue", async () => {
@@ -174,6 +265,7 @@ describe("POST /api/feedback", () => {
     fm.on("GET", MILESTONES, []);
     assert.equal((await feedback(post(valid()))).status, 201);
     assert.equal("milestone" in issueCall().body, false);
+    assert.deepEqual(patchCalls()[0]?.body, { labels: ["feedback", "type:bug"] });
   });
 
   it("sets no milestone when listing milestones fails", async () => {
@@ -308,10 +400,11 @@ describe("POST /api/feedback", () => {
     assert.equal(fm.calls.filter((c) => c.method !== "GET").length, 0);
   });
 
-  it("files feedback from any GitHub user", async () => {
+  it("files feedback from any GitHub user, as that user", async () => {
     mockUser(fm, "stranger");
     assert.equal((await feedback(post(valid()))).status, 201);
-    assert.match(issueCall().body.body, /\[stranger\]\(https:\/\/github\.com\/stranger\)/);
+    assert.equal(issueCall().headers.authorization, `Bearer ${USER_TOKEN}`);
+    assert.ok(!issueCall().body.body.includes("stranger"));
   });
 
   it("403 for a blocked login, before anything is written", async () => {
@@ -327,12 +420,18 @@ describe("POST /api/feedback", () => {
     fm.on("POST", "/repos/MehdiMamas/claude-sync-feedback/issues", () =>
       Response.json({ number: 1, html_url: "https://github.com/MehdiMamas/claude-sync-feedback/issues/1" }, { status: 201 }),
     );
+    fm.on("PATCH", "/repos/MehdiMamas/claude-sync-feedback/issues/1", {});
     const res = await feedback(post(valid()));
-    assert.deepEqual(await res.json(), { number: 1, url: "https://github.com/MehdiMamas/claude-sync-feedback/issues/1" });
+    assert.deepEqual(await res.json(), {
+      number: 1,
+      url: "https://github.com/MehdiMamas/claude-sync-feedback/issues/1",
+      asUser: true,
+    });
   });
 
-  it("502 when GitHub refuses the issue", async () => {
+  it("502 when GitHub refuses the issue from both the caller and the relay", async () => {
     fm.on("POST", `${REPO}/issues`, 422);
     assert.equal((await feedback(post(valid()))).status, 502);
+    assert.equal(issueCalls().length, 2);
   });
 });

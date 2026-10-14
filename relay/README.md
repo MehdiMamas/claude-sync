@@ -4,14 +4,14 @@ A free Vercel project (Hobby plan) that does the few things that need a secret (
 
 - serves app updates from the `MehdiMamas/claude-sync` releases (the update JSON with its signature),
 - hands out short-lived download links for release assets (the bytes never pass through Vercel),
-- files in-app feedback as an issue in the nearest sprint.
+- files in-app feedback as an issue in the nearest sprint, opened under the user's own GitHub account.
 
 Plain TypeScript functions in `api/`, shared code in `lib/`, no framework and no runtime dependencies.
 
 ## Endpoints
 
 Every endpoint except `/api/health` needs the caller's own GitHub token:
-`Authorization: Bearer <token>`. The relay calls `GET /user` with it to learn the login. Any GitHub account is allowed, except logins listed in `BLOCKED_GITHUB_USERS` (case-insensitive, for abuse). The login is cached in memory for 10 minutes, keyed by a SHA-256 of the token. Tokens are never logged or stored.
+`Authorization: Bearer <token>`. The relay calls `GET /user` with it to learn the login. Any GitHub account is allowed, except logins listed in `BLOCKED_GITHUB_USERS` (case-insensitive, for abuse). The login is cached in memory for 10 minutes, keyed by a SHA-256 of the token. `/api/feedback` also uses the token once to open the issue as that user. Tokens are never logged or stored.
 
 Each login gets 120 calls per hour across all endpoints, and 5 feedback posts per hour on top of that (sliding windows, in memory per function instance). A rejected token does not count against anyone.
 
@@ -76,13 +76,16 @@ The screenshot type is checked by its magic bytes. The app should send at most t
 1. Title, description and logs are redacted again (the patterns of `lib/secrets.sh` plus `Bearer <token>`), then the logs are cut to their last 200 KB.
 2. A screenshot is committed to branch `feedback-assets` at `feedback/<yyyy-mm>/<uuid>.png` (or `.jpg`). The branch is created from the default branch head when missing.
 3. GitHub refuses issue bodies over 65,536 characters, so logs that do not fit are also committed next to the screenshot as `feedback/<yyyy-mm>/<uuid>.log`, and the issue shows their end plus a link to the file.
-4. The issue goes to `FEEDBACK_REPO` with labels `feedback` and `type:bug` / `type:idea`. Its body has the description, the reporter's login, kind, app version, OS, the screenshot (`https://github.com/<repo>/blob/feedback-assets/<path>?raw=true`) and the logs in a collapsed `<details>` block.
-5. Milestone: the open milestone titled `Sprint N` with the earliest due date that is today (UTC) or later; else the open `Sprint N` with the latest due date; else none.
-6. Response `201 {"number": 42, "url": "https://github.com/MehdiMamas/claude-sync/issues/42"}`.
+4. The issue goes to `FEEDBACK_REPO`, opened with the caller's token, so GitHub shows the user as its author. Its body has the description, kind, app version, OS, the screenshot (`https://github.com/<repo>/blob/feedback-assets/<path>?raw=true`) and the logs in a collapsed `<details>` block.
+5. GitHub drops labels and milestone sent by someone without push access, so the relay then sets labels `feedback` and `type:bug` / `type:idea` and the milestone with its own token (`PATCH /issues/{n}`, skipped when GitHub already kept them). This step is best effort: a failure is logged and the post still answers 201.
+6. Milestone: the open milestone titled `Sprint N` with the earliest due date that is today (UTC) or later; else the open `Sprint N` with the latest due date; else none.
+7. Response `201 {"number": 42, "url": "https://github.com/MehdiMamas/claude-sync/issues/42", "asUser": true}`.
+
+**Fallback.** When GitHub refuses the caller's create with 401, 403, 404, 410, 422 or 429 (the token lacks the scope, the user is blocked from the repo, SSO, the user's own rate limit), the relay logs the status and files the issue with its own token, as it did before: labels and milestone set at creation, a `Reporter` row with the login in the body, and `"asUser": false`. 422 falls back too because the retry either works (the cause was the user's account) or fails the same way and answers 502. A 5xx or network error does not fall back: it answers 502/500, and the app keeps the report in its outbox and sends it later.
 
 If storing the screenshot fails, the issue is still filed and says so. Rate limit: 5 posts per login per hour (sliding window, in memory per function instance). Invalid posts do not count against it.
 
-The issue, the screenshot and the logs are public when `FEEDBACK_REPO` is a public repo. The app says so on the feedback form, and logs are only sent when the user ticks the box.
+The issue, the screenshot and the logs are public when `FEEDBACK_REPO` is a public repo, and the issue shows the user's GitHub account as its author. The app says so on the feedback form, and logs are only sent when the user ticks the box.
 
 ## Release assets
 
@@ -116,7 +119,7 @@ GitHub → Settings → Developer settings → Personal access tokens → Fine-g
 - **Repository access:** Only select repositories → `MehdiMamas/claude-sync` (and `FEEDBACK_REPO` if it is another repo). The relay does not need access to any group repo.
 - **Repository permissions:**
   - **Contents: Read and write.** Read: latest release, release assets, git refs. Write: create the `feedback-assets` branch (`POST /git/refs`) and commit screenshots (`PUT /contents/...`).
-  - **Issues: Read and write.** List milestones, create the issue with labels and milestone.
+  - **Issues: Read and write.** List milestones, set labels and milestone on the issue the user opened, and create the issue itself in the fallback.
   - **Metadata: Read** (always on). Repo info.
 
 No response includes this token. Callers get only release data, a download redirect, or the new issue's number and URL.
