@@ -71,7 +71,7 @@ pnpm -C app install
 pnpm -C app tauri dev
 ```
 
-`pnpm -C app/ui dev` alone serves the UI in a browser with a fake backend (`?signedOut` and `?empty` show other states). A release build is `pnpm -C app tauri build`; it signs update bundles, so set `TAURI_SIGNING_PRIVATE_KEY` (path or contents of the updater key) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Set `CLAUDE_SYNC_GITHUB_CLIENT_ID` (GitHub OAuth app with device flow) and `CLAUDE_SYNC_RELAY_URL` at build time; without the client ID the app cannot sign in, and without the relay URL updates and feedback are off.
+`pnpm -C app/ui dev` alone serves the UI in a browser with a fake backend (`?signedOut` and `?empty` show other states). A release build is `pnpm -C app tauri build`; it signs update bundles, so set `TAURI_SIGNING_PRIVATE_KEY` (path or contents of the updater key) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Set `CLAUDE_SYNC_GITHUB_CLIENT_ID` (GitHub OAuth app with device flow) and `CLAUDE_SYNC_RELAY_URL` at build time; without the client ID the app cannot sign in, and without the relay URL updates and feedback are off. Releases go through `scripts/release.ps1` and the `release-macos.yml` workflow; see [docs/releasing.md](docs/releasing.md).
 
 ## How this repo is built
 Numbered phases, one PR each:
