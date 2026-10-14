@@ -34,6 +34,9 @@ pub struct GroupStatus {
     pub last_error: Option<String>,
     pub conflicts: Vec<ConflictInfo>,
     pub collisions: Vec<crate::apply::Collision>,
+    /// Joining placed or changed plugin files: open Claude Code sessions need
+    /// `/reload-plugins`. Only set on the status a join returns.
+    pub plugins_changed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -412,9 +415,9 @@ impl Engine {
     }
 
     /// Leave on this device: remove managed content. Does not change membership.
-    pub async fn leave(&self, id: &GroupId) -> crate::Result<()> {
+    pub async fn leave(&self, id: &GroupId) -> crate::Result<ApplyReport> {
         let _busy = self.busy.lock().await;
-        self.forget(id).map(drop)
+        self.forget(id)
     }
 
     pub fn local_edits(&self) -> crate::Result<Vec<LocalEdit>> {
@@ -566,8 +569,11 @@ impl Engine {
             state.save(&self.paths)?;
         }
         // Errors of the first sync show in the status, like any later one.
-        self.sync_group(id, Some(head)).await;
-        Ok(self.group_status(id))
+        let (report, _) = self.sync_group(id, Some(head)).await;
+        Ok(GroupStatus {
+            plugins_changed: report.apply.plugins_changed,
+            ..self.group_status(id)
+        })
     }
 
     /// Change `claude-sync.json` and commit it, retrying on push races. `false` when `edit`
@@ -947,6 +953,7 @@ impl Engine {
             last_error: s.last_error,
             conflicts: s.conflicts,
             collisions: s.collisions.into_iter().map(Into::into).collect(),
+            plugins_changed: false,
         }
     }
 
@@ -2217,7 +2224,7 @@ mod tests {
             .any(|n| n.contains("plugins/mp/p/big.bin")));
 
         // Bo gets the files and the marketplace entry for its own copy.
-        bo.join(&id).await.unwrap();
+        assert!(bo.join(&id).await.unwrap().plugins_changed);
         assert_eq!(
             std::fs::read_to_string(mp(&bo).join("p/hooks/run.ts")).unwrap(),
             "export {}\n"
@@ -2255,6 +2262,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(settings.pointer("/extraKnownMarketplaces/mp"), None);
+
+        // Leaving removes Ana's copy, with the reload hint; her never-shared file stays.
+        assert!(ana.leave(&id).await.unwrap().plugins_changed);
+        assert!(!mp(&ana).join("p/hooks/hooks.json").exists());
+        assert!(mp(&ana).join("p/big.bin").exists());
     }
 
     #[tokio::test]
