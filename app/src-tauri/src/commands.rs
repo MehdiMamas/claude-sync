@@ -5,11 +5,13 @@ use crate::config;
 use crate::ctx::{lock, Ctx, Status};
 use crate::feedback::{self, FeedbackInput, FeedbackResult, Screenshot};
 use crate::guard::{self, Error};
+use crate::jobs as app_jobs;
 use crate::updates::{self, UpdateInfo};
 use claude_sync_core::apply::Manifest;
 use claude_sync_core::contents::{self, GroupContents};
 use claude_sync_core::engine::{CommitInfo, GroupStatus, SyncReport};
 use claude_sync_core::github::Invitation;
+use claude_sync_core::jobs::JobsOverview;
 use claude_sync_core::watch::{EditAction, LocalEdit};
 use claude_sync_core::{group, GroupId};
 use serde::{Deserialize, Serialize};
@@ -201,6 +203,7 @@ pub async fn leave_group(app: AppHandle, ctx: CtxState<'_>, group: GroupId) -> R
     if report.plugins_changed {
         background::plugins_changed(&app);
     }
+    app_jobs::after_leave(&app, &group);
     Ok(())
 }
 
@@ -454,6 +457,69 @@ pub fn open_path(app: AppHandle, ctx: CtxState, path: String, reveal: Option<boo
             .open_path(p.to_string_lossy(), None::<&str>)
             .map_err(|e| e.to_string())
     }
+}
+
+/// The scheduled jobs of `group` (§17): pending ones, accepted ones, what was skipped.
+#[tauri::command]
+pub async fn jobs(ctx: CtxState<'_>, group: GroupId) -> Res<JobsOverview> {
+    app_jobs::list(ctx.inner().clone(), group).await
+}
+
+/// Accept the version of a job the screen showed (`hash`), turn it on and register it.
+#[tauri::command]
+pub async fn accept_job(
+    app: AppHandle,
+    group: GroupId,
+    id: String,
+    hash: String,
+) -> Res<JobsOverview> {
+    app_jobs::accept(app, group, id, hash).await
+}
+
+#[tauri::command]
+pub async fn set_job_enabled(
+    app: AppHandle,
+    group: GroupId,
+    id: String,
+    enabled: bool,
+) -> Res<JobsOverview> {
+    app_jobs::set_enabled(app, group, id, enabled).await
+}
+
+/// "Run this group's jobs without asking": on accepts its new and changed jobs from now on
+/// (each one notified); off asks again for the next change.
+#[tauri::command]
+pub async fn set_jobs_auto_accept(app: AppHandle, group: GroupId, on: bool) -> Res<JobsOverview> {
+    app_jobs::set_auto_accept(app, group, on).await
+}
+
+#[tauri::command]
+pub async fn run_job_now(ctx: CtxState<'_>, group: GroupId, id: String) -> Res<JobsOverview> {
+    app_jobs::run_now(ctx.inner().clone(), group, id).await
+}
+
+/// Open a job's last log (`kind` = "log") or its report ("report").
+#[tauri::command]
+pub fn open_job_file(
+    app: AppHandle,
+    ctx: CtxState,
+    group: GroupId,
+    id: String,
+    kind: String,
+) -> Res<()> {
+    app_jobs::open_file(&app, &ctx, &group, &id, &kind)
+}
+
+/// Plugins of `group` that could not be installed or updated (§18).
+#[tauri::command]
+pub fn plugin_warnings(ctx: CtxState, group: GroupId) -> Res<Vec<String>> {
+    app_jobs::plugin_warnings(&ctx, &group)
+}
+
+/// Retry: run the plugin installs of `group` again; returns the warnings left.
+#[tauri::command]
+pub async fn retry_plugins(app: AppHandle, group: GroupId) -> Res<Vec<String>> {
+    app_jobs::retry_plugins(app, group).await
 }
 
 #[cfg(test)]

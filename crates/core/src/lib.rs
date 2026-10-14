@@ -2,16 +2,19 @@
 //! Design: docs/architecture.md. Section numbers below (§N) refer to it.
 
 pub mod apply;
+pub mod claude_cli;
 pub mod contents;
 pub mod engine;
 pub mod error;
 pub mod github;
 pub mod group;
+pub mod jobs;
 pub mod logging;
 pub mod members;
 pub mod merge;
 pub mod paths;
 pub mod personal;
+pub mod plugin_install;
 pub mod remote;
 pub mod secrets;
 pub mod settings;

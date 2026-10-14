@@ -184,6 +184,61 @@ export interface PersonalStatus {
   /** Files left out of the last sync and why. */
   skipped: string[];
 }
+/** `jobs/<id>/last-run.json` (crates/core/src/jobs/run.rs). */
+export interface LastRun {
+  startUnix: number;
+  endUnix: number;
+  exitCode: number | null;
+  /** `ok`, `failed`, `timed out`, `skipped: offline`, or `error: <why>`. */
+  status: string;
+  manual: boolean;
+  log: string | null;
+  /** The job's report, when the run wrote it. */
+  report: string | null;
+}
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+/** One job of the group's schedules.json, as this device sees it. */
+export interface JobView {
+  id: string;
+  title: string;
+  cron: string;
+  /** `Mon and Thu at 10:17` (local time). */
+  schedule: string;
+  prompt: string;
+  cwd: string;
+  permissionMode: PermissionMode;
+  timeoutMinutes: number;
+  report: string | null;
+  /** Extra claude options, after the prompt: --chrome, --model <id>, --effort <level>. */
+  args: string[];
+  /** What "Accept" sends back: the consent hash of the version shown. */
+  hash: string;
+  /** Accepted in this version. */
+  accepted: boolean;
+  /** Accepted before, but the job changed since. */
+  changed: boolean;
+  enabled: boolean;
+  registered: boolean;
+  error: string | null;
+  lastRun: LastRun | null;
+  running: boolean;
+  hasLog: boolean;
+  hasReport: boolean;
+}
+/** A job of schedules.json that was skipped (bad id, cron, path, ...). */
+export interface JobProblem {
+  group: GroupId;
+  id: string | null;
+  message: string;
+}
+export interface JobsOverview {
+  /** Null, or why this OS cannot run jobs. */
+  unsupported: string | null;
+  jobs: JobView[];
+  problems: JobProblem[];
+  /** "Run this group's jobs without asking" is on for this device. */
+  autoAccept: boolean;
+}
 export interface AppInfo {
   version: string;
   os: string;
@@ -272,6 +327,14 @@ export const api = {
   personalDismissOffer: () => call<void>("personal_dismiss_offer"),
   openUrl: (url: string) => call<void>("open_url", { url }),
   openPath: (path: string, reveal = false) => call<void>("open_path", { path, reveal }),
+  jobs: (group: GroupId) => call<JobsOverview>("jobs", { group }),
+  acceptJob: (group: GroupId, id: string, hash: string) => call<JobsOverview>("accept_job", { group, id, hash }),
+  setJobEnabled: (group: GroupId, id: string, enabled: boolean) => call<JobsOverview>("set_job_enabled", { group, id, enabled }),
+  setJobsAutoAccept: (group: GroupId, on: boolean) => call<JobsOverview>("set_jobs_auto_accept", { group, on }),
+  runJobNow: (group: GroupId, id: string) => call<JobsOverview>("run_job_now", { group, id }),
+  openJobFile: (group: GroupId, id: string, kind: "log" | "report") => call<void>("open_job_file", { group, id, kind }),
+  pluginWarnings: (group: GroupId) => call<string[]>("plugin_warnings", { group }),
+  retryPlugins: (group: GroupId) => call<string[]>("retry_plugins", { group }),
 };
 
 export const groupKey = (g: GroupId) => `${g.owner}/${g.repo}`;

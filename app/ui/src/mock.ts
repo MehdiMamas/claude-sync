@@ -1,7 +1,8 @@
 // A fake backend for `pnpm dev` in a plain browser (never bundled into the app).
 // `?signedOut` shows the sign-in screen; `?empty` shows a user with no groups; `?plugins`
 // shows the plugins reload notice; `?noSkills` shows a user with no skills to share.
-import type { Backend, Events, GroupContents, GroupId, GroupStatus, Kinds, PersonalStatus } from "./api";
+// The first group has one job waiting for consent, one accepted job and a plugin warning.
+import type { Backend, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, PersonalStatus } from "./api";
 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
@@ -95,6 +96,66 @@ let personal: PersonalStatus = {
 };
 const setPersonal = (patch: Partial<PersonalStatus>) => (personal = { ...personal, ...patch });
 
+const mehdiJobs: JobsOverview = {
+  unsupported: null,
+  jobs: [
+    {
+      id: "setup-scout",
+      title: "Claude setup refresh",
+      cron: "17 10 * * 1,4",
+      schedule: "Mon and Thu at 10:17",
+      prompt: "/setup-scout:setup-scout unattended",
+      cwd: "~",
+      permissionMode: "bypassPermissions",
+      timeoutMinutes: 60,
+      report: "~/.claude/setup-scout/reports/latest.md",
+      args: ["--chrome"],
+      hash: "5d1c0b7e",
+      accepted: false,
+      changed: false,
+      enabled: true,
+      registered: false,
+      error: null,
+      lastRun: null,
+      running: false,
+      hasLog: false,
+      hasReport: false,
+    },
+    {
+      id: "weekly-digest",
+      title: "Weekly digest of the group's changes",
+      cron: "0 9 * * 1",
+      schedule: "Mon at 09:00",
+      prompt: "Summarise this week's commits in ~/.claude-sync/groups and write ~/digest.md.",
+      cwd: "~",
+      permissionMode: "acceptEdits",
+      timeoutMinutes: 30,
+      report: "~/digest.md",
+      args: [],
+      hash: "a90f22c1",
+      accepted: true,
+      changed: false,
+      enabled: true,
+      registered: true,
+      error: null,
+      lastRun: { startUnix: now - 86400 * 2, endUnix: now - 86400 * 2 + 140, exitCode: 0, status: "ok", manual: false, log: "C:/Users/me/.claude-sync/logs/jobs/weekly-digest/20261012T090000Z.log", report: "C:/Users/me/digest.md" },
+      running: false,
+      hasLog: true,
+      hasReport: true,
+    },
+  ],
+  problems: [{ group: { owner: "mehdimamas", repo: "claude-sync-data" }, id: "nightly", message: 'cron "0 3 1 * *": day of month and month must be *; only weekly schedules are supported' }],
+  autoAccept: false,
+};
+const emptyJobs: JobsOverview = { unsupported: null, jobs: [], problems: [], autoAccept: false };
+let pluginWarnings = ["couldn't install session-manager@claude-mods: it needs your confirmation (it declares commands); install it in a terminal with claude plugin install"];
+
+function job(a: Record<string, unknown>): JobView {
+  const j = mehdiJobs.jobs.find((x) => x.id === a.id);
+  if (!j) throw `no job ${String(a.id)}`;
+  return j;
+}
+
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   personal_status: () => personal,
   personal_enable: () => setPersonal({ enabled: true, decided: true, offer: false }),
@@ -125,6 +186,36 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     { sha: "09cd11aa42", message: "settings: add permissions", author: "yassine (mac)", atUnix: now - 90000 },
   ],
   sync_now: () => ({ groups: [] }),
+  jobs: (a) => ((a.group as GroupId).owner === "acme" ? emptyJobs : mehdiJobs),
+  accept_job: (a) => {
+    Object.assign(job(a), { accepted: true, changed: false, enabled: true, registered: true });
+    return mehdiJobs;
+  },
+  set_job_enabled: (a) => {
+    Object.assign(job(a), { enabled: a.enabled, registered: a.enabled });
+    return mehdiJobs;
+  },
+  set_jobs_auto_accept: (a) => {
+    mehdiJobs.autoAccept = a.on as boolean;
+    if (mehdiJobs.autoAccept) {
+      for (const j of mehdiJobs.jobs.filter((x) => !x.accepted)) Object.assign(j, { accepted: true, changed: false, registered: j.enabled });
+    }
+    return mehdiJobs;
+  },
+  run_job_now: (a) => {
+    const j = job(a);
+    j.running = true;
+    setTimeout(() => {
+      Object.assign(j, { running: false, hasLog: true, lastRun: { startUnix: now, endUnix: now + 3, exitCode: 0, status: "ok", manual: true, log: "C:/Users/me/run.log", report: null } });
+    }, 3000);
+    return mehdiJobs;
+  },
+  open_job_file: () => null,
+  plugin_warnings: (a) => ((a.group as GroupId).owner === "acme" ? [] : pluginWarnings),
+  retry_plugins: () => {
+    pluginWarnings = [];
+    return pluginWarnings;
+  },
   get_settings: () => ({ deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false }),
   set_settings: (a) => ({ deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false, ...(a.settings as object) }),
   feedback_logs: () => "2026-10-13T10:00:01Z INFO sync: 2 groups up to date\n2026-10-13T10:01:01Z INFO sync: pulled mehdimamas/claude-sync-data",

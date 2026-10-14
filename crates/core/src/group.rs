@@ -12,6 +12,8 @@ pub const DEFAULT_REPO: &str = "claude-sync-data";
 pub const README: &str = "README.md";
 pub const CLAUDE_MD: &str = "CLAUDE.md";
 pub const SHARED_SETTINGS: &str = "settings.shared.json";
+/// Scheduled jobs (§17). Repo only: read from the base snapshot, never applied to `~/.claude`.
+pub const SCHEDULES: &str = "schedules.json";
 /// Plugin marketplaces bundled in the group repo: `plugins/<marketplace>/...`.
 pub const PLUGINS: &str = "plugins";
 /// The largest plugin file that syncs. Bigger files are reported and skipped.
@@ -132,7 +134,7 @@ impl GroupFile {
     pub fn syncs(&self, path: &str) -> bool {
         let s = &self.sync;
         match path.split('/').next().unwrap_or_default() {
-            FILE => true,
+            FILE | SCHEDULES => true,
             CLAUDE_MD => s.claude_md,
             SHARED_SETTINGS => s.settings,
             "skills" => s.skills,
@@ -172,7 +174,7 @@ pub fn is_allowlisted(path: &str) -> bool {
         return false;
     }
     match parts.as_slice() {
-        [FILE | CLAUDE_MD | SHARED_SETTINGS] => true,
+        [FILE | CLAUDE_MD | SHARED_SETTINGS | SCHEDULES] => true,
         ["skills", _name, _rest @ ..] => parts.len() >= 3,
         ["agents" | "commands" | "output-styles", file] => file.ends_with(".md") && file.len() > 3,
         _ => false,
@@ -216,7 +218,7 @@ pub fn too_large_note(path: &str) -> String {
 /// Files that exist only in the repo, never in `~/.claude`. The engine supplies their local
 /// side itself instead of reading it back from the apply layer.
 pub fn is_repo_only(path: &str) -> bool {
-    path == FILE || path == README
+    path == FILE || path == README || path == SCHEDULES
 }
 
 /// The README written into a new group repo.
@@ -233,7 +235,8 @@ pub fn readme(name: &str, host: &str) -> String {
          - `CLAUDE.md`: shared instructions, imported into your `~/.claude/CLAUDE.md`\n\
          - `settings.shared.json`: keys merged into your `~/.claude/settings.json`\n\
          - `skills/`, `agents/`, `commands/`, `output-styles/`\n\
-         - `plugins/`: plugin marketplaces, installed for every member as a local directory marketplace\n\n\
+         - `plugins/`: plugin marketplaces, installed for every member as a local directory marketplace\n\
+         - `schedules.json`: scheduled Claude Code jobs; each member accepts a job before it runs on their machine\n\n\
          {PLUGINS_WARNING}\n"
     )
 }
@@ -294,6 +297,7 @@ mod tests {
             "claude-sync.json",
             "CLAUDE.md",
             "settings.shared.json",
+            "schedules.json",
             "skills/review/SKILL.md",
             "skills/review/scripts/run.sh",
             "agents/x.md",
@@ -362,6 +366,8 @@ mod tests {
         assert!(!g.syncs("CLAUDE.md"));
         assert!(g.syncs("agents/a.md"));
         assert!(g.syncs(FILE));
+        assert!(g.syncs(SCHEDULES));
+        assert!(is_repo_only(SCHEDULES));
         assert!(g.syncs(SHARED_SETTINGS));
         assert!(g.syncs("plugins/a/x.json"));
         g.sync.plugins = false;
@@ -391,5 +397,6 @@ mod tests {
         let r = readme("n", "h");
         assert!(r.contains("`plugins/`"));
         assert!(r.contains(PLUGINS_WARNING));
+        assert!(r.contains("`schedules.json`"));
     }
 }

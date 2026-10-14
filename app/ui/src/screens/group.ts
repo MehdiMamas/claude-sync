@@ -1,5 +1,5 @@
-// One group: what it gives this device, members, sharing a skill, recent changes,
-// conflicts and collisions.
+// One group: what it gives this device, its scheduled jobs, members, sharing a skill,
+// recent changes, conflicts and collisions.
 import {
   api,
   errorText,
@@ -9,7 +9,10 @@ import {
   type GroupContents,
   type GroupId,
   type GroupStatus,
+  type JobsOverview,
+  type JobView,
   type MarketplaceInfo,
+  type PermissionMode,
 } from "../api";
 import { busy, confirmButton, errorBox, h, relTime, replace, spinner, toast } from "../dom";
 import { go, onRefresh, store } from "../store";
@@ -216,6 +219,222 @@ function contentsCard(id: GroupId): HTMLElement {
   );
 }
 
+/** Group plugins that could not be installed or updated after a sync, with a Retry. */
+function pluginNotice(id: GroupId): HTMLElement {
+  const box = h("div");
+  const show = (warnings: string[]) => {
+    if (warnings.length === 0) {
+      replace(box);
+      return;
+    }
+    const retry = h("button", null, "Retry");
+    retry.addEventListener("click", () =>
+      busy(retry, "Installing…", async () => {
+        const left = await api.retryPlugins(id);
+        show(left);
+        if (left.length === 0) toast("The group's plugins are installed");
+      }),
+    );
+    replace(
+      box,
+      h(
+        "div",
+        { class: "notice", role: "status" },
+        h("div", { class: "notice-text" }, h("strong", null, "Plugins of this group are missing"), h("ul", { class: "small warnings" }, warnings.map((w) => h("li", null, w)))),
+        retry,
+      ),
+    );
+  };
+  api.pluginWarnings(id).then(show, () => {});
+  return box;
+}
+
+const MODES: Record<PermissionMode, string> = {
+  default: "Claude Code asks before edits and commands. Nobody is there to answer, so it skips them.",
+  acceptEdits: "Claude Code edits files without asking; it skips other commands that need asking.",
+  plan: "Claude Code only reads and plans; it changes nothing.",
+  bypassPermissions: "Claude Code runs any command and edits any file without asking.",
+};
+
+function permission(mode: PermissionMode): HTMLElement {
+  const text = [h("strong", null, mode), ": ", MODES[mode] ?? ""];
+  return mode === "bypassPermissions"
+    ? h("div", { class: "notice perm" }, h("div", { class: "notice-text" }, ...text))
+    : h("p", { class: "small" }, ...text);
+}
+
+function lastRunText(j: JobView): (string | HTMLElement)[] {
+  if (j.running) return [h("span", { class: "spin", "aria-hidden": "true" }), " Running now"];
+  const r = j.lastRun;
+  if (!r) return ["Not run yet"];
+  const exit = r.exitCode !== null && r.status !== "ok" ? ` (exit code ${r.exitCode})` : "";
+  return [
+    `Last run ${relTime(r.endUnix || r.startUnix)}${r.manual ? " (run by hand)" : ""}: `,
+    h("span", { class: r.status === "ok" ? "tag" : "tag warn" }, r.status),
+    exit,
+  ];
+}
+
+function pendingJob(id: GroupId, j: JobView, unsupported: boolean, show: (o: JobsOverview) => void): HTMLElement {
+  const accept = h("button", { class: "primary", disabled: unsupported }, "Accept and turn on");
+  accept.addEventListener("click", () =>
+    busy(accept, "Accepting…", async () => {
+      show(await api.acceptJob(id, j.id, j.hash));
+      toast(`${j.title} runs ${j.schedule}`);
+    }),
+  );
+  const always = h("button", { disabled: unsupported }, `Always allow jobs from ${groupKey(id)}`);
+  always.addEventListener("click", () =>
+    busy(always, "Allowing…", async () => {
+      show(await api.setJobsAutoAccept(id, true));
+      toast(`Jobs from ${groupKey(id)} now run without asking`);
+    }),
+  );
+  return h(
+    "li",
+    { class: "job pending" },
+    h("div", { class: "row-title" }, j.title, h("span", { class: "tag warn" }, j.changed ? "changed, needs your OK again" : "needs your OK")),
+    h("p", { class: "small" }, h("strong", null, j.schedule), ` (your time), for at most ${j.timeoutMinutes} min, in `, h("code", null, j.cwd), "."),
+    h("p", { class: "small" }, "Claude Code gets this prompt:"),
+    h("pre", { class: "logs prompt" }, j.prompt),
+    permission(j.permissionMode),
+    j.args.length > 0 && h("p", { class: "small" }, "Claude Code options: ", h("code", null, j.args.join(" ")), j.args.includes("--chrome") && " (uses Chrome through Claude in Chrome when it is running)"),
+    j.report && h("p", { class: "muted small" }, "Its report: ", h("code", null, j.report)),
+    h("p", { class: "muted small" }, "It only runs on this device after you accept it. If the group changes it, it stops until you accept it again."),
+    h("div", { class: "actions" }, accept, always),
+    h("p", { class: "muted small" }, `"Always allow" accepts this job and every new or changed job of ${groupKey(id)} from now on, without showing it to you first. You get a notification each time.`),
+  );
+}
+
+function acceptedJob(id: GroupId, j: JobView, show: (o: JobsOverview) => void): HTMLElement {
+  const toggleId = `job-on-${j.id}`;
+  const toggle = h("input", { id: toggleId, type: "checkbox", checked: j.enabled });
+  toggle.addEventListener("change", () => {
+    const on = toggle.checked;
+    toggle.disabled = true;
+    api.setJobEnabled(id, j.id, on).then(
+      (o) => {
+        show(o);
+        toast(on ? `${j.title} is on` : `${j.title} is off`);
+      },
+      (e) => {
+        toggle.checked = !on;
+        toggle.disabled = false;
+        toast(errorText(e), "error");
+      },
+    );
+  });
+  const run = h("button", { disabled: j.running }, "Run now");
+  run.addEventListener("click", () => busy(run, "Starting…", async () => show(await api.runJobNow(id, j.id))));
+  const open = (label: string, kind: "log" | "report") => {
+    const b = h("button", null, label);
+    b.addEventListener("click", () => api.openJobFile(id, j.id, kind).catch((e) => toast(errorText(e), "error")));
+    return b;
+  };
+  const mode = j.permissionMode === "bypassPermissions" ? "tag warn" : "tag off";
+  return h(
+    "li",
+    { class: "job" },
+    h(
+      "div",
+      { class: "row" },
+      h(
+        "div",
+        { class: "grow" },
+        h("div", { class: "row-title" }, j.title, h("span", { class: mode }, j.permissionMode)),
+        h("div", { class: "muted small" }, j.enabled ? j.schedule : `Off · ${j.schedule}`),
+        h("div", { class: "small" }, lastRunText(j)),
+        j.error && h("div", { class: "error-text small" }, j.error),
+      ),
+      h("div", { class: "check" }, toggle, h("label", { for: toggleId }, "On")),
+    ),
+    h(
+      "details",
+      null,
+      h("summary", { class: "small" }, "Prompt"),
+      h("pre", { class: "logs prompt" }, j.prompt),
+      j.args.length > 0 && h("p", { class: "small" }, "Options: ", h("code", null, j.args.join(" "))),
+    ),
+    h("div", { class: "actions" }, run, j.hasLog && open("Open log", "log"), j.hasReport && open("Open report", "report")),
+  );
+}
+
+/** "Run this group's jobs without asking": per device, off by default. */
+function autoAcceptSetting(id: GroupId, o: JobsOverview, show: (o: JobsOverview) => void): HTMLElement {
+  const box = h("input", { id: "jobs-auto", type: "checkbox", checked: o.autoAccept, disabled: o.unsupported !== null });
+  box.addEventListener("change", () => {
+    const on = box.checked;
+    box.disabled = true;
+    api.setJobsAutoAccept(id, on).then(
+      (next) => {
+        show(next);
+        toast(on ? `Jobs from ${groupKey(id)} now run without asking` : `New or changed jobs from ${groupKey(id)} need your OK again`);
+      },
+      (e) => {
+        box.checked = !on;
+        box.disabled = false;
+        toast(errorText(e), "error");
+      },
+    );
+  });
+  const warning = "New or changed jobs from this group then run on this device without your review, with the permissions the group gives them (bypassPermissions included). You get a notification each time. Jobs you turned off stay off.";
+  return h(
+    "div",
+    { class: "jobs-auto" },
+    h("div", { class: "check" }, box, h("label", { for: "jobs-auto" }, "Run this group's jobs without asking")),
+    o.autoAccept
+      ? h("div", { class: "notice perm" }, h("div", { class: "notice-text" }, warning))
+      : h("p", { class: "muted small" }, warning),
+  );
+}
+
+function jobsBody(id: GroupId, o: JobsOverview, show: (o: JobsOverview) => void): (HTMLElement | false | null | HTMLElement[])[] {
+  if (o.jobs.length === 0 && o.problems.length === 0) {
+    return [h("p", { class: "muted" }, "This group schedules no jobs."), o.autoAccept && autoAcceptSetting(id, o, show)];
+  }
+  const pending = o.jobs.filter((j) => !j.accepted);
+  const accepted = o.jobs.filter((j) => j.accepted);
+  return [
+    autoAcceptSetting(id, o, show),
+    o.unsupported !== null && h("div", { class: "notice" }, h("div", { class: "notice-text" }, o.unsupported)),
+    pending.length > 0 && h("ul", { class: "list flat jobs", "aria-label": "Jobs waiting for your OK" }, pending.map((j) => pendingJob(id, j, o.unsupported !== null, show))),
+    accepted.length > 0 && h("ul", { class: "list flat jobs", "aria-label": "Accepted jobs" }, accepted.map((j) => acceptedJob(id, j, show))),
+    o.problems.length > 0 && [
+      h("h3", null, "Skipped"),
+      h("p", { class: "muted small" }, "These entries of schedules.json are not valid, so they never run."),
+      h(
+        "ul",
+        { class: "list flat", "aria-label": "Skipped jobs" },
+        o.problems.map((p) => h("li", { class: "row" }, h("div", { class: "grow small" }, p.id !== null && h("code", null, p.id), p.id !== null && ": ", p.message))),
+      ),
+    ],
+  ];
+}
+
+function jobsCard(id: GroupId): HTMLElement {
+  const body = h("div", null, spinner("Reading the group's scheduled jobs"));
+  const section = h(
+    "section",
+    { class: "card", "aria-labelledby": "jobs-h" },
+    h("h2", { id: "jobs-h" }, "Scheduled jobs"),
+    h("p", { class: "muted small" }, "Claude Code tasks this group runs on a schedule. Each one needs your OK on this device first, unless you let this group's jobs run without asking."),
+    body,
+  );
+  let timer: number | undefined;
+  const show = (o: JobsOverview) => {
+    window.clearTimeout(timer);
+    replace(body, jobsBody(id, o, show));
+    // Follow a run until it ends; stop once the screen is gone.
+    if (o.jobs.some((j) => j.running)) {
+      timer = window.setTimeout(() => {
+        if (section.isConnected) api.jobs(id).then(show, () => {});
+      }, 2000);
+    }
+  };
+  api.jobs(id).then(show, (e) => replace(body, errorBox(errorText(e))));
+  return section;
+}
+
 function shareCard(id: GroupId): HTMLElement {
   const select = h("select", { id: "skill" });
   const share = h("button", { class: "primary" }, "Share");
@@ -354,7 +573,9 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
       replace(
         body,
         g.lastError && h("div", { class: "error", role: "alert" }, g.lastError),
+        pluginNotice(g.id),
         contentsCard(g.id),
+        jobsCard(g.id),
         problemsCard(g),
         membersCard(g, load),
         shareCard(g.id),

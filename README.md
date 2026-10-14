@@ -45,6 +45,10 @@ The app finds group repos by their `claude-sync-group` topic. It does not read o
 
 A group can share Claude Code plugins. A plugin runs code on every member's machine. Settings, hooks and skills from the group also change what Claude Code does on your computer. Only join groups whose members you trust, and only add people you trust to your own group.
 
+## Group scheduled jobs
+
+A group repo can hold a `schedules.json` that asks Claude Code to run a prompt on a schedule, for example a weekly refresh of everyone's setup. The tray app registers a job with Task Scheduler (Windows) or launchd (macOS) only after you accept it on the group's screen, which shows the prompt, its options, the permission mode and the schedule. Any change to the job needs your OK again, and each job has an on/off toggle. If you trust a group, you can let its jobs run without asking (off by default, per device); you then get a notification for each new or changed job instead. Linux is not supported yet. The app also installs the plugins a group turns on (`claude plugin install`) and shows on the group screen any it could not install. Details are in [docs/architecture.md](docs/architecture.md) §17 and §18.
+
 ## Privacy
 
 - Your GitHub token is kept in the operating system's keychain (Windows Credential Manager, macOS Keychain). It is never written to files or logs.
