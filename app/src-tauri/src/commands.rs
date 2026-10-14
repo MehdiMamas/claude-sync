@@ -387,6 +387,13 @@ pub async fn feedback_attach_file(data: String) -> Res<Screenshot> {
 }
 
 #[tauri::command]
+pub async fn feedback_paste_image() -> Res<Screenshot> {
+    tauri::async_runtime::spawn_blocking(feedback::paste_clipboard)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn feedback_submit(app: AppHandle, report: FeedbackInput) -> Res<FeedbackResult> {
     feedback::submit(&app, report).await
 }

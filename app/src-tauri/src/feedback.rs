@@ -110,6 +110,26 @@ pub fn attach_file(data_b64: &str) -> Result<Screenshot, Error> {
     prepare(img)
 }
 
+/// The image on the clipboard (a screenshot tool's copy, a copied image).
+pub fn paste_clipboard() -> Result<Screenshot, Error> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| format!("clipboard: {e}"))?;
+    let data = clipboard.get_image().map_err(|e| match e {
+        arboard::Error::ContentNotAvailable => "there is no image on the clipboard".to_string(),
+        e => format!("clipboard: {e}"),
+    })?;
+    from_rgba(data.width, data.height, data.bytes.into_owned())
+}
+
+fn from_rgba(width: usize, height: usize, bytes: Vec<u8>) -> Result<Screenshot, Error> {
+    let (w, h) = (u32::try_from(width), u32::try_from(height));
+    let rgba = match (w, h) {
+        (Ok(w), Ok(h)) if w > 0 && h > 0 => image::RgbaImage::from_raw(w, h, bytes),
+        _ => None,
+    }
+    .ok_or("the clipboard image is malformed")?;
+    prepare(DynamicImage::ImageRgba8(rgba))
+}
+
 /// At most `MAX_WIDTH` wide; PNG if it fits in `MAX_BYTES`, else JPEG at falling quality.
 pub fn prepare(img: DynamicImage) -> Result<Screenshot, Error> {
     let img = if img.width() > MAX_WIDTH {
@@ -311,6 +331,14 @@ mod tests {
         let s = prepare(img).unwrap();
         assert_eq!((s.mime.as_str(), s.width, s.height), ("image/png", 100, 50));
         assert_eq!(B64.decode(&s.data).unwrap().len(), s.bytes);
+    }
+
+    #[test]
+    fn clipboard_rgba_becomes_a_png() {
+        let s = from_rgba(4, 3, vec![200; 4 * 3 * 4]).unwrap();
+        assert_eq!((s.mime.as_str(), s.width, s.height), ("image/png", 4, 3));
+        assert!(from_rgba(4, 3, vec![0; 10]).is_err());
+        assert!(from_rgba(0, 0, Vec::new()).is_err());
     }
 
     #[test]
