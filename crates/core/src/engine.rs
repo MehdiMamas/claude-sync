@@ -706,7 +706,7 @@ impl Engine {
                 .conflicts
                 .extend(self.save_conflicts(id, &merged.conflicts)?);
             let mut to_apply = merged.merged;
-            to_apply.remove(group::FILE);
+            to_apply.retain(|p, _| !group::is_repo_only(p));
             // A local edit that is not being shared stays a local edit: the apply gets the
             // group's version, so it leaves the edit in place instead of adopting it.
             for p in merged.to_push.keys() {
@@ -779,7 +779,7 @@ impl Engine {
     }
 
     /// The local side of the merge. The apply layer reads managed files back; the engine
-    /// supplies the rest from the base: the group file (repo only), paths the apply layer did
+    /// supplies the rest from the base: repo-only files (group file, schedules), paths the apply layer did
     /// not write (collisions), paths missing locally that the user did not choose to delete
     /// (kept local, or not readable back), and plugin files grown over the size cap (noted
     /// in `too_large`).
@@ -808,7 +808,7 @@ impl Engine {
         let paths: BTreeSet<String> = base.keys().chain(&held).cloned().collect();
         for p in paths {
             let unshared_delete = !local.contains_key(&p) && !status.shared.contains(&p);
-            if p == group::FILE || held.contains(&p) || unshared_delete {
+            if group::is_repo_only(&p) || held.contains(&p) || unshared_delete {
                 match base.get(&p) {
                     Some(bytes) => local.insert(p, bytes.clone()),
                     None => local.remove(&p),
@@ -1016,6 +1016,23 @@ pub(crate) fn save_base_dir(dir: &Path, base: &Base) -> crate::Result<()> {
     }
     std::fs::rename(&new, dir)?;
     remove_dir_if_exists(&old)
+}
+
+/// One file of a group's base snapshot (`base.old` after a crash in the middle of a save):
+/// how the app reads repo-only files such as `schedules.json`. `None`: the group has none.
+pub fn read_base_file(paths: &Paths, id: &GroupId, path: &str) -> crate::Result<Option<Vec<u8>>> {
+    let dir = paths.base_dir(id);
+    let Some(dir) = [dir.clone(), dir.with_extension("old")]
+        .into_iter()
+        .find(|d| d.join("head.json").is_file() || d.join("files").is_dir())
+    else {
+        return Ok(None);
+    };
+    match std::fs::read(join_rel(&dir.join("files"), path)) {
+        Ok(b) => Ok(Some(b)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// The group file of a snapshot, and `SchemaTooNew` when it is from a newer app: then the
