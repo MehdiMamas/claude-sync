@@ -1,0 +1,12 @@
+# Security
+
+Please do not report security problems in a public issue, and do not use the app's feedback form for them: feedback becomes a public issue.
+
+Report them privately instead:
+
+- On GitHub: open this repo's **Security** tab and click **Report a vulnerability**.
+- Or by email: mehdimamasxd@gmail.com.
+
+Say what the problem is, how to reproduce it, and which version and operating system you used. You will get an answer as soon as possible. Fixes ship in a new release, and the app updates itself.
+
+Things worth reporting include a way to read another person's GitHub token, to change a group you are not a member of, to run code on a member's machine without it coming from the group's repo, or to make the relay leak its own token.

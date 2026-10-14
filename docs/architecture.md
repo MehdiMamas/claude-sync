@@ -125,7 +125,7 @@ Moves the merged group state into `~/.claude` without touching anything it does 
 
 ## 8. Settings merge
 
-`settings.shared.json` is merged into `~/.claude/settings.json`, keeping v0's rules (`README.md`, "Sharing settings") and adding ownership so removals work:
+`settings.shared.json` is merged into `~/.claude/settings.json`, keeping the v0 CLI's rules (`SPEC.md`, `lib/`) and adding ownership so removals work:
 
 - Objects merge key by key. Arrays get the shared items they lack, appended after local items. For plain values, the shared value wins.
 - `~/.claude-sync/settings-owned.json` records, per group, every value the app set (JSON pointer and value) and every array item it added.
