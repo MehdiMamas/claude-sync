@@ -91,7 +91,20 @@ pub trait ApplyLayer: Send + Sync {
     ) -> crate::Result<ApplyReport>;
     fn remove_group(&self, paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport>;
     fn keep_local(&self, paths: &Paths, group: &GroupId, path: &str) -> crate::Result<()>;
+    /// Put the group's version (`None`: the group does not have it) of `path` back.
+    fn undo(
+        &self,
+        paths: &Paths,
+        group: &GroupId,
+        path: &str,
+        group_version: Option<&[u8]>,
+    ) -> crate::Result<()>;
     fn local_edits(&self, paths: &Paths) -> crate::Result<Vec<LocalEdit>>;
+    /// Paths the group ships that this device does not manage (kept local, collisions,
+    /// unsafe). The engine uses the base version as their local side.
+    fn excluded_paths(&self, _paths: &Paths, _group: &GroupId) -> crate::Result<BTreeSet<String>> {
+        Ok(BTreeSet::new())
+    }
 }
 
 /// `crate::apply` and `crate::watch` on the real `~/.claude`.
@@ -116,8 +129,20 @@ impl ApplyLayer for FsApply {
     fn keep_local(&self, paths: &Paths, group: &GroupId, path: &str) -> crate::Result<()> {
         crate::apply::keep_local(paths, group, path)
     }
+    fn undo(
+        &self,
+        paths: &Paths,
+        group: &GroupId,
+        path: &str,
+        group_version: Option<&[u8]>,
+    ) -> crate::Result<()> {
+        crate::apply::undo(paths, group, path, group_version)
+    }
     fn local_edits(&self, paths: &Paths) -> crate::Result<Vec<LocalEdit>> {
         crate::watch::local_edits(paths)
+    }
+    fn excluded_paths(&self, paths: &Paths, group: &GroupId) -> crate::Result<BTreeSet<String>> {
+        crate::apply::excluded_paths(paths, group)
     }
 }
 
@@ -401,9 +426,12 @@ impl Engine {
         let id = &edit.group;
         self.require_joined(id)?;
         let mut status = self.load_status(id);
+        // A settings value (`settings.shared.json#/env/X`) is shared with its file.
+        let file = edit.path.split_once('#').map_or(&*edit.path, |(f, _)| f);
+        let whole_file = file == edit.path;
         match action {
             EditAction::Share => {
-                status.shared.insert(edit.path.clone());
+                status.shared.insert(file.to_string());
                 self.save_status(id, &status)?;
                 match self.sync_group(id, None).await {
                     (_, Some(e)) => Err(e),
@@ -412,19 +440,19 @@ impl Engine {
             }
             EditAction::KeepLocal => {
                 self.apply.keep_local(&self.paths, id, &edit.path)?;
-                status.shared.remove(&edit.path);
+                if whole_file {
+                    status.shared.remove(file);
+                }
                 self.save_status(id, &status)
             }
             EditAction::Undo => {
-                status.shared.remove(&edit.path);
+                if whole_file {
+                    status.shared.remove(file);
+                }
                 self.save_status(id, &status)?;
                 let base = self.load_base(id)?;
-                let (gf, _) = read_group_file(id, &base.files)?;
-                let order = AppState::load(&self.paths)?.groups;
-                let files = apply_view(&base.files, &gf);
-                self.apply
-                    .apply_group(&self.paths, id, &order, &files)
-                    .map(drop)
+                let version = base.files.get(file).map(Vec::as_slice);
+                self.apply.undo(&self.paths, id, &edit.path, version)
             }
         }
     }
@@ -721,19 +749,12 @@ impl Engine {
             .into_iter()
             .filter(|(p, _)| keep(p) && !group::is_repo_only(p))
             .collect();
-        let held: BTreeSet<&str> = status
-            .collisions
-            .iter()
-            .map(StoredCollision::path)
-            .collect();
-        let paths: BTreeSet<String> = base
-            .keys()
-            .cloned()
-            .chain(held.iter().map(|p| p.to_string()))
-            .collect();
+        let mut held = self.apply.excluded_paths(&self.paths, id)?;
+        held.extend(status.collisions.iter().map(|c| c.path().to_string()));
+        let paths: BTreeSet<String> = base.keys().chain(&held).cloned().collect();
         for p in paths {
             let unshared_delete = !local.contains_key(&p) && !status.shared.contains(&p);
-            if p == group::FILE || held.contains(p.as_str()) || unshared_delete {
+            if p == group::FILE || held.contains(&p) || unshared_delete {
                 match base.get(&p) {
                     Some(bytes) => local.insert(p, bytes.clone()),
                     None => local.remove(&p),
@@ -970,13 +991,6 @@ fn only(files: &FileSet, keep: impl Fn(&str) -> bool) -> FileSet {
         .collect()
 }
 
-/// What the apply layer gets from a snapshot: synced paths, without the group file.
-fn apply_view(files: &FileSet, gf: &GroupFile) -> FileSet {
-    let mut out = only(files, |p| group::is_allowlisted(p) && gf.syncs(p));
-    out.remove(group::FILE);
-    out
-}
-
 fn with_changes(mut files: FileSet, changes: &Changes) -> FileSet {
     for (path, content) in changes {
         match content {
@@ -1161,6 +1175,21 @@ mod tests {
                 removed: removed.into_keys().collect(),
                 ..Default::default()
             })
+        }
+        fn undo(
+            &self,
+            _: &Paths,
+            group: &GroupId,
+            path: &str,
+            version: Option<&[u8]>,
+        ) -> crate::Result<()> {
+            let mut st = self.st.lock().unwrap();
+            let files = st.local.entry(group.clone()).or_default();
+            match version {
+                Some(bytes) => files.insert(path.into(), bytes.to_vec()),
+                None => files.remove(path),
+            };
+            Ok(())
         }
         fn keep_local(&self, _: &Paths, _: &GroupId, path: &str) -> crate::Result<()> {
             self.st.lock().unwrap().kept.insert(path.into());
@@ -1393,7 +1422,8 @@ mod tests {
             .edit(&id, group::SHARED_SETTINGS, "{\"a\": 1, \"b\": 2}\n");
         repo.set_file(group::SHARED_SETTINGS, "{\"a\": 1, \"c\": 3}\n");
         bo.engine
-            .resolve_edit(&edit(&id, group::SHARED_SETTINGS), EditAction::Share)
+            // The watcher reports one settings value; its file is what gets shared.
+            .resolve_edit(&edit(&id, "settings.shared.json#/b"), EditAction::Share)
             .await
             .unwrap();
         let value: serde_json::Value =

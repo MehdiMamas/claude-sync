@@ -129,7 +129,8 @@ pub struct GitHubRepo {
     pub id: crate::GroupId,
     info: Mutex<Option<RepoInfo>>,
     etag: Mutex<Option<String>>,
-    last_head: Mutex<Option<Head>>,
+    /// Heads this object read or made, newest last (at most `KNOWN_HEADS`).
+    heads: Mutex<Vec<Head>>,
     /// Blob contents by SHA; blobs never change, so this only grows with the repo.
     blobs: Mutex<HashMap<String, Vec<u8>>>,
 }
@@ -166,6 +167,16 @@ fn b64() -> base64::engine::GeneralPurpose {
     base64::engine::general_purpose::STANDARD
 }
 
+/// A `422` from moving a branch because it moved first: "Update is not a fast forward", or
+/// "Reference cannot be updated" when the other push lands at the same moment.
+fn is_ref_race(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("fast forward") || m.contains("cannot be updated")
+}
+
+/// Branch heads remembered per repo to spot stale reads.
+const KNOWN_HEADS: usize = 64;
+
 /// GitHub answers `409 Git Repository is empty` for commits and refs of an empty repo.
 fn is_empty_repo(e: &Error) -> bool {
     matches!(e, Error::GitHub { status: 409, .. })
@@ -178,7 +189,7 @@ impl GitHubRepo {
             id,
             info: Mutex::default(),
             etag: Mutex::default(),
-            last_head: Mutex::default(),
+            heads: Mutex::default(),
             blobs: Mutex::default(),
         }
     }
@@ -197,18 +208,38 @@ impl GitHubRepo {
     }
 
     fn remember(&self, head: &Head) {
-        *self.last_head.lock().unwrap() = Some(head.clone());
+        let mut heads = self.heads.lock().unwrap();
+        if heads.last() != Some(head) {
+            heads.push(head.clone());
+            let extra = heads.len().saturating_sub(KNOWN_HEADS);
+            heads.drain(..extra);
+        }
+    }
+
+    /// GitHub can answer a read with a head older than one this object already saw (replica
+    /// lag right after a push). Branches only move forward here, so an older known head, or
+    /// "empty" after a commit, is stale: returns the newest known head instead.
+    fn newer_than(&self, read: &Head) -> Option<Head> {
+        let heads = self.heads.lock().unwrap();
+        let newest = heads.last()?;
+        let stale = if read.is_empty() {
+            !newest.is_empty()
+        } else {
+            newest != read && heads.iter().any(|h| h.commit == read.commit)
+        };
+        stale.then(|| newest.clone())
     }
 
     async fn tree_of(&self, commit: &str) -> crate::Result<String> {
-        if let Some(h) = self
-            .last_head
+        let known = self
+            .heads
             .lock()
             .unwrap()
-            .as_ref()
-            .filter(|h| h.commit == commit)
-        {
-            return Ok(h.tree.clone());
+            .iter()
+            .find(|h| h.commit == commit)
+            .map(|h| h.tree.clone());
+        if let Some(tree) = known {
+            return Ok(tree);
         }
         let c: CommitBody = self
             .gh
@@ -250,9 +281,15 @@ impl GitHubRepo {
     /// First commit of an empty repo. The Git Data API refuses to create blobs until the repo
     /// has a commit, so one file goes through the Contents API.
     async fn first_commit(&self, path: &str, content: &[u8], message: &str) -> crate::Result<Head> {
+        // The reply carries a git commit object (`tree.sha`), not a REST commit (`commit.tree.sha`).
+        #[derive(Deserialize)]
+        struct GitCommit {
+            sha: String,
+            tree: Sha,
+        }
         #[derive(Deserialize)]
         struct Reply {
-            commit: CommitReply,
+            commit: GitCommit,
         }
         let body = json!({ "message": message, "content": b64().encode(content) });
         let reply: Reply = match self
@@ -268,8 +305,44 @@ impl GitHubRepo {
         };
         Ok(Head {
             commit: reply.commit.sha,
-            tree: reply.commit.commit.tree.sha,
+            tree: reply.commit.tree.sha,
         })
+    }
+
+    /// The branch head. `conditional`: `None` when unchanged since the last read (ETag `304`).
+    /// Every read keeps the ETag, so after a pass that called `head()` the next
+    /// `head_if_changed` is a free `304`.
+    async fn fetch_head(&self, conditional: bool) -> crate::Result<Option<Head>> {
+        let branch = self.info().await?.default_branch;
+        let path = self.path(&format!("/commits/{branch}"));
+        let etag = conditional
+            .then(|| self.etag.lock().unwrap().clone())
+            .flatten();
+        let (read, etag) = match self
+            .gh
+            .get_if_changed::<CommitReply>(&path, etag.as_deref())
+            .await
+        {
+            Ok(crate::github::Conditional::NotModified) => return Ok(None),
+            Ok(crate::github::Conditional::Modified { value, etag }) => {
+                let head = Head {
+                    commit: value.sha,
+                    tree: value.commit.tree.sha,
+                };
+                (head, etag)
+            }
+            Err(e) if is_empty_repo(&e) => (Head::empty(), None),
+            Err(e) => return Err(e),
+        };
+        // A stale read is "unchanged"; its ETag is not kept so the next check asks again.
+        if let Some(newest) = self.newer_than(&read) {
+            return Ok((!conditional).then_some(newest));
+        }
+        let seen = self.heads.lock().unwrap().last() == Some(&read);
+        *self.etag.lock().unwrap() = etag;
+        self.remember(&read);
+        // An empty repo has no ETag: compare with the last read instead.
+        Ok((!conditional || !read.is_empty() || !seen).then_some(read))
     }
 }
 
@@ -280,54 +353,11 @@ impl RemoteRepo for GitHubRepo {
     }
 
     async fn head_if_changed(&self) -> crate::Result<Option<Head>> {
-        let branch = self.info().await?.default_branch;
-        let etag = self.etag.lock().unwrap().clone();
-        let path = self.path(&format!("/commits/{branch}"));
-        match self
-            .gh
-            .get_if_changed::<CommitReply>(&path, etag.as_deref())
-            .await
-        {
-            Ok(crate::github::Conditional::NotModified) => Ok(None),
-            Ok(crate::github::Conditional::Modified { value, etag }) => {
-                *self.etag.lock().unwrap() = etag;
-                let head = Head {
-                    commit: value.sha,
-                    tree: value.commit.tree.sha,
-                };
-                self.remember(&head);
-                Ok(Some(head))
-            }
-            Err(e) if is_empty_repo(&e) => {
-                let was_empty = self
-                    .last_head
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .is_some_and(Head::is_empty);
-                self.remember(&Head::empty());
-                Ok((!was_empty).then(Head::empty))
-            }
-            Err(e) => Err(e),
-        }
+        self.fetch_head(true).await
     }
 
     async fn head(&self) -> crate::Result<Head> {
-        let branch = self.info().await?.default_branch;
-        let head = match self
-            .gh
-            .get::<CommitReply>(&self.path(&format!("/commits/{branch}")))
-            .await
-        {
-            Ok(c) => Head {
-                commit: c.sha,
-                tree: c.commit.tree.sha,
-            },
-            Err(e) if is_empty_repo(&e) => Head::empty(),
-            Err(e) => return Err(e),
-        };
-        self.remember(&head);
-        Ok(head)
+        Ok(self.fetch_head(false).await?.expect("unconditional"))
     }
 
     async fn files_at(&self, commit: &str) -> crate::Result<FileSet> {
@@ -431,7 +461,7 @@ impl RemoteRepo for GitHubRepo {
             Err(Error::GitHub {
                 status: 422,
                 message,
-            }) if message.to_ascii_lowercase().contains("fast") => return Err(Error::PushRace),
+            }) if is_ref_race(&message) => return Err(Error::PushRace),
             r => r?,
         }
         let head = Head {
@@ -617,6 +647,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn head_keeps_the_etag_for_the_next_check() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/commits/main"))
+            .and(header("if-none-match", "\"e1\""))
+            .respond_with(ResponseTemplate::new(304))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/commits/main"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("etag", "\"e1\"")
+                    .set_body_json(commit_json("c1", "t1")),
+            )
+            .mount(&server)
+            .await;
+        assert_eq!(repo.head().await.unwrap(), head("c1", "t1"));
+        assert_eq!(repo.head_if_changed().await.unwrap(), None);
+    }
+
+    #[tokio::test]
     async fn empty_repo_has_an_empty_head() {
         let (server, repo) = setup().await;
         Mock::given(method("GET"))
@@ -764,6 +816,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_lagging_read_never_goes_back_to_an_older_head() {
+        let (server, repo) = setup().await;
+        let get_head = |c: &str, t: &str| {
+            Mock::given(method("GET"))
+                .and(path("/repos/o/r/commits/main"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(commit_json(c, t)))
+        };
+        get_head("c1", "t1").mount(&server).await;
+        let parent = repo.head().await.unwrap();
+        mount_commit_steps(&server, &parent).await;
+        Mock::given(method("PATCH"))
+            .and(path("/repos/o/r/git/refs/heads/main"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+        let new = repo
+            .commit(&parent, &changes(), "me@pc: update CLAUDE.md")
+            .await
+            .unwrap();
+        // GitHub still answers with the parent for a moment.
+        assert_eq!(repo.head().await.unwrap(), new);
+        assert_eq!(repo.head_if_changed().await.unwrap(), None);
+        server.reset().await;
+        get_head("c10", "t10").mount(&server).await;
+        assert_eq!(
+            repo.head_if_changed().await.unwrap(),
+            Some(head("c10", "t10"))
+        );
+    }
+
+    #[tokio::test]
     async fn non_fast_forward_is_a_push_race() {
         let (server, repo) = setup().await;
         let parent = head("c1", "t1");
@@ -783,6 +866,13 @@ mod tests {
         assert!(matches!(err, Error::PushRace));
     }
 
+    #[test]
+    fn ref_race_messages() {
+        assert!(is_ref_race("Update is not a fast forward"));
+        assert!(is_ref_race("Reference cannot be updated"));
+        assert!(!is_ref_race("Object does not exist"));
+    }
+
     #[tokio::test]
     async fn first_commit_of_an_empty_repo_goes_through_contents() {
         let (server, repo) = setup().await;
@@ -791,7 +881,7 @@ mod tests {
             .and(body_partial_json(json!({"content": "aGk="})))
             .respond_with(
                 ResponseTemplate::new(201)
-                    .set_body_json(json!({"commit": commit_json("c1", "t1")})),
+                    .set_body_json(json!({"commit": {"sha": "c1", "tree": {"sha": "t1"}}})),
             )
             .expect(1)
             .mount(&server)
