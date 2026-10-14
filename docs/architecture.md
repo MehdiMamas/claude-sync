@@ -168,7 +168,7 @@ v0 used `~/.claude-sync/` as a git clone of the personal repo. The app checks fo
 
 - **Tauri 2**, Rust backend plus a plain TypeScript UI. Tray icon with: status, Sync now, Open, Pause, Send feedback, Quit. Single instance. Starts at login (autostart plugin, on by default, can be turned off).
 - Closing the window destroys the webview, so the idle app is just the Rust process (target: under 30 MB RAM idle, under 15 MB installer).
-- Screens: Sign in (device code), Groups (list, status, last sync), Group (what the group gives this device, plugins that failed to install (§18), scheduled jobs (§17), members, invite by GitHub login, pending invitations, recent changes, conflicts, leave), Settings (device name, poll interval, start at login, pause, personal memory §16), Feedback.
+- Screens: Sign in (device code), Groups (list, status, last sync), Group (what the group gives this device, plugins that failed to install (§18), scheduled jobs (§17), members, invite by GitHub login, pending invitations, recent changes as an activity feed parsed from commit messages in `app/ui/src/activity.ts`, conflicts, leave), Settings (device name, poll interval, start at login, pause, personal memory §16), Feedback.
 - Logs: `tracing` to `~/.claude-sync/logs/claude-sync.log`, rotated daily, 7 kept, redacted (§9).
 
 ## 12. Relay (Vercel, free tier)

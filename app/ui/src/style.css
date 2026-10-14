@@ -646,3 +646,137 @@ details summary {
 .card > .form + .check {
   margin-top: 0.75rem;
 }
+
+/* Recent changes: the activity feed */
+.day + .day {
+  margin-top: 0.75rem;
+}
+.card .day-label {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.act {
+  display: flex;
+  gap: 0.7rem;
+  padding: 0.55rem 0;
+}
+.feed > .act + .act {
+  border-top: 1px solid var(--line);
+}
+.avatar {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #fff;
+  background: hsl(var(--h, 210) 55% 42%);
+  user-select: none;
+}
+.act-body {
+  flex: 1;
+  min-width: 0;
+}
+.act-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+.act-head .tag {
+  margin-left: 0;
+}
+.act-title {
+  font-weight: 600;
+}
+.act-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.act-icon.k-created,
+.act-icon.k-memberAdded {
+  color: var(--ok);
+}
+.act-icon.k-memberRemoved {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.act-icon.k-job {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+.chip {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  font-size: 0.75rem;
+  padding: 0 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.act-detail {
+  margin-top: 0.15rem;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+button.act-more {
+  padding: 0;
+  font-size: 0.85rem;
+}
+.act-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem;
+  margin-top: 0.15rem;
+}
+.act-who {
+  color: var(--text);
+}
+.device {
+  padding: 0 0.35rem;
+  border-radius: 4px;
+  background: var(--bg);
+}
+.act-meta button.link {
+  padding: 0;
+  font-size: inherit;
+  color: var(--muted);
+}
+.act-meta button.link:hover,
+.act-meta button.link:focus-visible {
+  color: var(--accent);
+}
+.feed-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.feed-body > .empty {
+  margin-bottom: 0;
+  padding: 1.25rem 1rem;
+}

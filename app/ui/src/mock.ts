@@ -1,8 +1,9 @@
 // A fake backend for `pnpm dev` in a plain browser (never bundled into the app).
 // `?signedOut` shows the sign-in screen; `?empty` shows a user with no groups; `?plugins`
-// shows the plugins reload notice; `?noSkills` shows a user with no skills to share.
+// shows the plugins reload notice; `?noSkills` shows a user with no skills to share;
+// `?noHistory` shows a group with no recent changes.
 // The first group has one job waiting for consent, one accepted job and a plugin warning.
-import type { Backend, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, PersonalStatus } from "./api";
+import type { Backend, CommitInfo, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, PersonalStatus } from "./api";
 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
@@ -47,6 +48,7 @@ const mehdiContents: GroupContents = {
       plugins: [
         { name: "model-router", description: "Routes turns, subagents and worker sessions to cheaper models when the work allows it.", version: "0.1.0", enabled: true },
         { name: "session-manager", description: "Replaces subagents with a managed hierarchy of background sessions.", version: "0.3.2", enabled: false },
+        { name: "setup-scout", description: "Reviews and refreshes this machine's Claude Code setup.", version: "0.1.0", enabled: true },
       ],
     },
   ],
@@ -156,6 +158,27 @@ function job(a: Record<string, unknown>): JobView {
   return j;
 }
 
+// Newest first, as GitHub lists them. Messages are real ones from a group repo.
+const H = 3600;
+const D = 86400;
+const commits: CommitInfo[] = (
+  [
+    ["MehdiMamas@DESKTOP-MEHDI: setup-scout: read X and LinkedIn through Chrome on scheduled runs too (read only); job passes --chrome so the scheduled run can use the browser extension when it is connected, and skips both sources quietly when it is not", "MehdiMamas", 600],
+    ["sara-dev@Saras-MacBook.local: update CLAUDE.md", "sara-dev", 50 * 60],
+    ["sara-dev@Saras-MacBook.local: update CLAUDE.md", "sara-dev", 54 * 60],
+    ["sara-dev@saras-macbook.local: update CLAUDE.md", "sara-dev", 58 * 60],
+    ["MehdiMamas@desktop-mehdi: add member ibrahim-ahidar", "MehdiMamas", 3 * H],
+    ["yassine@yassine-mbp: share skills/pdf-tools", "yassine", D + 2 * H],
+    ["MehdiMamas@DESKTOP-MEHDI: group memory: personal vs group scope, group-memory skill, mods are made claude-sync wide", "MehdiMamas", D + 5 * H],
+    ["sara-dev@laptop: skills/review: tighten the checklist\n\nAsks for a test per bug fix and flags unused exports.", "sara-dev", 2 * D],
+    ["yassine@yassine-mbp: update settings.shared.json", "yassine", 3 * D],
+    ["MehdiMamas@DESKTOP-MEHDI: update plugins/claude-mods/mods/model-router/router.js, plugins/claude-mods/mods/model-router/README.md", "MehdiMamas", 4 * D],
+    ["session-manager: 0.2.0", "MehdiMamas", 9 * D],
+    ["yassine@yassine-mbp: remove agents/old-reviewer.md", "yassine", 10 * D],
+    ["MehdiMamas@DESKTOP-MEHDI: create group (start the repo)", "MehdiMamas", 12 * D],
+  ] as const
+).map(([message, author, ago], i) => ({ sha: `${(0x3f2a9c1d + i * 7919).toString(16)}e0a7b55c`, message, author, atUnix: now - ago }));
+
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   personal_status: () => personal,
   personal_enable: () => setPersonal({ enabled: true, decided: true, offer: false }),
@@ -180,11 +203,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   local_edits: () => (q.has("empty") ? [] : [{ group: groups[0].id, path: "skills/review/SKILL.md", deleted: false }]),
   local_skills: () => (q.has("noSkills") ? [] : ["my-notes", "pdf-tools", "release-checklist"]),
   group_contents: (a) => ((a.group as GroupId).owner === "acme" ? acmeContents : mehdiContents),
-  recent_commits: () => [
-    { sha: "3f2a9c1d0e", message: "skills/review: tighten checklist", author: "sara-dev (laptop)", atUnix: now - 900 },
-    { sha: "a81be22f77", message: "share skill pdf-tools", author: "mehdimamas (desktop)", atUnix: now - 7200 },
-    { sha: "09cd11aa42", message: "settings: add permissions", author: "yassine (mac)", atUnix: now - 90000 },
-  ],
+  recent_commits: (a) => (q.has("noHistory") ? [] : commits.slice(0, Number(a.limit ?? 20))),
   sync_now: () => ({ groups: [] }),
   jobs: (a) => ((a.group as GroupId).owner === "acme" ? emptyJobs : mehdiJobs),
   accept_job: (a) => {
@@ -215,6 +234,9 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   retry_plugins: () => {
     pluginWarnings = [];
     return pluginWarnings;
+  },
+  open_url: (a) => {
+    window.open(String(a.url), "_blank", "noopener");
   },
   get_settings: () => ({ deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false }),
   set_settings: (a) => ({ deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false, ...(a.settings as object) }),

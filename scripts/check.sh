@@ -24,6 +24,7 @@ step() {
 if [ ! -d app/ui/node_modules ]; then
   step "pnpm -C app/ui install" pnpm -C app/ui install --frozen-lockfile
 fi
+step "pnpm -C app/ui test" pnpm -C app/ui test
 step "pnpm -C app/ui build" pnpm -C app/ui build
 step "cargo fmt --check" cargo fmt --all -- --check
 step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
