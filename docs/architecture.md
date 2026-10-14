@@ -50,7 +50,7 @@ agents/*.md             shared subagents
 commands/*.md           shared slash commands
 output-styles/*.md      shared output styles
 plugins/<marketplace>/  shared plugin marketplaces (below)
-schedules.json          scheduled Claude Code jobs (§16); repo only, never placed in ~/.claude
+schedules.json          scheduled Claude Code jobs (§17); repo only, never placed in ~/.claude
 ```
 
 `claude-sync.json`:
@@ -156,10 +156,10 @@ Ported from v0 (`lib/secrets.sh`, `SPEC.md` §7): `github_pat_…`, `sk-ant-…`
   groups/<owner>__<repo>/CLAUDE.md
   marketplaces/<name>/   plugin marketplaces bundled in a group repo (§4, §7)
   jobs.json              per job: group, accepted hash, on/off, claude path, registered task;
-                         groups whose jobs run without asking (§16)
-  jobs/<id>/             run lock and last-run.json of a job (§16)
-  plugins.json           group plugin installs: what was last done, warnings (§17)
-  conflicts/  backups/  logs/   (logs/jobs/<id>/<UTC stamp>.log: job output, §16)
+                         groups whose jobs run without asking (§17)
+  jobs/<id>/             run lock and last-run.json of a job (§17)
+  plugins.json           group plugin installs: what was last done, warnings (§18)
+  conflicts/  backups/  logs/   (logs/jobs/<id>/<UTC stamp>.log: job output, §17)
 ```
 
 v0 used `~/.claude-sync/` as a git clone of the personal repo. The app checks for a `.git` folder there first and, if found, leaves it alone and stores its own state in `~/.claude-sync/app/` until personal sync is migrated.
@@ -305,7 +305,7 @@ Strict validation; a bad job is skipped and listed on the group screen, never ha
 
 ## 18. Group plugin install
 
-Placing a group's marketplace (§7) and its `enabledPlugins` (§8) is not enough: Claude Code loads only plugins installed in its plugin cache. So after a sync whose apply changed a group's bundled marketplaces (fingerprint) or added a plugin the group turns on (`true` in the group's `settings.shared.json` and in the local `settings.json`), the app runs in the background, through the same `claude` resolver as §16:
+Placing a group's marketplace (§7) and its `enabledPlugins` (§8) is not enough: Claude Code loads only plugins installed in its plugin cache. So after a sync whose apply changed a group's bundled marketplaces (fingerprint) or added a plugin the group turns on (`true` in the group's `settings.shared.json` and in the local `settings.json`), the app runs in the background, through the same `claude` resolver as §17:
 
 1. `claude plugin marketplace update <mp>` once per changed marketplace;
 2. `claude plugin install <name>@<mp> --scope user` for each group-enabled plugin that `claude plugin list --json` does not show;

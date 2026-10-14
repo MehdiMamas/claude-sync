@@ -1,4 +1,4 @@
-//! Finding and running the `claude` CLI (§16, §17).
+//! Finding and running the `claude` CLI (§17, §18).
 //!
 //! Neither the tray app nor a scheduled task gets a login shell's `PATH` (launchd has almost
 //! none), so the path is resolved here: `where.exe` on Windows (an `.exe` before a `.cmd`),

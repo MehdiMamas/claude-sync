@@ -459,7 +459,7 @@ pub fn open_path(app: AppHandle, ctx: CtxState, path: String, reveal: Option<boo
     }
 }
 
-/// The scheduled jobs of `group` (§16): pending ones, accepted ones, what was skipped.
+/// The scheduled jobs of `group` (§17): pending ones, accepted ones, what was skipped.
 #[tauri::command]
 pub async fn jobs(ctx: CtxState<'_>, group: GroupId) -> Res<JobsOverview> {
     app_jobs::list(ctx.inner().clone(), group).await
@@ -510,7 +510,7 @@ pub fn open_job_file(
     app_jobs::open_file(&app, &ctx, &group, &id, &kind)
 }
 
-/// Plugins of `group` that could not be installed or updated (§17).
+/// Plugins of `group` that could not be installed or updated (§18).
 #[tauri::command]
 pub fn plugin_warnings(ctx: CtxState, group: GroupId) -> Res<Vec<String>> {
     app_jobs::plugin_warnings(&ctx, &group)

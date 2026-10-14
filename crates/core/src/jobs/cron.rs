@@ -1,4 +1,4 @@
-//! The cron subset a job may use (§16): exact minutes and hours (numbers or comma lists),
+//! The cron subset a job may use (§17): exact minutes and hours (numbers or comma lists),
 //! `*` for day of month and month, and `*` or 0-6 lists and ranges for the day of week.
 //! That is what both Task Scheduler and launchd can express without surprises.
 

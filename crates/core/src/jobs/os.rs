@@ -1,4 +1,4 @@
-//! The OS scheduler a job is registered with (§16): Task Scheduler on Windows, a launchd
+//! The OS scheduler a job is registered with (§17): Task Scheduler on Windows, a launchd
 //! agent on macOS. Behind [`Scheduler`] so the rest is tested with a fake; normal tests never
 //! register real tasks.
 use super::cron::Schedule;

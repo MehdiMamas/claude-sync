@@ -1,4 +1,4 @@
-//! Group scheduled jobs (§16): `schedules.json` in a group repo lists Claude Code prompts to
+//! Group scheduled jobs (§17): `schedules.json` in a group repo lists Claude Code prompts to
 //! run on a schedule. A job runs on a device only after its member accepted it there; the
 //! acceptance is bound to a hash of what the job does, so any change to it revokes it.
 //!

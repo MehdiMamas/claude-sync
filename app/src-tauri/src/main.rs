@@ -37,7 +37,7 @@ fn init_logging(paths: &Paths) -> Option<Box<dyn std::any::Any + Send>> {
     }
 }
 
-/// The headless subcommands (§16): started by the OS scheduler, "Run now" and the
+/// The headless subcommands (§17): started by the OS scheduler, "Run now" and the
 /// uninstaller. They run before Tauri starts, so there is no tray, no window and no
 /// single-instance check. `None`: start the app.
 fn headless(paths: &Paths) -> Option<i32> {

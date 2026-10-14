@@ -47,7 +47,7 @@ A group can share Claude Code plugins. A plugin runs code on every member's mach
 
 ## Group scheduled jobs
 
-A group repo can hold a `schedules.json` that asks Claude Code to run a prompt on a schedule, for example a weekly refresh of everyone's setup. The tray app registers a job with Task Scheduler (Windows) or launchd (macOS) only after you accept it on the group's screen, which shows the prompt, its options, the permission mode and the schedule. Any change to the job needs your OK again, and each job has an on/off toggle. If you trust a group, you can let its jobs run without asking (off by default, per device); you then get a notification for each new or changed job instead. Linux is not supported yet. The app also installs the plugins a group turns on (`claude plugin install`) and shows on the group screen any it could not install. Details are in [docs/architecture.md](docs/architecture.md) §16 and §17.
+A group repo can hold a `schedules.json` that asks Claude Code to run a prompt on a schedule, for example a weekly refresh of everyone's setup. The tray app registers a job with Task Scheduler (Windows) or launchd (macOS) only after you accept it on the group's screen, which shows the prompt, its options, the permission mode and the schedule. Any change to the job needs your OK again, and each job has an on/off toggle. If you trust a group, you can let its jobs run without asking (off by default, per device); you then get a notification for each new or changed job instead. Linux is not supported yet. The app also installs the plugins a group turns on (`claude plugin install`) and shows on the group screen any it could not install. Details are in [docs/architecture.md](docs/architecture.md) §17 and §18.
 
 ## Privacy
 

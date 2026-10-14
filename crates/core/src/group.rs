@@ -12,7 +12,7 @@ pub const DEFAULT_REPO: &str = "claude-sync-data";
 pub const README: &str = "README.md";
 pub const CLAUDE_MD: &str = "CLAUDE.md";
 pub const SHARED_SETTINGS: &str = "settings.shared.json";
-/// Scheduled jobs (§16). Repo only: read from the base snapshot, never applied to `~/.claude`.
+/// Scheduled jobs (§17). Repo only: read from the base snapshot, never applied to `~/.claude`.
 pub const SCHEDULES: &str = "schedules.json";
 /// Plugin marketplaces bundled in the group repo: `plugins/<marketplace>/...`.
 pub const PLUGINS: &str = "plugins";

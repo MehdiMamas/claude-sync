@@ -1,4 +1,4 @@
-//! Group scheduled jobs (§16) and group plugin installs (§17) in the app: the headless
+//! Group scheduled jobs (§17) and group plugin installs (§18) in the app: the headless
 //! `run-job` / `remove-jobs` subcommands the OS scheduler and the uninstaller start, the
 //! reconcile after every sync, join and leave, and the commands of the group screen.
 use crate::ctx::Ctx;
@@ -211,7 +211,7 @@ fn real_cli(paths: &Paths) -> Option<Box<dyn PluginCli>> {
     Some(Box::new(RealCli::new(claude, paths, &home)))
 }
 
-/// Install or update the plugins `groups` turn on (§17), in the background. `force`: Retry.
+/// Install or update the plugins `groups` turn on (§18), in the background. `force`: Retry.
 pub fn ensure_plugins_soon(app: &AppHandle, groups: Vec<GroupId>, force: bool) {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {

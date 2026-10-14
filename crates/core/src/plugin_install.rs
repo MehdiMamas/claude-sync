@@ -1,4 +1,4 @@
-//! Installing the plugins a group turns on (§17).
+//! Installing the plugins a group turns on (§18).
 //!
 //! Placing a bundled marketplace and setting `enabledPlugins` is not enough: Claude Code only
 //! loads a plugin that is installed in its plugin cache, and it does not install one on its

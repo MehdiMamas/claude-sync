@@ -1,4 +1,4 @@
-//! The runner behind `claude-sync run-job <owner/repo> <id>` (§16). It checks the
+//! The runner behind `claude-sync run-job <owner/repo> <id>` (§17). It checks the
 //! acceptance again, takes the job's lock, skips when offline, runs
 //! `claude -p <prompt> [args] --permission-mode <mode>` in the job's folder without a window, kills
 //! it at the timeout, and keeps the output and the outcome.
