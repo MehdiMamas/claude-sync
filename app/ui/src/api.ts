@@ -86,6 +86,17 @@ export interface GroupSyncReport {
 export interface SyncReport {
   groups: GroupSyncReport[];
 }
+/** The user's own CLAUDE.md text to share with a group, as edited in the preview. */
+export interface ClaudeMdShare {
+  text: string;
+  /** Take the shared lines out of the user's own CLAUDE.md (it now comes from the group). */
+  removeOwn: boolean;
+}
+export interface ClaudeMdShared {
+  /** False: the group's CLAUDE.md already had the text. */
+  appended: boolean;
+  removedOwn: boolean;
+}
 export interface CommitInfo {
   sha: string;
   message: string;
@@ -308,7 +319,7 @@ export const api = {
   signOut: () => call<void>("sign_out"),
   status: () => call<Status>("status"),
   groups: () => call<GroupStatus[]>("groups"),
-  createGroup: (name: string, repo?: string) => call<GroupStatus>("create_group", { name, repo }),
+  createGroup: (name: string, repo?: string, claudeMd?: ClaudeMdShare) => call<GroupStatus>("create_group", { name, repo, claudeMd }),
   invitations: () => call<Invitation[]>("invitations"),
   acceptInvitation: (id: number) => call<GroupStatus>("accept_invitation", { id }),
   discover: () => call<GroupId[]>("discover"),
@@ -321,6 +332,8 @@ export const api = {
   groupContents: (group: GroupId) => call<GroupContents>("group_contents", { group }),
   localSkills: () => call<string[]>("local_skills"),
   shareSkill: (group: GroupId, skill: string) => call<void>("share_skill", { group, skill }),
+  claudeMdPreview: () => call<string>("claude_md_preview"),
+  shareClaudeMd: (group: GroupId, share: ClaudeMdShare) => call<ClaudeMdShared>("share_claude_md", { group, share }),
   recentCommits: (group: GroupId, limit = 20) => call<CommitInfo[]>("recent_commits", { group, limit }),
   syncNow: () => call<SyncReport>("sync_now"),
   getSettings: () => call<Settings>("get_settings"),

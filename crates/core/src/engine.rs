@@ -21,6 +21,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod claude_md;
+pub use claude_md::{ClaudeMdShare, ClaudeMdShared};
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupStatus {
@@ -324,8 +327,15 @@ impl Engine {
             .collect())
     }
 
-    /// Create a private group repo (default name `claude-sync-data`) and join it.
-    pub async fn create_group(&self, name: &str, repo: &str) -> crate::Result<GroupStatus> {
+    /// Create a private group repo (default name `claude-sync-data`) and join it. Its
+    /// `CLAUDE.md` is the creator's shared text (redacted), or a heading when there is none.
+    pub async fn create_group(
+        &self,
+        name: &str,
+        repo: &str,
+        share: Option<&ClaudeMdShare>,
+    ) -> crate::Result<GroupStatus> {
+        let shared = share.and_then(|s| claude_md::group_text(&s.text));
         let _busy = self.busy.lock().await;
         let repo = match repo.trim() {
             "" => group::DEFAULT_REPO,
@@ -352,14 +362,27 @@ impl Engine {
             ),
             (
                 group::CLAUDE_MD.to_string(),
-                Some(format!("# {name}\n").into_bytes()),
+                Some(
+                    shared
+                        .clone()
+                        .unwrap_or_else(|| format!("# {name}\n"))
+                        .into_bytes(),
+                ),
             ),
             (group::SHARED_SETTINGS.to_string(), Some(b"{}\n".to_vec())),
         ]);
+        self.scan(&files)?;
         remote
             .commit(&head, &files, &self.message("create group"))
             .await?;
-        self.join_locked(&id).await
+        let status = self.join_locked(&id).await?;
+        if let (Some(text), Some(true)) = (&shared, share.map(|s| s.remove_own)) {
+            // The group exists either way; a failure here only leaves the text twice.
+            if let Err(e) = self.remove_own_claude_md(&id, text) {
+                tracing::warn!(group = %id, error = %e, "could not take the shared text out of CLAUDE.md");
+            }
+        }
+        Ok(status)
     }
 
     /// Pending invitations to repos with the `claude-sync-group` topic.
@@ -1165,7 +1188,7 @@ mod tests {
     /// written; kept paths stop being managed. Like the real apply, a file edited locally is
     /// left alone while the group's version stays the one last applied.
     #[derive(Default)]
-    struct StubApply {
+    pub(super) struct StubApply {
         st: Mutex<StubState>,
     }
 
@@ -1180,7 +1203,7 @@ mod tests {
     }
 
     impl StubApply {
-        fn file(&self, id: &GroupId, path: &str) -> Option<String> {
+        pub(super) fn file(&self, id: &GroupId, path: &str) -> Option<String> {
             let st = self.st.lock().unwrap();
             let bytes = st.local.get(id)?.get(path)?;
             Some(String::from_utf8_lossy(bytes).into_owned())
@@ -1297,7 +1320,7 @@ mod tests {
         Vec::new()
     }
 
-    fn fake_scanner(text: &str) -> Vec<crate::secrets::Hit> {
+    pub(super) fn fake_scanner(text: &str) -> Vec<crate::secrets::Hit> {
         text.lines()
             .enumerate()
             .filter(|(_, l)| l.contains("ghp_"))
@@ -1308,13 +1331,13 @@ mod tests {
             .collect()
     }
 
-    struct Device {
-        engine: Engine,
-        apply: Arc<StubApply>,
+    pub(super) struct Device {
+        pub(super) engine: Engine,
+        pub(super) apply: Arc<StubApply>,
         _dir: tempfile::TempDir,
     }
 
-    fn device(world: &FakeGitHub, login: &str, device: &str) -> Device {
+    pub(super) fn device(world: &FakeGitHub, login: &str, device: &str) -> Device {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths {
             claude_home: dir.path().join("claude"),
@@ -1346,7 +1369,7 @@ mod tests {
     }
 
     /// `ana/claude-sync-data` with `members` as collaborators and a few files.
-    fn group_repo(world: &FakeGitHub, members: &[&str]) -> (GroupId, FakeRepo) {
+    pub(super) fn group_repo(world: &FakeGitHub, members: &[&str]) -> (GroupId, FakeRepo) {
         let id = GroupId::new(members[0], group::DEFAULT_REPO);
         let json = group_json("Friends", members);
         let repo = FakeRepo::with_files(
@@ -1367,7 +1390,7 @@ mod tests {
     }
 
     /// `bo` on `pc`, joined to ana's group with members ana and bo.
-    async fn joined() -> (FakeGitHub, GroupId, FakeRepo, Device) {
+    pub(super) async fn joined() -> (FakeGitHub, GroupId, FakeRepo, Device) {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
         let bo = device(&world, "bo", "pc");
@@ -1790,7 +1813,7 @@ mod tests {
     async fn create_group_commits_the_skeleton_and_joins() {
         let world = FakeGitHub::new();
         let ana = device(&world, "ana", "mac");
-        let status = ana.engine.create_group("Friends", "").await.unwrap();
+        let status = ana.engine.create_group("Friends", "", None).await.unwrap();
         let id = GroupId::new("ana", group::DEFAULT_REPO);
         assert_eq!(status.id, id);
         assert_eq!(
@@ -1813,9 +1836,13 @@ mod tests {
             "# Friends\n"
         );
 
-        let err = ana.engine.create_group("Again", "").await.unwrap_err();
+        let err = ana
+            .engine
+            .create_group("Again", "", None)
+            .await
+            .unwrap_err();
         assert!(matches!(err, Error::GitHub { status: 422, .. }), "{err}");
-        let named = ana.engine.create_group("", "crew").await.unwrap();
+        let named = ana.engine.create_group("", "crew", None).await.unwrap();
         assert_eq!(named.name, "crew");
     }
 

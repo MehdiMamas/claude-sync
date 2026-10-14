@@ -4,8 +4,9 @@
 // `?noHistory` shows a group with no recent changes. Avatars load from GitHub when
 // online and fall back to initials offline, as in the app.
 // `?noNotifications` starts with an empty notification history.
+// `?noClaudeMd` shows a user whose CLAUDE.md has no text of their own.
 // The first group has one job waiting for consent, one accepted job and a plugin warning.
-import type { Backend, CommitInfo, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, Notification, PersonalStatus } from "./api";
+import type { Backend, ClaudeMdShare, CommitInfo, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, Notification, PersonalStatus } from "./api";
 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
@@ -116,6 +117,16 @@ let personal: PersonalStatus = {
   conflicts: [{ path: "memory/home--projects-app/MEMORY.md", savedTo: "C:/Users/me/.claude-sync/app/conflicts/personal/1/MEMORY.md", atUnix: now - 600 }],
   skipped: ["memory/home--projects-app/dump.md: larger than 256 KB"],
 };
+// The user's own CLAUDE.md text, as `claude_md_preview` returns it (token already redacted).
+const ownClaudeMd = `# How I work
+
+- Answer in short, plain sentences.
+- Run the tests before saying something works.
+- My email is me@example.com; use it for store listings.
+- Deploy key: [redacted:ghp]
+`;
+const sharedClaudeMd = new Set<string>();
+
 const setPersonal = (patch: Partial<PersonalStatus>) => (personal = { ...personal, ...patch });
 
 const mehdiJobs: JobsOverview = {
@@ -218,10 +229,36 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   },
   status: () => ({ state: "ok", text: "Up to date", lastSyncUnix: now - 120, error: null }),
   groups: () => groups,
+  create_group: (a) => {
+    const share = a.claudeMd as ClaudeMdShare | undefined;
+    if (share?.text.trim()) sharedClaudeMd.add(share.text.trim());
+    const g: GroupStatus = {
+      id: { owner: "mehdimamas", repo: (a.repo as string) || "claude-sync-data" },
+      name: a.name as string,
+      host: "mehdimamas",
+      members: ["mehdimamas"],
+      invited: [],
+      lastSyncUnix: now,
+      lastError: null,
+      conflicts: [],
+      collisions: [],
+      pluginsChanged: false,
+    };
+    groups.push(g);
+    return g;
+  },
   invitations: () => (q.has("empty") ? [] : [{ id: 7, repo: { owner: "lina-k", repo: "prompts" }, inviter: "lina-k" }]),
   discover: () => (q.has("empty") ? [] : [{ owner: "yassine", repo: "claude-sync-data" }]),
   local_edits: () => (q.has("empty") ? [] : [{ group: groups[0].id, path: "skills/review/SKILL.md", deleted: false }]),
   local_skills: () => (q.has("noSkills") ? [] : ["my-notes", "pdf-tools", "release-checklist"]),
+  claude_md_preview: () => (q.has("noClaudeMd") ? "" : ownClaudeMd),
+  share_claude_md: (a) => {
+    const text = (a.share as ClaudeMdShare).text.trim();
+    if (!text) throw "there is no text to share";
+    const appended = !sharedClaudeMd.has(text);
+    sharedClaudeMd.add(text);
+    return { appended, removedOwn: (a.share as ClaudeMdShare).removeOwn };
+  },
   group_contents: (a) => ((a.group as GroupId).owner === "acme" ? acmeContents : mehdiContents),
   recent_commits: (a) => (q.has("noHistory") ? [] : commits.slice(0, Number(a.limit ?? 20))),
   sync_now: () => ({ groups: [] }),

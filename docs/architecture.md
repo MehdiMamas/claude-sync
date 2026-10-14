@@ -68,6 +68,17 @@ schedules.json          scheduled Claude Code jobs (§17); repo only, never plac
 - `members` is the list of GitHub logins that should have access. Logins compare case-insensitively.
 - Unknown keys are kept on rewrite. A `schema` newer than the app knows means read-only until the app updates.
 
+### Sharing your CLAUDE.md
+
+A person's own `~/.claude/CLAUDE.md` often holds the very instructions a group wants. The app offers it in two places:
+
+- **Create a group.** The form has "Share my CLAUDE.md with the group" (checked when there is text) and an editable preview. The group repo's first `CLAUDE.md` is the text in the preview; unchecked or blank, it is `# <group name>`.
+- **A group you are in.** "Share my CLAUDE.md" on the group screen, next to "Share one of your skills", opens the same preview. The text is appended under a `## From <login>` heading, committed as `<login>@<device>: share CLAUDE.md`, and pushed like any other change (a concurrent push means fetch and try again, §6). Text the group's `CLAUDE.md` already has is not appended again, and the app says so. A group with `sync.claudeMd` off refuses it.
+
+**Privacy.** The preview is the user's own text: everything outside the managed block (§7), without group import lines, the same text personal memory syncs (§16). Secrets are redacted with the §9 patterns before it is shown and again before it is committed, and the commit still goes through the secret scan. One line above the preview says: "Everyone in the group will see this text, so remove personal details such as emails, names and tokens." What is committed is what the preview holds after the user's edits.
+
+**No double instructions.** Once the group has the text, the managed block imports it, so Claude would read it twice. "Remove it from my own CLAUDE.md (it now comes from the group)" is on by default. It removes the shared lines (blank lines aside, trailing spaces ignored, each shared line once) from the user's own text only; the managed block and import lines stay. It runs only when this device applies the group's `CLAUDE.md` (not kept local), and the file is backed up to `~/.claude-sync/backups/<UTC time>/` first. With personal memory on, the shorter text reaches the person's other devices too; they get the instructions back from the group once they join it.
+
 ### Plugins
 
 A group can bundle Claude Code plugin marketplaces (issue #30). `plugins/<marketplace>/` is a marketplace folder exactly as Claude Code expects it: `.claude-plugin/marketplace.json` plus the plugins it lists.

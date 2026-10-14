@@ -22,7 +22,7 @@ The app updates itself after that.
 ## Use it
 
 1. Open claude-sync and click **Sign in with GitHub**. Your browser opens GitHub; enter the code the app shows.
-2. To start a group, click **Create a group** and give it a name. The app creates a private repo on your GitHub account. You are the group's host.
+2. To start a group, click **Create a group** and give it a name. The app creates a private repo on your GitHub account. You are the group's host. The app offers your own `CLAUDE.md` instructions as the group's starting `CLAUDE.md`: check what it shows, remove anything personal, and it takes them out of your own file so Claude does not read them twice. In a group you are already in, **Share my CLAUDE.md** adds them later.
 3. To invite friends, open the group and add their GitHub logins. GitHub sends each of them an invitation. Any member can add or remove members, but the invitations go out from the host's app, so they are sent the next time the host's app runs.
 4. To join, a friend installs claude-sync and signs in. The invitation shows under **Pending invitations**. They click **Accept** and the app sets up the group on their machine.
 

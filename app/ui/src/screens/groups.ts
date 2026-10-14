@@ -2,6 +2,7 @@
 import { api, errorText, groupKey, type GroupId, type GroupStatus, type Invitation } from "../api";
 import { busy, errorBox, h, relTime, replace, spinner, toast } from "../dom";
 import { go, onRefresh, store, subscribe } from "../store";
+import { claudeMdEditor } from "./claude-md";
 
 // Shown wherever the user can join a group (§4: a group can bundle plugins).
 const PLUGINS_WARNING =
@@ -72,6 +73,7 @@ function createForm(onDone: () => void): HTMLElement {
   const name = h("input", { id: "g-name", required: true, placeholder: "Mehdi & friends", autocomplete: "off" });
   const repo = h("input", { id: "g-repo", value: "claude-sync-data", autocomplete: "off", spellcheck: "false" });
   const submit = h("button", { class: "primary", type: "submit" }, "Create group");
+  const claudeMd = claudeMdEditor("g-md", true);
   const form = h(
     "form",
     { class: "card form" },
@@ -81,12 +83,13 @@ function createForm(onDone: () => void): HTMLElement {
     name,
     h("label", { for: "g-repo" }, "Repo name"),
     repo,
+    claudeMd.el,
     h("div", { class: "actions" }, submit),
   );
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
     busy(submit, "Creating…", async () => {
-      const g = await api.createGroup(name.value, repo.value);
+      const g = await api.createGroup(name.value, repo.value, claudeMd.value() ?? undefined);
       toast(`Created ${groupKey(g.id)}`);
       onDone();
       go(`group/${encodeURIComponent(g.id.owner)}/${encodeURIComponent(g.id.repo)}`);
