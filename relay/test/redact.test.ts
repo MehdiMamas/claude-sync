@@ -29,7 +29,7 @@ describe("redact", () => {
   it("redacts a private key block and a lone header", () => {
     const block = "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAAB3NzaC1yc2E\nmore\n-----END OPENSSH PRIVATE KEY-----";
     assert.equal(redact(`k=${block}\nnext`), "k=[REDACTED:private-key]\nnext");
-    assert.equal(redact("-----BEGIN RSA PRIVATE KEY-----\nMIIE"), "[REDACTED:private-key]\nMIIE");
+    assert.equal(redact("x -----BEGIN RSA PRIVATE KEY-----\nMIIEsecret"), "x [REDACTED:private-key]");
   });
 
   it("redacts access_token and refresh_token values but keeps the keys", () => {

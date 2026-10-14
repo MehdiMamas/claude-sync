@@ -9,10 +9,11 @@ const PATTERNS: ReadonlyArray<readonly [name: string, regex: RegExp, replace?: s
   ["gh-token", /gh[osu]_[A-Za-z0-9]{36,}/g],
   ["aws-access-key", /AKIA[0-9A-Z]{16,}/g],
   ["slack-token", /xox[abpr]-[A-Za-z0-9-]{10,}/g],
-  // The header, plus the key body up to its END line when there is one.
+  // The header, plus the key body up to its END line; with no END line (a cut log),
+  // the next 20000 characters, so a lone header never leaves the key body behind.
   [
     "private-key",
-    /-----BEGIN\s[A-Z\s]*PRIVATE\sKEY-----(?:[\s\S]{0,20000}?-----END\s[A-Z\s]*PRIVATE\sKEY-----)?/g,
+    /-----BEGIN\s[A-Z\s]*PRIVATE\sKEY-----(?:[\s\S]{0,20000}?-----END\s[A-Z\s]*PRIVATE\sKEY-----|[\s\S]{0,20000})/g,
   ],
   // "access_token": "value" keeps the key and drops the value.
   ["token-field", /("(?:access|refresh)_token"\s*:\s*)"(?:[^"\\]|\\.)*"/g, '$1"[REDACTED:token-field]"'],
