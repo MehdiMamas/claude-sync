@@ -14,6 +14,7 @@ import {
   type MarketplaceInfo,
   type PermissionMode,
 } from "../api";
+import { avatar } from "../avatar";
 import { busy, confirmButton, errorBox, h, relTime, replace, spinner, toast } from "../dom";
 import { go, onRefresh, store } from "../store";
 import { historyCard } from "./history";
@@ -59,7 +60,8 @@ function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
       { class: "row" },
       h(
         "div",
-        { class: "grow" },
+        { class: "grow who" },
+        avatar(m, 20),
         m,
         isHost && h("span", { class: "tag" }, "host"),
         m.toLowerCase() === you && h("span", { class: "tag" }, "you"),
@@ -75,7 +77,7 @@ function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
     h("ul", { class: "list flat" }, g.members.map(memberRow)),
     g.invited.length > 0 && [
       h("h3", null, "Invited, not joined yet"),
-      h("ul", { class: "list flat" }, g.invited.map((m) => h("li", { class: "row muted" }, m))),
+      h("ul", { class: "list flat" }, g.invited.map((m) => h("li", { class: "row muted" }, h("div", { class: "grow who" }, avatar(m, 20), m)))),
     ],
     form,
     !hosting && h("p", { class: "muted small" }, `${g.host} hosts this group. Members can add and remove people too.`),

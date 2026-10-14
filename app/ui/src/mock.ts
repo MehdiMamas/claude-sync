@@ -1,7 +1,8 @@
 // A fake backend for `pnpm dev` in a plain browser (never bundled into the app).
 // `?signedOut` shows the sign-in screen; `?empty` shows a user with no groups; `?plugins`
 // shows the plugins reload notice; `?noSkills` shows a user with no skills to share;
-// `?noHistory` shows a group with no recent changes.
+// `?noHistory` shows a group with no recent changes. Avatars load from GitHub when
+// online and fall back to initials offline, as in the app.
 // The first group has one job waiting for consent, one accepted job and a plugin warning.
 import type { Backend, CommitInfo, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, PersonalStatus } from "./api";
 

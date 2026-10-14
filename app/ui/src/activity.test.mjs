@@ -1,7 +1,7 @@
 // `pnpm -C app/ui test`: Node runs activity.ts directly (type stripping, Node 23.6+).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { collapse, dayLabel, deviceName, groupByDay, hue, initials, parseCommit, timeLabel } from "./activity.ts";
+import { avatarUrl, collapse, dayLabel, deviceName, groupByDay, hue, initials, parseCommit, timeLabel } from "./activity.ts";
 
 const ctx = { me: "mehdimamas", mods: ["claude-mods", "session-manager", "model-router", "setup-scout"], skills: ["review"] };
 const commit = (message, atUnix = 1_000_000, author = "MehdiMamas", sha = "abc1234def") => ({ sha, message, author, atUnix });
@@ -151,6 +151,9 @@ test("avatars", () => {
   assert.equal(initials("yassine"), "YA");
   assert.equal(hue("MehdiMamas"), hue("mehdimamas"));
   assert.ok(hue("x") >= 0 && hue("x") < 360);
+  assert.equal(avatarUrl("ibrahim-ahidar"), "https://avatars.githubusercontent.com/ibrahim-ahidar?s=64");
+  // Anything that is not a plain login gets initials only, never a crafted URL.
+  for (const bad of ["", "a/b", "../x", "x?s=1", "x y", "sara-dev (laptop)", "é"]) assert.equal(avatarUrl(bad), null, bad);
 });
 
 function pick(a) {

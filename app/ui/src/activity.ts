@@ -328,6 +328,15 @@ export function initials(login: string): string {
   return login.slice(0, 2).toUpperCase();
 }
 
+/**
+ * The GitHub avatar picture of a login (no redirect, allowed by the app's CSP img-src), or
+ * null when the string is not a plain login: then the avatar shows initials only.
+ */
+export function avatarUrl(login: string, size = 64): string | null {
+  if (!/^[A-Za-z0-9-]+$/.test(login)) return null;
+  return `https://avatars.githubusercontent.com/${encodeURIComponent(login)}?s=${size}`;
+}
+
 /** A stable hue per login for the avatar background. */
 export function hue(login: string): number {
   let n = 0;

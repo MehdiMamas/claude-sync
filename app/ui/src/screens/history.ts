@@ -1,6 +1,7 @@
 // The group's "Recent changes" card: commits as an activity feed (see activity.ts).
 import { api, errorText, groupKey, type CommitInfo, type GroupContents, type GroupId } from "../api";
-import { collapse, groupByDay, hue, initials, parseCommit, timeLabel, type Activity, type FeedContext, type Kind } from "../activity";
+import { collapse, groupByDay, parseCommit, timeLabel, type Activity, type FeedContext, type Kind } from "../activity";
+import { avatar } from "../avatar";
 import { errorBox, h, replace, spinner, toast } from "../dom";
 import { store } from "../store";
 
@@ -76,7 +77,7 @@ function entry(a: Activity, now: Date, commitUrl: (sha: string) => string, expan
   return h(
     "li",
     { class: "act" },
-    h("span", { class: "avatar", style: `--h:${hue(a.login)}`, title: a.login, "aria-hidden": "true" }, initials(a.login)),
+    avatar(a.login, 28),
     h(
       "div",
       { class: "act-body" },
