@@ -123,6 +123,9 @@ pub async fn accept_invitation(app: AppHandle, ctx: CtxState<'_>, id: u64) -> Re
         .await
         .map_err(guard::logged("accept invitation"))?;
     lock(&ctx.known_invitations).retain(|i| *i != id);
+    if g.plugins_changed {
+        background::plugins_changed(&app);
+    }
     background::sync_soon(&app, true);
     Ok(g)
 }
@@ -137,6 +140,9 @@ pub async fn discover(ctx: CtxState<'_>) -> Res<Vec<GroupId>> {
 pub async fn join(app: AppHandle, ctx: CtxState<'_>, group: GroupId) -> Res<GroupStatus> {
     let e = ctx.engine()?;
     let g = e.join(&group).await.map_err(guard::logged("join group"))?;
+    if g.plugins_changed {
+        background::plugins_changed(&app);
+    }
     background::sync_soon(&app, true);
     Ok(g)
 }
@@ -185,9 +191,16 @@ pub async fn remove_member(
 }
 
 #[tauri::command]
-pub async fn leave_group(ctx: CtxState<'_>, group: GroupId) -> Res<()> {
+pub async fn leave_group(app: AppHandle, ctx: CtxState<'_>, group: GroupId) -> Res<()> {
     let e = ctx.engine()?;
-    e.leave(&group).await.map_err(guard::logged("leave group"))
+    let report = e
+        .leave(&group)
+        .await
+        .map_err(guard::logged("leave group"))?;
+    if report.plugins_changed {
+        background::plugins_changed(&app);
+    }
+    Ok(())
 }
 
 #[tauri::command]

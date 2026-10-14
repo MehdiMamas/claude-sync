@@ -3,6 +3,10 @@ import { api, errorText, groupKey, type GroupId, type GroupStatus, type Invitati
 import { busy, errorBox, h, relTime, replace, spinner, toast } from "../dom";
 import { go, onRefresh, store, subscribe } from "../store";
 
+// Shown wherever the user can join a group (§4: a group can bundle plugins).
+const PLUGINS_WARNING =
+  "Plugins in this group run code on every member's machine; only join groups whose members you trust.";
+
 // Invitations arrive as events; keep the list on screen current.
 let liveInvites: (() => void) | null = null;
 subscribe(() => liveInvites?.());
@@ -144,6 +148,7 @@ export function groupsScreen(view: HTMLElement): void {
       invites,
       inv.length > 0 && [
         h("h2", null, "Invitations"),
+        h("p", { class: "muted small" }, PLUGINS_WARNING),
         h("ul", { class: "list", "aria-label": "Pending invitations" }, inv.map((i) => invitationRow(i, loadAll))),
       ],
     );
@@ -166,6 +171,7 @@ export function groupsScreen(view: HTMLElement): void {
         ids.length > 0 && [
           h("h2", null, "Groups you can join"),
           h("p", { class: "muted small" }, "You already have access to these on GitHub, but they are not set up on this device."),
+          h("p", { class: "muted small" }, PLUGINS_WARNING),
           h("ul", { class: "list" }, ids.map((id) => discoveredRow(id, loadAll))),
         ],
       );

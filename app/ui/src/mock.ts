@@ -1,5 +1,6 @@
 // A fake backend for `pnpm dev` in a plain browser (never bundled into the app).
-// `?signedOut` shows the sign-in screen; `?empty` shows a user with no groups.
+// `?signedOut` shows the sign-in screen; `?empty` shows a user with no groups; `?plugins`
+// shows the plugins reload notice.
 import type { Backend, Events, GroupStatus } from "./api";
 
 const q = new URLSearchParams(location.search);
@@ -19,6 +20,7 @@ const groups: GroupStatus[] = q.has("empty")
         lastError: null,
         conflicts: [{ path: "skills/review/SKILL.md", savedTo: "C:/Users/me/.claude/skills/review/SKILL.conflict-laptop.md", atUnix: now - 3600 }],
         collisions: [{ kind: "userFile", path: "agents/scout.md" }],
+        pluginsChanged: false,
       },
       {
         id: { owner: "acme", repo: "claude-team" },
@@ -30,6 +32,7 @@ const groups: GroupStatus[] = q.has("empty")
         lastError: null,
         conflicts: [],
         collisions: [],
+        pluginsChanged: false,
       },
     ];
 
@@ -67,7 +70,8 @@ export const backend: Backend = {
     if (!f) throw `${cmd}: not available in the browser preview`;
     return f(args) as T;
   },
-  async listen<K extends keyof Events>(_event: K, _cb: (p: Events[K]) => void) {
+  async listen<K extends keyof Events>(event: K, cb: (p: Events[K]) => void) {
+    if (event === "plugins-changed" && q.has("plugins")) setTimeout(() => cb(null as Events[K]), 300);
     return () => {};
   },
 };

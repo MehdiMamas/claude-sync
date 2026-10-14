@@ -8,6 +8,8 @@ interface State {
   edits: LocalEdit[];
   invitations: Invitation[];
   update: UpdateInfo | null;
+  /** A sync, join or leave changed plugins; cleared when the user dismisses the notice. */
+  pluginsChanged: boolean;
 }
 
 type Listener = () => void;
@@ -24,6 +26,7 @@ export const store: State & {
   edits: [],
   invitations: [],
   update: null,
+  pluginsChanged: false,
   set(patch) {
     Object.assign(this, patch);
     for (const l of listeners) l();

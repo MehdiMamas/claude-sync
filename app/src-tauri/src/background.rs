@@ -103,6 +103,9 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
                     notify::show(app, "Group access ended", &format!("You no longer have access to {}. Its files were removed from this machine (a backup was kept).", g.id));
                 }
             }
+            if report.groups.iter().any(|g| g.apply.plugins_changed) {
+                plugins_changed(app);
+            }
             if errors.is_empty() {
                 publish(
                     app,
@@ -175,6 +178,17 @@ fn publish(app: &AppHandle, s: Status) {
     if ctx.set_status(s.clone()) {
         let _ = app.emit("status", &s);
     }
+}
+
+/// The text of the reload hint, shown in the window and as a notification.
+pub const PLUGINS_CHANGED: &str =
+    "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them.";
+
+/// A sync, join or leave changed plugin files or a marketplace entry: open Claude Code
+/// sessions only see it after `/reload-plugins` or a restart.
+pub fn plugins_changed(app: &AppHandle) {
+    let _ = app.emit("plugins-changed", ());
+    notify::show(app, "Plugins changed", PLUGINS_CHANGED);
 }
 
 /// Look for managed files edited by hand and tell the UI (and the user, for new ones).
