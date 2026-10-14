@@ -35,6 +35,7 @@ export function feedbackScreen(view: HTMLElement): void {
   const capture = h("button", { type: "button" }, "Capture screen");
   const fileInput = h("input", { type: "file", accept: "image/png,image/jpeg", class: "sr-only", id: "f-file", tabindex: "-1" });
   const attach = h("button", { type: "button" }, "Attach image");
+  const paste = h("button", { type: "button" }, "Paste image");
   const none = h("button", { type: "button", class: "link" }, "No screenshot");
 
   const showShot = () => {
@@ -71,6 +72,12 @@ export function feedbackScreen(view: HTMLElement): void {
       showShot();
     });
   });
+  const pasteImage = () =>
+    busy(paste, "Pasting…", async () => {
+      shot = await api.feedbackPasteImage();
+      showShot();
+    });
+  paste.addEventListener("click", pasteImage);
   none.addEventListener("click", () => {
     shot = null;
     showShot();
@@ -96,12 +103,20 @@ export function feedbackScreen(view: HTMLElement): void {
     h("div", { class: "check" }, includeLogs, h("label", { for: "f-logs" }, "Include recent logs (no tokens or file contents)")),
     logsDetails,
     h("h2", null, "Screenshot"),
-    h("p", { class: "muted small" }, "Capture hides this window for a moment and takes a picture of your main screen."),
-    h("div", { class: "actions" }, capture, attach, none, fileInput),
+    h("p", { class: "muted small" }, "Capture hides this window for a moment and takes a picture of your main screen. Paste image (or Ctrl+V here) uses the image on the clipboard."),
+    h("div", { class: "actions" }, capture, attach, paste, none, fileInput),
     shotSlot,
     h("div", { class: "actions" }, submit),
     result,
   );
+
+  // Ctrl+V of an image anywhere in the form; text still pastes into the fields.
+  form.addEventListener("paste", (ev) => {
+    const items = [...(ev.clipboardData?.items ?? [])];
+    if (items.some((i) => i.type === "text/plain") || !items.some((i) => i.kind === "file" && i.type.startsWith("image/"))) return;
+    ev.preventDefault();
+    pasteImage();
+  });
 
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();

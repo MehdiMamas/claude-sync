@@ -109,6 +109,7 @@ fn main() {
             commands::feedback_logs,
             commands::feedback_capture_screen,
             commands::feedback_attach_file,
+            commands::feedback_paste_image,
             commands::feedback_submit,
             commands::check_update,
             commands::update_status,

@@ -186,6 +186,7 @@ export const api = {
   feedbackLogs: () => call<string>("feedback_logs"),
   feedbackCaptureScreen: () => call<Screenshot>("feedback_capture_screen"),
   feedbackAttachFile: (data: string) => call<Screenshot>("feedback_attach_file", { data }),
+  feedbackPasteImage: () => call<Screenshot>("feedback_paste_image"),
   feedbackSubmit: (report: FeedbackInput) => call<FeedbackResult>("feedback_submit", { report }),
   checkUpdate: () => call<UpdateInfo>("check_update"),
   updateStatus: () => call<UpdateInfo>("update_status"),
