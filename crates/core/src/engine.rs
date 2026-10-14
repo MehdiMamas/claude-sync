@@ -431,6 +431,14 @@ impl Engine {
         let whole_file = file == edit.path;
         match action {
             EditAction::Share => {
+                let local = self.apply.local_files(&self.paths, id)?;
+                if let Some(bytes) = local.get(file).filter(|b| group::too_large(file, b.len())) {
+                    return Err(Error::Invalid(format!(
+                        "{file} is {} bytes; plugin files over {} MiB are not shared",
+                        bytes.len(),
+                        group::MAX_PLUGIN_FILE >> 20
+                    )));
+                }
                 status.shared.insert(file.to_string());
                 self.save_status(id, &status)?;
                 match self.sync_group(id, None).await {
@@ -668,7 +676,8 @@ impl Engine {
             let keep = |p: &str| group::is_allowlisted(p) && gf.syncs(p);
             let base_v = only(&base.files, keep);
             let remote_v = only(&remote_files, keep);
-            let local = self.local_view(id, &base_v, status, keep)?;
+            let mut too_large = Vec::new();
+            let local = self.local_view(id, &base_v, status, keep, &mut too_large)?;
             let merged = merge::three_way(&base_v, &local, &remote_v);
 
             // Save losing local copies before the apply overwrites them.
@@ -689,6 +698,11 @@ impl Engine {
                 };
             }
             report.apply = self.apply.apply_group(&self.paths, id, &order, &to_apply)?;
+            for note in too_large {
+                if !report.apply.skipped.contains(&note) {
+                    report.apply.skipped.push(note);
+                }
+            }
             status.collisions = report.apply.collisions.iter().map(Into::into).collect();
             base = Base {
                 head: head.clone(),
@@ -745,14 +759,16 @@ impl Engine {
 
     /// The local side of the merge. The apply layer reads managed files back; the engine
     /// supplies the rest from the base: the group file (repo only), paths the apply layer did
-    /// not write (collisions) and paths missing locally that the user did not choose to delete
-    /// (kept local, or not readable back).
+    /// not write (collisions), paths missing locally that the user did not choose to delete
+    /// (kept local, or not readable back), and plugin files grown over the size cap (noted
+    /// in `too_large`).
     fn local_view(
         &self,
         id: &GroupId,
         base: &FileSet,
         status: &Status,
         keep: impl Fn(&str) -> bool,
+        too_large: &mut Vec<String>,
     ) -> crate::Result<FileSet> {
         let mut local: FileSet = self
             .apply
@@ -762,6 +778,12 @@ impl Engine {
             .collect();
         let mut held = self.apply.excluded_paths(&self.paths, id)?;
         held.extend(status.collisions.iter().map(|c| c.path().to_string()));
+        for (p, bytes) in &local {
+            if group::too_large(p, bytes.len()) {
+                too_large.push(group::too_large_note(p));
+                held.insert(p.clone());
+            }
+        }
         let paths: BTreeSet<String> = base.keys().chain(&held).cloned().collect();
         for p in paths {
             let unshared_delete = !local.contains_key(&p) && !status.shared.contains(&p);
@@ -2133,6 +2155,106 @@ mod tests {
             std::fs::read_to_string(home.join("agents").join("a.md")).unwrap(),
             "mine\n"
         );
+    }
+
+    #[tokio::test]
+    async fn integration_plugins_round_trip() {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_file(
+            "plugins/mp/.claude-plugin/marketplace.json",
+            r#"{"name":"mp","plugins":[{"name":"p","source":"./p"}]}"#,
+        );
+        repo.set_file("plugins/mp/p/hooks/hooks.json", "{}\n");
+        let (ana, _a) = real_device(&world, "ana");
+        let (bo, _b) = real_device(&world, "bo");
+        ana.join(&id).await.unwrap();
+        let mp = |e: &Engine| e.paths.marketplaces_dir().join("mp");
+        assert!(mp(&ana).join("p/hooks/hooks.json").exists());
+
+        // Ana edits a plugin file and adds one; both are local edits until shared.
+        std::fs::write(mp(&ana).join("p/hooks/hooks.json"), "{\"v\":2}\n").unwrap();
+        std::fs::write(mp(&ana).join("p/hooks/run.ts"), "export {}\n").unwrap();
+        // A file over the cap is listed, but never shared.
+        std::fs::write(
+            mp(&ana).join("p/big.bin"),
+            vec![b'x'; group::MAX_PLUGIN_FILE + 1],
+        )
+        .unwrap();
+        let edits = ana.local_edits().unwrap();
+        let paths: Vec<&str> = edits.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "plugins/mp/p/big.bin",
+                "plugins/mp/p/hooks/hooks.json",
+                "plugins/mp/p/hooks/run.ts"
+            ]
+        );
+        let err = ana
+            .resolve_edit(&edits[0], EditAction::Share)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("1 MiB"), "{err}");
+        for e in &edits[1..] {
+            ana.resolve_edit(e, EditAction::Share).await.unwrap();
+        }
+        assert_eq!(
+            repo.file("plugins/mp/p/hooks/hooks.json").unwrap(),
+            "{\"v\":2}\n"
+        );
+        assert_eq!(
+            repo.file("plugins/mp/p/hooks/run.ts").unwrap(),
+            "export {}\n"
+        );
+        assert!(repo.file("plugins/mp/p/big.bin").is_none());
+        let report = ana.sync_all().await.unwrap();
+        assert!(repo.file("plugins/mp/p/big.bin").is_none());
+        assert!(report.groups[0]
+            .apply
+            .skipped
+            .iter()
+            .any(|n| n.contains("plugins/mp/p/big.bin")));
+
+        // Bo gets the files and the marketplace entry for its own copy.
+        bo.join(&id).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(mp(&bo).join("p/hooks/run.ts")).unwrap(),
+            "export {}\n"
+        );
+        let settings: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(bo.paths.claude_home.join("settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            settings["extraKnownMarketplaces"]["mp"]["source"],
+            serde_json::json!({"source": "directory", "path": std::path::absolute(mp(&bo)).unwrap().to_string_lossy()})
+        );
+        assert!(bo.local_edits().unwrap().is_empty());
+
+        // A later change reaches Bo with the reload hint; a sync with nothing new has none.
+        repo.set_file("plugins/mp/p/hooks/run.ts", "export const v = 3\n");
+        let report = bo.sync_all().await.unwrap();
+        assert!(report.groups[0].apply.plugins_changed);
+        let report = bo.sync_all().await.unwrap();
+        assert!(!report.groups[0].apply.plugins_changed);
+
+        // Removing the marketplace from the repo removes it on Bo.
+        let gone: Changes = repo
+            .files()
+            .into_keys()
+            .filter(|p| p.starts_with("plugins/"))
+            .map(|p| (p, None))
+            .collect();
+        repo.push(&gone, "drop mp");
+        let report = bo.sync_all().await.unwrap();
+        assert!(report.groups[0].apply.plugins_changed);
+        assert!(!mp(&bo).exists());
+        let settings: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(bo.paths.claude_home.join("settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(settings.pointer("/extraKnownMarketplaces/mp"), None);
     }
 
     #[tokio::test]

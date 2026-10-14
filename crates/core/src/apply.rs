@@ -185,7 +185,7 @@ pub fn apply_group(
                 continue;
             }
             if group::too_large(rel, bytes.len()) {
-                report.skipped.push(too_large_note(rel));
+                report.skipped.push(group::too_large_note(rel));
                 entry.excluded.insert(rel.clone());
                 continue;
             }
@@ -1047,13 +1047,6 @@ fn dir_root<'a>(paths: &'a Paths, dir: &str) -> &'a Path {
     } else {
         &paths.claude_home
     }
-}
-
-fn too_large_note(rel: &str) -> String {
-    format!(
-        "{rel}: larger than {} MiB, so it is not synced",
-        group::MAX_PLUGIN_FILE >> 20
-    )
 }
 
 /// The report wrote or removed a plugin file.

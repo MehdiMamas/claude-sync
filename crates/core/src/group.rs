@@ -205,6 +205,14 @@ pub fn too_large(path: &str, len: usize) -> bool {
     len > MAX_PLUGIN_FILE && marketplace_of(path).is_some()
 }
 
+/// The report note for a file [`too_large`] refuses.
+pub fn too_large_note(path: &str) -> String {
+    format!(
+        "{path}: larger than {} MiB, so it is not synced",
+        MAX_PLUGIN_FILE >> 20
+    )
+}
+
 /// Files that exist only in the repo, never in `~/.claude`. The engine supplies their local
 /// side itself instead of reading it back from the apply layer.
 pub fn is_repo_only(path: &str) -> bool {
