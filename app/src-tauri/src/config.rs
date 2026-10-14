@@ -17,7 +17,8 @@ pub const GITHUB_CLIENT_ID: &str = match option_env!("CLAUDE_SYNC_GITHUB_CLIENT_
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// `identifier` in tauri.conf.json: the app id of notifications sent outside Tauri (the job
-/// runner).
+/// runner). Linux notifications carry no app id.
+#[cfg(any(windows, target_os = "macos", test))]
 pub const IDENTIFIER: &str = "com.mehdimamas.claudesync";
 
 pub const DEFAULT_POLL_SECONDS: u64 = 60;
