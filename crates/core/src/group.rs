@@ -12,6 +12,13 @@ pub const DEFAULT_REPO: &str = "claude-sync-data";
 pub const README: &str = "README.md";
 pub const CLAUDE_MD: &str = "CLAUDE.md";
 pub const SHARED_SETTINGS: &str = "settings.shared.json";
+/// Plugin marketplaces bundled in the group repo: `plugins/<marketplace>/...`.
+pub const PLUGINS: &str = "plugins";
+/// The largest plugin file that syncs. Bigger files are reported and skipped.
+pub const MAX_PLUGIN_FILE: usize = 1 << 20;
+/// A security note shown wherever someone joins a group, and in the group README.
+pub const PLUGINS_WARNING: &str =
+    "Plugins in this group run code on every member's machine; only join groups whose members you trust.";
 
 fn yes() -> bool {
     true
@@ -32,6 +39,8 @@ pub struct SyncFlags {
     pub commands: bool,
     #[serde(default = "yes")]
     pub output_styles: bool,
+    #[serde(default = "yes")]
+    pub plugins: bool,
     /// Unknown keys, kept on rewrite.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -46,6 +55,7 @@ impl Default for SyncFlags {
             agents: true,
             commands: true,
             output_styles: true,
+            plugins: true,
             extra: Map::new(),
         }
     }
@@ -129,6 +139,7 @@ impl GroupFile {
             "agents" => s.agents,
             "commands" => s.commands,
             "output-styles" => s.output_styles,
+            PLUGINS => s.plugins,
             _ => false,
         }
     }
@@ -140,8 +151,20 @@ pub fn is_allowlisted(path: &str) -> bool {
         return false;
     }
     let parts: Vec<&str> = path.split('/').collect();
-    // Empty, `.`, `..` and dot-file segments (`.git`, `.DS_Store`) never sync.
-    if parts.iter().any(|p| p.is_empty() || p.starts_with('.')) {
+    if parts.iter().any(|p| p.is_empty() || *p == "." || *p == "..") {
+        return false;
+    }
+    if let [PLUGINS, marketplace, rest @ ..] = parts.as_slice() {
+        // Plugins keep their dot-files (`.claude-plugin/`, `.gitignore`), but never git
+        // internals, Finder litter, env files or installed dependencies.
+        return is_marketplace_name(marketplace)
+            && !rest.is_empty()
+            && !rest.iter().any(|p| {
+                matches!(*p, ".git" | ".DS_Store" | ".env" | "node_modules") || p.starts_with(".env.")
+            });
+    }
+    // Dot-file segments (`.git`, `.DS_Store`) never sync outside `plugins/`.
+    if parts.iter().any(|p| p.starts_with('.')) {
         return false;
     }
     match parts.as_slice() {
@@ -150,6 +173,32 @@ pub fn is_allowlisted(path: &str) -> bool {
         ["agents" | "commands" | "output-styles", file] => file.ends_with(".md") && file.len() > 3,
         _ => false,
     }
+}
+
+/// A marketplace folder name: `[a-z0-9][a-z0-9-]*`.
+pub fn is_marketplace_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// The marketplace a `plugins/<marketplace>/...` path belongs to.
+pub fn marketplace_of(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("plugins/")?;
+    let (name, tail) = rest.split_once('/')?;
+    (!tail.is_empty() && is_marketplace_name(name)).then_some(name)
+}
+
+/// The manifest that makes `plugins/<marketplace>/` a marketplace.
+pub fn marketplace_manifest(marketplace: &str) -> String {
+    format!("{PLUGINS}/{marketplace}/.claude-plugin/marketplace.json")
+}
+
+/// True when `path` is a plugin file over the size cap (§4).
+pub fn too_large(path: &str, len: usize) -> bool {
+    len > MAX_PLUGIN_FILE && marketplace_of(path).is_some()
 }
 
 /// Files that exist only in the repo, never in `~/.claude`. The engine supplies their local
@@ -171,7 +220,9 @@ pub fn readme(name: &str, host: &str) -> String {
          ## What is shared\n\n\
          - `CLAUDE.md`: shared instructions, imported into your `~/.claude/CLAUDE.md`\n\
          - `settings.shared.json`: keys merged into your `~/.claude/settings.json`\n\
-         - `skills/`, `agents/`, `commands/`, `output-styles/`\n"
+         - `skills/`, `agents/`, `commands/`, `output-styles/`\n\
+         - `plugins/`: plugin marketplaces, installed for every member as a local directory marketplace\n\n\
+         {PLUGINS_WARNING}\n"
     )
 }
 
@@ -236,6 +287,13 @@ mod tests {
             "agents/x.md",
             "commands/deploy.md",
             "output-styles/terse.md",
+            "plugins/claude-mods/.claude-plugin/marketplace.json",
+            "plugins/claude-mods/.gitignore",
+            "plugins/claude-mods/mods/model-router/.claude-plugin/plugin.json",
+            "plugins/claude-mods/mods/model-router/hooks/hooks.json",
+            "plugins/claude-mods/mods/session-manager/types/index.d.ts",
+            "plugins/0x/README",
+            "plugins/a/.envrc",
         ] {
             assert!(is_allowlisted(ok), "{ok}");
         }
@@ -259,6 +317,25 @@ mod tests {
             "skills\\a\\b",
             "agents/x.md/",
             "other/file.md",
+            "plugins",
+            "plugins/claude-mods",
+            "plugins/claude-mods/",
+            "plugins/Claude-Mods/x.json",
+            "plugins/-mods/x.json",
+            "plugins/claude_mods/x.json",
+            "plugins/.hidden/x.json",
+            "plugins/a/.git/config",
+            "plugins/a/sub/.git",
+            "plugins/a/.DS_Store",
+            "plugins/a/.env",
+            "plugins/a/sub/.env.local",
+            "plugins/a/node_modules/x/index.js",
+            "plugins/a/mods/b/node_modules/y.js",
+            "plugins/a/../b/x",
+            "plugins/a/./x",
+            "plugins/a//x",
+            "plugins/a/x:y",
+            "plugins/a\\x",
         ] {
             assert!(!is_allowlisted(bad), "{bad}");
         }
@@ -274,5 +351,30 @@ mod tests {
         assert!(g.syncs("agents/a.md"));
         assert!(g.syncs(FILE));
         assert!(g.syncs(SHARED_SETTINGS));
+        assert!(g.syncs("plugins/a/x.json"));
+        g.sync.plugins = false;
+        assert!(!g.syncs("plugins/a/x.json"));
+    }
+
+    #[test]
+    fn plugin_paths() {
+        assert_eq!(marketplace_of("plugins/claude-mods/mods/x.ts"), Some("claude-mods"));
+        assert_eq!(marketplace_of("plugins/claude-mods"), None);
+        assert_eq!(marketplace_of("plugins/Bad/x"), None);
+        assert_eq!(marketplace_of("skills/a/b"), None);
+        assert_eq!(
+            marketplace_manifest("m"),
+            "plugins/m/.claude-plugin/marketplace.json"
+        );
+        assert!(too_large("plugins/m/big.bin", MAX_PLUGIN_FILE + 1));
+        assert!(!too_large("plugins/m/big.bin", MAX_PLUGIN_FILE));
+        assert!(!too_large("skills/a/big.bin", MAX_PLUGIN_FILE + 1));
+    }
+
+    #[test]
+    fn readme_warns_about_plugins() {
+        let r = readme("n", "h");
+        assert!(r.contains("`plugins/`"));
+        assert!(r.contains(PLUGINS_WARNING));
     }
 }
