@@ -222,6 +222,7 @@ pub(crate) fn spawn_with(
     }));
     inner.lock().expect("new mutex").refresh();
     let weak: Weak<Mutex<Inner>> = Arc::downgrade(&inner);
+    let aliases = resolved_roots(paths);
     let paths = paths.clone();
     std::thread::Builder::new()
         .name("claude-sync-watch".into())
@@ -235,8 +236,10 @@ pub(crate) fn spawn_with(
                         continue;
                     }
                 };
-                let refresh = events.iter().any(|e| new_watch_root(&paths, &e.path));
-                let changed = events.iter().any(|e| relevant(&paths, &e.path));
+                let seen: Vec<PathBuf> =
+                    events.iter().map(|e| unalias(&aliases, &e.path)).collect();
+                let refresh = seen.iter().any(|p| new_watch_root(&paths, p));
+                let changed = seen.iter().any(|p| relevant(&paths, p));
                 if refresh {
                     if let Some(inner) = weak.upgrade() {
                         if let Ok(mut i) = inner.lock() {
@@ -251,6 +254,27 @@ pub(crate) fn spawn_with(
         })
         .map_err(crate::Error::Io)?;
     Ok(WatchHandle { inner })
+}
+
+/// The watched roots whose real path differs from the configured one, as (real, configured).
+/// FSEvents on macOS reports real paths, so a `~/.claude` that is a symlink (or a temp dir
+/// under `/var`, which is `/private/var`) would otherwise never match.
+fn resolved_roots(paths: &Paths) -> Vec<(PathBuf, PathBuf)> {
+    [&paths.claude_home, &paths.state_dir]
+        .into_iter()
+        .filter_map(|root| {
+            let real = std::fs::canonicalize(root).ok()?;
+            (real != *root).then(|| (real, root.clone()))
+        })
+        .collect()
+}
+
+/// `p` with a real root put back to its configured spelling.
+fn unalias(aliases: &[(PathBuf, PathBuf)], p: &Path) -> PathBuf {
+    aliases
+        .iter()
+        .find_map(|(real, root)| p.strip_prefix(real).ok().map(|rel| root.join(rel)))
+        .unwrap_or_else(|| p.to_path_buf())
 }
 
 /// A path whose change can mean a local edit.
@@ -561,6 +585,22 @@ mod tests {
         assert_eq!(
             local_edits(&paths).unwrap(),
             vec![edit(&a, "plugins/mods/router/hooks/new.ts", true)]
+        );
+    }
+
+    #[test]
+    fn real_paths_map_back_to_the_configured_root() {
+        let aliases = vec![(
+            PathBuf::from("/private/var/x/.claude"),
+            PathBuf::from("/var/x/.claude"),
+        )];
+        assert_eq!(
+            unalias(&aliases, Path::new("/private/var/x/.claude/agents/a.md")),
+            PathBuf::from("/var/x/.claude/agents/a.md")
+        );
+        assert_eq!(
+            unalias(&aliases, Path::new("/elsewhere/a.md")),
+            PathBuf::from("/elsewhere/a.md")
         );
     }
 
