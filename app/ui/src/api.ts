@@ -28,6 +28,43 @@ export interface GroupStatus {
   /** Only on the status a join returns: plugin files were placed or changed. */
   pluginsChanged: boolean;
 }
+export interface PluginInfo {
+  name: string;
+  description: string | null;
+  version: string | null;
+  /** `enabledPlugins["<plugin>@<marketplace>"]` is true in ~/.claude/settings.json. */
+  enabled: boolean;
+}
+export interface MarketplaceInfo {
+  name: string;
+  description: string | null;
+  /** Its folder on this device; null when this group's copy is not placed here. */
+  path: string | null;
+  /** Another group placed a marketplace with this name first. */
+  heldBy: GroupId | null;
+  plugins: PluginInfo[];
+}
+export interface ContentItem {
+  name: string;
+  description: string | null;
+}
+export interface GroupContents {
+  marketplaces: MarketplaceInfo[];
+  skills: ContentItem[];
+  agents: ContentItem[];
+  commands: ContentItem[];
+  outputStyles: ContentItem[];
+  settings: {
+    /** Top-level keys of the group's settings.shared.json, in file order. */
+    keys: string[];
+    /** `[<plugin>@<marketplace>, on]` */
+    enabledPlugins: [string, boolean][];
+    /** This device stopped applying the group's settings. */
+    keptLocal: boolean;
+  };
+  /** The group's CLAUDE.md copy, when it has one. */
+  claudeMd: string | null;
+}
 export interface ApplyReport {
   written: string[];
   removed: string[];
@@ -177,6 +214,7 @@ export const api = {
   leaveGroup: (group: GroupId) => call<void>("leave_group", { group }),
   localEdits: () => call<LocalEdit[]>("local_edits"),
   resolveEdit: (edit: LocalEdit, action: EditAction) => call<void>("resolve_edit", { edit, action }),
+  groupContents: (group: GroupId) => call<GroupContents>("group_contents", { group }),
   localSkills: () => call<string[]>("local_skills"),
   shareSkill: (group: GroupId, skill: string) => call<void>("share_skill", { group, skill }),
   recentCommits: (group: GroupId, limit = 20) => call<CommitInfo[]>("recent_commits", { group, limit }),

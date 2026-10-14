@@ -7,6 +7,7 @@ use crate::feedback::{self, FeedbackInput, FeedbackResult, Screenshot};
 use crate::guard::{self, Error};
 use crate::updates::{self, UpdateInfo};
 use claude_sync_core::apply::Manifest;
+use claude_sync_core::contents::{self, GroupContents};
 use claude_sync_core::engine::{CommitInfo, GroupStatus, SyncReport};
 use claude_sync_core::github::Invitation;
 use claude_sync_core::watch::{EditAction, LocalEdit};
@@ -231,7 +232,14 @@ pub async fn resolve_edit(
     Ok(())
 }
 
-/// The user's own skill folders in `~/.claude/skills`, for the "Share a skill" picker.
+/// What `group` gives this device: plugins, skills, agents, commands, output styles,
+/// settings keys and its CLAUDE.md. Local files only.
+#[tauri::command]
+pub fn group_contents(ctx: CtxState, group: GroupId) -> Res<GroupContents> {
+    contents::group_contents(&ctx.paths, &group).map_err(guard::logged("group contents"))
+}
+
+/// The user's own skill folders in `~/.claude/skills`, for the "Share one of your skills" picker.
 /// Skills a group put there are left out: they are shared already.
 #[tauri::command]
 pub fn local_skills(ctx: CtxState) -> Res<Vec<String>> {

@@ -349,6 +349,37 @@ legend {
   background: var(--warn-soft);
   color: var(--warn);
 }
+.tag.off {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+/* Group contents */
+.list.flat > li.mp > .row {
+  padding: 0.5rem 0;
+}
+.list.flat.plugins {
+  margin-left: 1rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--line);
+}
+.list.flat.plugins .row {
+  padding: 0.35rem 0;
+}
+.clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.flat-row {
+  padding: 0.5rem 0;
+}
+.settings-keys p {
+  margin: 0.25rem 0;
+}
 
 /* Text */
 .muted {

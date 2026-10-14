@@ -1,7 +1,7 @@
 // A fake backend for `pnpm dev` in a plain browser (never bundled into the app).
 // `?signedOut` shows the sign-in screen; `?empty` shows a user with no groups; `?plugins`
-// shows the plugins reload notice.
-import type { Backend, Events, GroupStatus } from "./api";
+// shows the plugins reload notice; `?noSkills` shows a user with no skills to share.
+import type { Backend, Events, GroupContents, GroupId, GroupStatus } from "./api";
 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
@@ -36,6 +36,44 @@ const groups: GroupStatus[] = q.has("empty")
       },
     ];
 
+const mehdiContents: GroupContents = {
+  marketplaces: [
+    {
+      name: "claude-mods",
+      description: "Mehdi's Claude Code mods: model routing and managed worker sessions.",
+      path: "C:/Users/me/.claude-sync/marketplaces/claude-mods",
+      heldBy: null,
+      plugins: [
+        { name: "model-router", description: "Routes turns, subagents and worker sessions to cheaper models when the work allows it.", version: "0.1.0", enabled: true },
+        { name: "session-manager", description: "Replaces subagents with a managed hierarchy of background sessions.", version: "0.3.2", enabled: false },
+      ],
+    },
+  ],
+  skills: [{ name: "review", description: "Reviews a diff for bugs before a PR." }],
+  agents: [],
+  commands: [],
+  outputStyles: [],
+  settings: {
+    keys: ["permissions", "enabledPlugins", "model"],
+    enabledPlugins: [
+      ["model-router@claude-mods", true],
+      ["session-manager@claude-mods", false],
+    ],
+    keptLocal: false,
+  },
+  claudeMd: "C:/Users/me/.claude-sync/groups/mehdimamas__claude-sync-data/CLAUDE.md",
+};
+
+const acmeContents: GroupContents = {
+  marketplaces: [{ name: "claude-mods", description: null, path: null, heldBy: { owner: "mehdimamas", repo: "claude-sync-data" }, plugins: [] }],
+  skills: [],
+  agents: [],
+  commands: [],
+  outputStyles: [],
+  settings: { keys: [], enabledPlugins: [], keptLocal: false },
+  claudeMd: null,
+};
+
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   app_info: () => ({ version: "0.1.0", os: "windows 11 (x86_64)", relayConfigured: true, clientIdMissing: false, stateDir: "C:/Users/me/.claude-sync/app" }),
   auth_status: () => ({ signedIn, login: signedIn ? "mehdimamas" : null, clientIdMissing: false }),
@@ -49,7 +87,8 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   invitations: () => (q.has("empty") ? [] : [{ id: 7, repo: { owner: "lina-k", repo: "prompts" }, inviter: "lina-k" }]),
   discover: () => (q.has("empty") ? [] : [{ owner: "yassine", repo: "claude-sync-data" }]),
   local_edits: () => (q.has("empty") ? [] : [{ group: groups[0].id, path: "skills/review/SKILL.md", deleted: false }]),
-  local_skills: () => ["my-notes", "pdf-tools", "release-checklist"],
+  local_skills: () => (q.has("noSkills") ? [] : ["my-notes", "pdf-tools", "release-checklist"]),
+  group_contents: (a) => ((a.group as GroupId).owner === "acme" ? acmeContents : mehdiContents),
   recent_commits: () => [
     { sha: "3f2a9c1d0e", message: "skills/review: tighten checklist", author: "sara-dev (laptop)", atUnix: now - 900 },
     { sha: "a81be22f77", message: "share skill pdf-tools", author: "mehdimamas (desktop)", atUnix: now - 7200 },

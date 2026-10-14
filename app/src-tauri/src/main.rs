@@ -100,6 +100,7 @@ fn main() {
             commands::leave_group,
             commands::local_edits,
             commands::resolve_edit,
+            commands::group_contents,
             commands::local_skills,
             commands::share_skill,
             commands::recent_commits,
