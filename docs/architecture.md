@@ -10,9 +10,9 @@ A small desktop app (Windows and macOS first, Linux later) that lives in the tra
 - **Devices.** Each person can run the app on as many PCs as they like. Every device signs in with the person's own GitHub account and has full access.
 - **Live.** The app watches the remote for changes and applies them within about a minute. It watches the local files it manages, and when you edit one it asks whether to share the change with the group.
 - **Updates.** The app checks for new versions and updates itself.
-- **Feedback.** A feedback form sends a description, the app's recent logs and a screenshot to this repo as an issue, put into the nearest sprint.
+- **Feedback.** A feedback form sends a description, and optionally the app's recent logs and a screenshot, to this repo as a public issue, put into the nearest sprint.
 
-It costs nothing to run. GitHub (free private repos, OAuth device flow) holds all the data. A free Vercel project (the **relay**) does the few things that need a secret: serving updates from this private repo and filing feedback issues.
+It costs nothing to run. GitHub (free private repos, OAuth device flow) holds all the data. A free Vercel project (the **relay**) does the few things that need a secret: serving updates from this repo's releases and filing feedback issues.
 
 ## 2. Components
 
@@ -21,7 +21,7 @@ crates/core/        Rust library: GitHub client, group format, sync engine, appl
 app/                Tauri 2 app: tray, autostart, updater, UI (app/ui, plain TypeScript + Vite), feedback capture
 relay/              Vercel project (TypeScript functions): /api/update, /api/download, /api/feedback, /api/health
 scripts/            Local checks and the release script (no CI: tests run on our machines)
-bin/ lib/ tests/    v0 bash CLI, kept until personal sync moves to the app (see issues)
+bin/ lib/ tests/    v0 bash CLI (SPEC.md), kept for now; the app replaces it
 ```
 
 No GitHub Actions run on push or PR. The only workflow is a `workflow_dispatch` macOS release build on the self-hosted Mac runner (free; no hosted minutes).
@@ -37,7 +37,7 @@ No GitHub Actions run on push or PR. The only workflow is a `workflow_dispatch` 
 
 A private repo on the host's account, created by the app. Default name `claude-sync-data` (Mehdi's group is `MehdiMamas/claude-sync-data`). It gets the repo topic `claude-sync-group`, which is how the app recognises group repos.
 
-The data repo is separate from this code repo. `MehdiMamas/claude-sync` holds the app's code and is Mehdi's alone; friends are invited only to the data repo. They reach this repo only through the relay (updates, feedback).
+The data repo is separate from this code repo. `MehdiMamas/claude-sync` is the app's public code repo; members are invited only to their group's data repo. The app reaches this repo only through the relay (updates, feedback).
 
 ```
 claude-sync.json        group file (below)

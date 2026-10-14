@@ -1,13 +1,10 @@
 ## What changed
-<phase number and one paragraph>
+<one paragraph: what and why>
 
 ## How to test
-<the gate command and its result>
+<the commands you ran (`scripts/check.ps1` or `scripts/check.sh`), their exit codes and test counts, and the OS that ran them>
 
-## Review for Claude
-- [ ] Only this phase's plan todos are implemented. No later-phase files or stubs.
-- [ ] Gate evidence is command output, and it names the OS that actually ran.
-- [ ] Every changed identity, path, protocol, or endpoint was searched with no hit cap. Readers and writers match. Sibling folders (`-dev`, leading dot) were checked.
-- [ ] Upstream edits (if any) are listed in `UPSTREAM.md` and stay small.
-- [ ] The project's architecture rules in `.cursor/rules/` hold for every changed file.
-- [ ] Deferred items in `PROGRESS.md` name a later phase.
+## Checklist
+- [ ] Proof is command output, and it names the OS that actually ran.
+- [ ] Every changed identity, path, protocol, or endpoint was searched with no hit cap. Readers and writers match.
+- [ ] Docs (`README.md`, `docs/architecture.md`, `relay/README.md`) match the change.

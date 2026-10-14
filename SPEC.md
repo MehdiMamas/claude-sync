@@ -1,6 +1,8 @@
 # claude-sync specification
 
-Working name: **claude-sync** (see §17 for the naming question). Plans cite sections as §N.
+> **Historical.** This is the design of the v0 bash CLI in `bin/`, `lib/` and `tests/`. The desktop app replaces it; its design is [docs/architecture.md](docs/architecture.md). The plugin described below was never built.
+
+Working name: **claude-sync** (see §17 for the naming question). Sections are cited as §N.
 
 # 1. Overview and goals
 
@@ -186,7 +188,7 @@ Env: `CLAUDE_SYNC_DIR` (repo dir, default `~/.claude-sync`), `CLAUDE_SYNC_TIMEOU
 
 - `tests/run.sh` runs every `tests/*.test.sh` and prints `N passed, M failed`, exiting non-zero on any failure. A small `tests/lib.sh` holds assertions. No bats, so it runs anywhere bash does.
 - Each test makes a temp `HOME`, a temp bare repo as the remote (`file://`), and sets `CLAUDE_SYNC_DIR`/`CLAUDE_HOME` into it. Two-machine tests use two temp HOMEs against one bare remote. Tests never touch the real `~/.claude` or the network.
-- The gate is local: `bash tests/run.sh` and `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` on the machine doing the work. Name that OS in `PROGRESS.md`. There is no GitHub Actions workflow.
+- The gate is local: `bash tests/run.sh` and `shellcheck -x bin/claude-sync lib/*.sh tests/*.sh` on the machine doing the work. Name that OS in the PR. There is no GitHub Actions workflow.
 
 # 15. Cursor config sync (opt-in, Phase 6)
 
@@ -194,10 +196,10 @@ Optionally sync Cursor's file-based global config (for example `~/.cursor/skills
 
 # 16. Shared settings (opt-in, Phase 7)
 
-`settings.json` is machine-specific (paths, local permissions), so it never syncs whole. Optionally, a `settings.shared.json` in the user repo holds selected keys (for example `permissions.allow`, `env`, `model`) and is merged into `~/.claude/settings.json` after each pull, never removing local keys. This is the first feature that edits JSON; Phase 7 chose jq (`CLAUDE_SYNC_JQ` overrides the path) and recorded why in `PROGRESS.md` Notes.
+`settings.json` is machine-specific (paths, local permissions), so it never syncs whole. Optionally, a `settings.shared.json` in the user repo holds selected keys (for example `permissions.allow`, `env`, `model`) and is merged into `~/.claude/settings.json` after each pull, never removing local keys. This is the first feature that edits JSON; it uses jq (`CLAUDE_SYNC_JQ` overrides the path).
 
 # 17. Open questions
 
-- **Name.** `claude-sync` is a working name. Check for collisions on GitHub and the plugin marketplaces before Phase 4 publishes the manifest; renaming after release is costly (rule 07).
-- **License.** MIT is assumed for the public repo; confirm before Phase 5.
+- **Name.** `claude-sync` is a working name. Check for collisions on GitHub and the plugin marketplaces before a plugin manifest is published; renaming after release is costly.
+- **License.** MIT (see `LICENSE`).
 - **User-level memory.** Not synced in v1 (§2). Revisit after release if users ask.
