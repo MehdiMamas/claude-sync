@@ -4,19 +4,19 @@
 #   git tag v0.2.0 <merged bump commit> && git push origin v0.2.0
 #   or: gh workflow run release.yml --repo MehdiMamas/claude-sync -f version=0.2.0
 #
-# The build jobs run in the environment "release" (required reviewers), which holds:
+# The build jobs run in the environment "release" (required reviewers). They use, from the
+# environment or the repository (docs/releasing.md says where each one lives):
 #   secret   TAURI_SIGNING_PRIVATE_KEY     contents of the updater key (updater.key), empty password
 #   secret   APPLE_CERTIFICATE             base64 of the Developer ID Application .p12
 #   secret   APPLE_CERTIFICATE_PASSWORD    its password
-#   secret   APPLE_SIGNING_IDENTITY        e.g. "Developer ID Application: El Mehdi Mamas (TEAMID)"
+#   secret   APPLE_SIGNING_IDENTITY        e.g. "Developer ID Application: <name> (TEAMID)"
 #   secret   APPLE_API_ISSUER              App Store Connect API issuer id (notarization)
 #   secret   APPLE_API_KEY                 App Store Connect API key id
 #   secret   APPLE_API_KEY_P8              contents of AuthKey_<key id>.p8
 #   variable CLAUDE_SYNC_RELAY_URL         e.g. https://claude-sync-relay.vercel.app
 #   variable CLAUDE_SYNC_GITHUB_CLIENT_ID  the OAuth app's public client ID
-# Repository-level secrets and variables of the same names work too. Without any of the
-# APPLE_* secrets the macOS build is unsigned (the job summary says so); with only some of
-# them the job fails.
+# Without any of the APPLE_* secrets the macOS build is unsigned (the job summary says so);
+# with only some of them the job fails.
 #
 # No caches: a release build never restores a cache another workflow could have written.
 

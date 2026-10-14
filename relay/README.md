@@ -2,7 +2,7 @@
 
 A free Vercel project (Hobby plan) that does the few things that need a secret (`docs/architecture.md` §12–13):
 
-- serves app updates from the private `MehdiMamas/claude-sync` releases,
+- serves app updates from the `MehdiMamas/claude-sync` releases (the update JSON with its signature),
 - hands out short-lived download links for release assets (the bytes never pass through Vercel),
 - files in-app feedback as an issue in the nearest sprint.
 

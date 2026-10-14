@@ -25,7 +25,7 @@
               Implies -NoBump: run the script without -Publish first, commit and push the bump.
 
   Signing key: env TAURI_SIGNING_PRIVATE_KEY (path or contents), else the file
-  C:\Users\Mehdi\.claude-sync-keys\updater.key. The key has an empty password; the build
+  $HOME\.claude-sync-keys\updater.key. The key has an empty password; the build
   runs with --ci, which makes the Tauri CLI use an empty password when
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD is unset. The key is never printed.
 
@@ -45,7 +45,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Repo = 'MehdiMamas/claude-sync'
-$KeyFile = 'C:\Users\Mehdi\.claude-sync-keys\updater.key'
+$KeyFile = Join-Path $HOME '.claude-sync-keys\updater.key'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $Root
 

@@ -16,24 +16,27 @@ The workflow only ever creates or updates a **draft**. The relay only sees relea
 
 ## Once
 
-- Updater key pair: `C:\Users\Mehdi\.claude-sync-keys\updater.key` (private, empty password, never in the repo) and its public key in `app/src-tauri/tauri.conf.json` (key id `54B66BE5E3412649`).
-- Repository settings → Environments → New environment `release`: add yourself as a required reviewer, and limit deployment tags/branches to `v*` tags and `main`.
-- Secrets (in the environment `release`, so only approved release jobs can read them; repository secrets of the same names also work):
+All of this is in place on `MehdiMamas/claude-sync`. The list is here for a new key or a fork.
 
-  | Secret | What |
-  |---|---|
-  | `TAURI_SIGNING_PRIVATE_KEY` | the contents of `updater.key` |
-  | `APPLE_CERTIFICATE` | base64 of the Developer ID Application certificate exported as `.p12` (`base64 -i cert.p12 \| pbcopy`) |
-  | `APPLE_CERTIFICATE_PASSWORD` | the `.p12` password |
-  | `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: El Mehdi Mamas (TEAMID)` (`security find-identity -v -p codesigning`) |
-  | `APPLE_API_ISSUER` | App Store Connect → Users and Access → Integrations → Keys: the issuer id |
-  | `APPLE_API_KEY` | the key id of that API key |
-  | `APPLE_API_KEY_P8` | the contents of `AuthKey_<key id>.p8` |
+- Updater key pair: `~/.claude-sync-keys/updater.key` on the maintainer's machine (private, empty password, never in the repo) and its public key in `app/src-tauri/tauri.conf.json` (key id `54B66BE5E3412649`).
+- Environment `release` (Settings → Environments) with the maintainer as required reviewer. Every build job of `release.yml` waits for that approval.
+- Secrets:
 
-  Without any `APPLE_*` secret the macOS build is unsigned and the run's summary says so. With only some of them the macOS job fails.
-- Variables (Settings → Secrets and variables → Actions → Variables):
+  | Secret | Where | What |
+  |---|---|---|
+  | `TAURI_SIGNING_PRIVATE_KEY` | repository (could move into `release`) | the contents of `updater.key` |
+  | `APPLE_CERTIFICATE` | environment `release` | base64 of the Developer ID Application certificate exported as `.p12` (`base64 -i cert.p12 \| pbcopy`) |
+  | `APPLE_CERTIFICATE_PASSWORD` | environment `release` | the `.p12` password |
+  | `APPLE_SIGNING_IDENTITY` | environment `release` | e.g. `Developer ID Application: <name> (TEAMID)` (`security find-identity -v -p codesigning`) |
+  | `APPLE_API_ISSUER` | environment `release` | App Store Connect → Users and Access → Integrations → Keys: the issuer id |
+  | `APPLE_API_KEY` | environment `release` | the key id of that API key |
+  | `APPLE_API_KEY_P8` | environment `release` | the contents of `AuthKey_<key id>.p8` |
+
+  A job in the environment sees both levels. Without any `APPLE_*` secret the macOS build is unsigned and the run's summary says so; with only some of them the macOS job fails.
+- Repository variables (Settings → Secrets and variables → Actions → Variables):
   - `CLAUDE_SYNC_RELAY_URL`: the relay, e.g. `https://claude-sync-relay.vercel.app`
   - `CLAUDE_SYNC_GITHUB_CLIENT_ID`: the OAuth app's client ID (public)
+- No self-hosted runners. The repo is public, so every workflow runs on GitHub-hosted runners.
 
 ## 1. Bump the version in a PR
 
@@ -98,7 +101,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release.ps1 -Version
 | `-Version 0.2.0 -Publish` | Build the committed, pushed version and upload the Windows assets to the draft `v0.2.0` (creates it if missing). The tag workflow would replace them with its own build. |
 | `-SkipChecks` | Skip `scripts/check.ps1` (not for a real release). |
 
-Locally the signing key comes from `TAURI_SIGNING_PRIVATE_KEY` (path or contents) or `C:\Users\Mehdi\.claude-sync-keys\updater.key`, and the build needs `CLAUDE_SYNC_RELAY_URL` and `CLAUDE_SYNC_GITHUB_CLIENT_ID` in the environment. The assets stay in `dist/release/<version>/` (gitignored), printed with their size and SHA-256.
+Locally the signing key comes from `TAURI_SIGNING_PRIVATE_KEY` (path or contents) or `~/.claude-sync-keys/updater.key` (`$HOME\.claude-sync-keys\updater.key` on Windows), and the build needs `CLAUDE_SYNC_RELAY_URL` and `CLAUDE_SYNC_GITHUB_CLIENT_ID` in the environment. The assets stay in `dist/release/<version>/` (gitignored), printed with their size and SHA-256.
 
 ## Checking the update path locally
 

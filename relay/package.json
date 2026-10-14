@@ -3,7 +3,7 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "Vercel functions for claude-sync: updates, private release downloads and feedback.",
+  "description": "Vercel functions for claude-sync: updates, release downloads and feedback.",
   "engines": {
     "node": "24.x"
   },
