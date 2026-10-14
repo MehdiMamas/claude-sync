@@ -11,7 +11,7 @@ A small desktop app (Windows and macOS first, Linux later) that lives in the tra
 - **Personal memory.** A person's own `CLAUDE.md` text and Claude's memories follow them to their other devices through a private repo of their own, never through a group (§16).
 - **Live.** The app watches the remote for changes and applies them within about a minute. It watches the local files it manages, and when you edit one it asks whether to share the change with the group.
 - **Updates.** The app checks for new versions and updates itself.
-- **Feedback.** A feedback form sends a description, and optionally the app's recent logs and a screenshot, to this repo as a public issue, put into the nearest sprint.
+- **Feedback.** A feedback form sends a description, and optionally the app's recent logs and a screenshot, to this repo as a public issue opened under the user's GitHub account, put into the nearest sprint.
 
 It costs nothing to run. GitHub (free private repos, OAuth device flow) holds all the data. A free Vercel project (the **relay**) does the few things that need a secret: serving updates from this repo's releases and filing feedback issues.
 
@@ -177,7 +177,7 @@ Plain TypeScript functions, no framework. Env:
 | `FEEDBACK_REPO` | Where feedback issues go; defaults to `RELEASES_REPO` |
 | `BLOCKED_GITHUB_USERS` | Comma-separated logins refused with 403 (abuse) |
 
-**Auth.** Every call (except `/api/health`) carries the user's GitHub token: `Authorization: Bearer <token>`. The relay calls `GET /user` to get the login. Any GitHub account may use the relay unless its login is in `BLOCKED_GITHUB_USERS`. The login is cached in memory for 10 minutes. The user token is never logged or stored. Each login gets 120 calls per hour across all endpoints (`429` with `Retry-After` past that).
+**Auth.** Every call (except `/api/health`) carries the user's GitHub token: `Authorization: Bearer <token>`. The relay calls `GET /user` to get the login. Any GitHub account may use the relay unless its login is in `BLOCKED_GITHUB_USERS`. The login is cached in memory for 10 minutes. `/api/feedback` also uses the token to open the issue as the user. The user token is never logged or stored. Each login gets 120 calls per hour across all endpoints (`429` with `Retry-After` past that).
 
 **`GET /api/update?target=<windows|darwin>&arch=<x86_64|aarch64>&current_version=<semver>`.** Reads the latest non-draft release of `RELEASES_REPO`. Returns `204` if not newer, else the Tauri updater JSON (`version`, `notes`, `pub_date`, `url`, `signature`). `signature` is the contents of the matching `.sig` asset. `url` is `/api/download/<asset-id>` on the relay.
 
@@ -186,13 +186,15 @@ Plain TypeScript functions, no framework. Env:
 **`POST /api/feedback`.** JSON `{ title, description, kind: "bug"|"idea", appVersion, os, logs, screenshot? (base64 PNG or JPEG, ≤ 3 MB) }`.
 1. Redact `logs` again (§9) and cut them to the last 200 KB.
 2. If there is a screenshot, commit it to the `feedback-assets` branch at `feedback/<yyyy-mm>/<uuid>.png` (created from the default branch if missing).
-3. Create an issue with labels `feedback` and `type:bug` or `type:idea`, the description, reporter login, app version, OS, the screenshot link, and the logs in a collapsed block.
-4. Put it in the **nearest sprint**: the open milestone titled `Sprint N` with the earliest `due_on` that is today or later. If none, the open milestone with the latest due date. If none, no milestone.
-5. Return `{ number, url }`.
+3. Create the issue **with the user's token**, so GitHub shows the user as its author: the description, app version, OS, the screenshot link, and the logs in a collapsed block. Users have no push access, so the screenshot and log files are committed with the relay token (step 2).
+4. GitHub drops labels and milestone from someone without push access, so the relay then sets labels `feedback` and `type:bug` or `type:idea` and the **nearest sprint** with its own token: the open milestone titled `Sprint N` with the earliest `due_on` that is today or later. If none, the open milestone with the latest due date. If none, no milestone. Best effort: a failure is logged, the post still succeeds.
+5. Return `{ number, url, asUser }`.
+
+If GitHub refuses the user's create for a reason on the user's side (401, 403, 404, 410, 422, 429: missing scope, blocked from the repo, SSO, the user's rate limit), the relay files the issue with its own token as before, with a `Reporter` row naming the login, and returns `asUser: false`. A 5xx or network error is not retried with the relay token: it answers 502/500 and the app keeps the report in its outbox.
 
 Rate limit per login: 5 feedback posts per hour (in memory; good enough for a hobby).
 
-**Feedback is public.** `FEEDBACK_REPO` defaults to the app's own repo, which is public, so the issue (title, description, login, app version, OS), the screenshot and the logs are public. The form says so before sending. Logs are off unless the user ticks the box; the app and the relay both redact tokens from them (§9), but they can still show file paths and repo names.
+**Feedback is public.** `FEEDBACK_REPO` defaults to the app's own repo, which is public, so the issue (title, description, author's GitHub account, app version, OS), the screenshot and the logs are public. The form says so before sending. Logs are off unless the user ticks the box; the app and the relay both redact tokens from them (§9), but they can still show file paths and repo names.
 
 ## 13. Updates and releases
 

@@ -12,6 +12,11 @@ export interface Caller {
   login: string;
 }
 
+/** A caller plus the token GitHub verified, for acting as that user. Never put it in a response. */
+export interface CallerWithToken extends Caller {
+  token: string;
+}
+
 interface CacheEntry {
   login: string;
   expires: number;
@@ -70,6 +75,12 @@ function remember(key: string, entry: CacheEntry): void {
  * is in BLOCKED_GITHUB_USERS, 429 when the login made API_LIMIT calls inside the window.
  */
 export async function requireCaller(req: Request): Promise<Caller> {
+  const { login } = await requireCallerWithToken(req);
+  return { login };
+}
+
+/** Like requireCaller, and also returns the verified token so the relay can act as the caller. */
+export async function requireCallerWithToken(req: Request): Promise<CallerWithToken> {
   const token = bearer(req);
   const key = tokenKey(token);
   const now = Date.now();
@@ -88,5 +99,5 @@ export async function requireCaller(req: Request): Promise<Caller> {
       "retry-after": String(slot.retryAfterSeconds),
     });
   }
-  return { login };
+  return { login, token };
 }

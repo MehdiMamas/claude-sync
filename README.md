@@ -50,8 +50,8 @@ A group can share Claude Code plugins. A plugin runs code on every member's mach
 - Your GitHub token is kept in the operating system's keychain (Windows Credential Manager, macOS Keychain). It is never written to files or logs.
 - Your group's files stay in the private repo on GitHub and on the members' computers. There is no claude-sync server that stores them.
 - **Personal memory is only yours.** It goes to a private repo on your own GitHub account, and only your own computers read it. It never goes into a group repo, and group members are never added to it. The app refuses to use the repo if it is made public. The same secret check runs before anything is pushed, and memory files over 256 KB stay on their computer.
-- The app's update checks and the feedback form go through a small web service (the relay, in `relay/`). It uses your GitHub token only to check who you are, and does not save it.
-- **Feedback is public.** The feedback form creates a public issue on this repo. Anyone can read its title, the description and your GitHub username. Logs are off by default; if you include them, tokens are removed but file paths and repo names can still show. A screenshot is public too.
+- The app's update checks and the feedback form go through a small web service (the relay, in `relay/`). It uses your GitHub token to check who you are and, for feedback, to open the issue under your account. It does not save the token.
+- **Feedback is public.** The feedback form opens a public issue on this repo under your GitHub account. Anyone can read its title, the description and your GitHub username. Logs are off by default; if you include them, tokens are removed but file paths and repo names can still show. A screenshot is public too.
 - Before it shares a file, the app checks it for tokens and keys and refuses to share a file that has one. Tokens are also removed from the app's logs.
 
 ## Building from source

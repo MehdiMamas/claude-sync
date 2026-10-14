@@ -1,4 +1,4 @@
-// Send feedback (§12, issue #22): a public GitHub issue through the relay, with optional logs and a screenshot.
+// Send feedback (§12, issue #22): a public GitHub issue opened under the user's account through the relay, with optional logs and a screenshot.
 import { api, errorText, type FeedbackInput, type Screenshot } from "../api";
 import { busy, bytes, errorBox, h, replace, toast } from "../dom";
 import { store } from "../store";
@@ -159,7 +159,7 @@ export function feedbackScreen(view: HTMLElement): void {
       h(
         "div",
         { class: "notice-text" },
-        "Your report becomes a public GitHub issue on the claude-sync project. Anyone can read its title, description and your GitHub username, and the logs and screenshot if you add them.",
+        "Your report is opened as an issue under your GitHub account, on the public repo MehdiMamas/claude-sync. Anyone can see it, including the logs (tokens removed) and the screenshot if you add them.",
       ),
     ),
     form,
