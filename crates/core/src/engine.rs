@@ -677,6 +677,17 @@ impl Engine {
                 .extend(self.save_conflicts(id, &merged.conflicts)?);
             let mut to_apply = merged.merged;
             to_apply.remove(group::FILE);
+            // A local edit that is not being shared stays a local edit: the apply gets the
+            // group's version, so it leaves the edit in place instead of adopting it.
+            for p in merged.to_push.keys() {
+                if read_only.is_none() && status.shared.contains(p) {
+                    continue;
+                }
+                match remote_v.get(p) {
+                    Some(bytes) => to_apply.insert(p.clone(), bytes.clone()),
+                    None => to_apply.remove(p),
+                };
+            }
             report.apply = self.apply.apply_group(&self.paths, id, &order, &to_apply)?;
             status.collisions = report.apply.collisions.iter().map(Into::into).collect();
             base = Base {
@@ -1083,7 +1094,8 @@ mod tests {
     use std::sync::Mutex;
 
     /// `~/.claude` of one device, in memory. Paths in `collide` belong to the user and are never
-    /// written; kept paths stop being managed.
+    /// written; kept paths stop being managed. Like the real apply, a file edited locally is
+    /// left alone while the group's version stays the one last applied.
     #[derive(Default)]
     struct StubApply {
         st: Mutex<StubState>,
@@ -1092,6 +1104,8 @@ mod tests {
     #[derive(Default)]
     struct StubState {
         local: HashMap<GroupId, FileSet>,
+        /// The group's version of each file as last applied.
+        applied: HashMap<GroupId, FileSet>,
         kept: BTreeSet<String>,
         collide: BTreeSet<String>,
         removed: Vec<GroupId>,
@@ -1144,6 +1158,7 @@ mod tests {
             let mut st = self.st.lock().unwrap();
             let mut report = ApplyReport::default();
             let old = st.local.remove(group).unwrap_or_default();
+            let applied = st.applied.insert(group.clone(), files.clone()).unwrap_or_default();
             let mut new = FileSet::new();
             for (path, bytes) in files {
                 if st.collide.contains(path) {
@@ -1151,6 +1166,13 @@ mod tests {
                         .collisions
                         .push(Collision::UserFile { path: path.clone() });
                 } else if !st.kept.contains(path) {
+                    if applied.get(path) == Some(bytes) && old.get(path) != Some(bytes) {
+                        // Edited locally, the group's version did not change.
+                        if let Some(mine) = old.get(path) {
+                            new.insert(path.clone(), mine.clone());
+                        }
+                        continue;
+                    }
                     if old.get(path) != Some(bytes) {
                         report.written.push(path.clone());
                     }
@@ -1453,14 +1475,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shared_delete_is_pushed_and_unshared_delete_is_restored() {
+    async fn shared_delete_is_pushed_and_unshared_delete_is_held() {
         let (_, id, repo, bo) = joined().await;
         bo.apply.delete(&id, "agents/a.md");
         bo.engine.sync_all().await.unwrap();
         assert!(repo.file("agents/a.md").is_some());
-        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "base\n");
+        assert_eq!(bo.apply.file(&id, "agents/a.md"), None, "still a local edit");
 
-        bo.apply.delete(&id, "agents/a.md");
         let mut deleted = edit(&id, "agents/a.md");
         deleted.deleted = true;
         bo.engine
@@ -2069,6 +2090,34 @@ mod tests {
         assert!(home.join("CLAUDE.md").exists());
         assert!(!home.join(group::FILE).exists());
         assert!(bo.local_edits().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn integration_unshared_edit_survives_a_sync() {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        let (bo, _dir) = real_device(&world, "bo");
+        bo.join(&id).await.unwrap();
+        let before = repo.commits().len();
+        let home = bo.paths.claude_home.clone();
+        std::fs::write(home.join("agents").join("a.md"), "mine\n").unwrap();
+        let copy = bo.paths.group_dir(&id).join(group::CLAUDE_MD);
+        std::fs::write(&copy, "# Mine\n").unwrap();
+        let settings = home.join("settings.json");
+        std::fs::write(&settings, "{\"a\": 2}\n").unwrap();
+        let listed = |e: &Engine| {
+            let mut p: Vec<String> = e.local_edits().unwrap().into_iter().map(|e| e.path).collect();
+            p.sort();
+            p
+        };
+        let want = ["CLAUDE.md", "agents/a.md", "settings.shared.json#/a"];
+        assert_eq!(listed(&bo), want);
+        for _ in 0..2 {
+            bo.sync_all().await.unwrap();
+            assert_eq!(listed(&bo), want, "an unshared edit must stay a local edit");
+        }
+        assert_eq!(repo.commits().len(), before);
+        assert_eq!(std::fs::read_to_string(home.join("agents").join("a.md")).unwrap(), "mine\n");
     }
 
     #[tokio::test]
