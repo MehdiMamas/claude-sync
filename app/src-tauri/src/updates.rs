@@ -101,6 +101,8 @@ pub async fn check_and_download(app: &AppHandle) -> Result<UpdateInfo, Error> {
                 let _ = a.emit("update-available", &info);
                 notify::show(
                     &a,
+                    notify::Kind::Update,
+                    None,
                     "claude-sync update ready",
                     &format!(
                         "Version {} installs when you quit, or restart now from Settings.",

@@ -1,4 +1,5 @@
-// Settings: device name, how often to check, start at login, pause, personal memory, account,
+// Settings: device name, how often to check, start at login, pause, personal memory,
+// notifications, account,
 // updates.
 import { api, errorText, type Settings } from "../api";
 import { busy, errorBox, h, replace, spinner, toast } from "../dom";
@@ -100,6 +101,11 @@ function form(s: Settings): HTMLElement[] {
     save({ paused: paused.checked }, paused.checked ? "Sync paused" : "Sync resumed"),
   );
 
+  const desktop = h("input", { id: "s-desktop", type: "checkbox", checked: s.desktopNotifications });
+  desktop.addEventListener("change", () => save({ desktopNotifications: desktop.checked }));
+  const test = h("button", null, "Send a test notification");
+  test.addEventListener("click", () => busy(test, "Sending…", () => api.testNotification()));
+
   const signOut = h("button", { class: "danger" }, "Sign out");
   signOut.addEventListener("click", () =>
     busy(signOut, "Signing out…", async () => {
@@ -119,6 +125,20 @@ function form(s: Settings): HTMLElement[] {
       h("div", { class: "check" }, paused, h("label", { for: "s-paused" }, "Pause syncing")),
     ),
     personal.card,
+    h(
+      "section",
+      { class: "card", "aria-labelledby": "notify-h" },
+      h("h2", { id: "notify-h" }, "Notifications"),
+      h("div", { class: "check" }, desktop, h("label", { for: "s-desktop" }, "Show desktop notifications")),
+      h(
+        "p",
+        { class: "muted small" },
+        "Either way, every notification is kept in ",
+        h("a", { href: "#/notifications" }, "Notifications"),
+        ".",
+      ),
+      h("div", { class: "actions" }, test),
+    ),
     h(
       "section",
       { class: "card", "aria-labelledby": "account-h" },

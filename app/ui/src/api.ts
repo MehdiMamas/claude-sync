@@ -114,6 +114,20 @@ export interface Settings {
   pollSeconds: number;
   autostart: boolean;
   paused: boolean;
+  /** Show desktop notifications. The history is kept either way. */
+  desktopNotifications: boolean;
+}
+export type NotificationKind = "update" | "group" | "plugins" | "local-edit" | "job" | "personal" | "other";
+/** One entry of the notification history (crates/core/src/notifications.rs). */
+export interface Notification {
+  id: number;
+  /** UTC seconds since the Unix epoch. */
+  time: number;
+  title: string;
+  body: string;
+  kind: NotificationKind;
+  group: GroupId | null;
+  read: boolean;
 }
 export interface UpdateInfo {
   current: string;
@@ -256,6 +270,7 @@ export interface Events {
   "update-available": UpdateInfo;
   "signed-in": { login: string };
   "sign-in-failed": { message: string };
+  "notifications-changed": { unread: number };
   navigate: string;
   personal: PersonalStatus;
 }
@@ -310,6 +325,11 @@ export const api = {
   syncNow: () => call<SyncReport>("sync_now"),
   getSettings: () => call<Settings>("get_settings"),
   setSettings: (settings: Partial<Settings>) => call<Settings>("set_settings", { settings }),
+  notifications: () => call<Notification[]>("notifications"),
+  markNotificationRead: (id: number) => call<void>("mark_notification_read", { id }),
+  markAllNotificationsRead: () => call<void>("mark_all_notifications_read"),
+  clearNotifications: () => call<void>("clear_notifications"),
+  testNotification: () => call<void>("test_notification"),
   feedbackLogs: () => call<string>("feedback_logs"),
   feedbackCaptureScreen: () => call<Screenshot>("feedback_capture_screen"),
   feedbackAttachFile: (data: string) => call<Screenshot>("feedback_attach_file", { data }),

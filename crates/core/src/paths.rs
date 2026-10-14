@@ -59,6 +59,10 @@ impl Paths {
     pub fn state_file(&self) -> PathBuf {
         self.state_dir.join("state.json")
     }
+    /// Notification history (`notifications.rs`).
+    pub fn notifications_file(&self) -> PathBuf {
+        self.state_dir.join("notifications.json")
+    }
     /// Base snapshot of a group (§6).
     pub fn base_dir(&self, g: &crate::GroupId) -> PathBuf {
         self.group_dir(g).join("base")

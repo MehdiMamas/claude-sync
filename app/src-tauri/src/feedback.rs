@@ -317,6 +317,8 @@ pub async fn retry_outbox(app: &AppHandle) {
                 let n = r.number.map(|n| format!(" as #{n}")).unwrap_or_default();
                 notify::show(
                     app,
+                    notify::Kind::Other,
+                    None,
                     "Feedback sent",
                     &format!("\"{}\" was filed{n}.", payload.title),
                 );
@@ -330,6 +332,8 @@ pub async fn retry_outbox(app: &AppHandle) {
                 let _ = std::fs::rename(&path, path.with_extension("rejected"));
                 notify::show(
                     app,
+                    notify::Kind::Other,
+                    None,
                     "Feedback not sent",
                     &format!("\"{}\" was not filed: {e}", payload.title),
                 );

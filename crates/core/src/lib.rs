@@ -12,6 +12,7 @@ pub mod jobs;
 pub mod logging;
 pub mod members;
 pub mod merge;
+pub mod notifications;
 pub mod paths;
 pub mod personal;
 pub mod plugin_install;

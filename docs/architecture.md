@@ -159,6 +159,8 @@ Ported from v0 (`lib/secrets.sh`, `SPEC.md` §7): `github_pat_…`, `sk-ant-…`
                          groups whose jobs run without asking (§17)
   jobs/<id>/             run lock and last-run.json of a job (§17)
   plugins.json           group plugin installs: what was last done, warnings (§18)
+  notifications.json     notification history (§11)
+  app.json               app preferences (first-run autostart, desktop notifications on/off)
   conflicts/  backups/  logs/   (logs/jobs/<id>/<UTC stamp>.log: job output, §17)
 ```
 
@@ -166,9 +168,17 @@ v0 used `~/.claude-sync/` as a git clone of the personal repo. The app checks fo
 
 ## 11. App
 
-- **Tauri 2**, Rust backend plus a plain TypeScript UI. Tray icon with: status, Sync now, Open, Pause, Send feedback, Quit. Single instance. Starts at login (autostart plugin, on by default, can be turned off).
+- **Tauri 2**, Rust backend plus a plain TypeScript UI. Tray icon with: status, Sync now, Open, Notifications (N) while N are unread, Pause, Send feedback, Quit. Single instance. Starts at login (autostart plugin, on by default, can be turned off).
 - Closing the window destroys the webview, so the idle app is just the Rust process (target: under 30 MB RAM idle, under 15 MB installer).
-- Screens: Sign in (device code), Groups (list, status, last sync), Group (what the group gives this device, plugins that failed to install (§18), scheduled jobs (§17), members, invite by GitHub login, pending invitations, recent changes as an activity feed parsed from commit messages in `app/ui/src/activity.ts`, conflicts, leave), Settings (device name, poll interval, start at login, pause, personal memory §16), Feedback.
+- Screens: Sign in (device code), Groups (list, status, last sync), Group (what the group gives this device, plugins that failed to install (§18), scheduled jobs (§17), members, invite by GitHub login, pending invitations, recent changes as an activity feed parsed from commit messages in `app/ui/src/activity.ts`, conflicts, leave), Notifications, Settings (device name, poll interval, start at login, pause, desktop notifications, personal memory §16), Feedback.
+- **Notifications.** Everything the app tells the user goes through one function, `notify::show(app, kind, group, title, body)` (`app/src-tauri/src/notify.rs`); new features call it rather than the notification plugin. It:
+  1. records the notification in `~/.claude-sync/notifications.json` (`crates/core/src/notifications.rs`): id, UTC time, title, body, kind (`update`, `group`, `plugins`, `local-edit`, `job`, `personal`, `other`), the group it is about if any, and read/unread. Newest first, at most 200; read ones older than 30 days are dropped. A missing or corrupt file is an empty history (a corrupt one is kept as `notifications.json.bad`).
+  2. shows the desktop notification, unless **Show desktop notifications** is off in Settings. The history is kept either way.
+  3. emits `notifications-changed` (`{unread}`), which updates the bell's badge in the window and the tray's **Notifications (N)** item.
+
+  The bell next to the app name opens the Notifications screen: newest first, relative time (full time on hover), kind, and the group's name, which links to the group. Opening the screen marks everything read; notifications that arrive while it is open are marked read once the window has focus. **Mark all as read** and **Clear** are there too. Clicking a desktop notification opens that screen (Windows: only while the toast is on screen, not from the Action Center; macOS: from the banner or Notification Center).
+
+  Windows shows toasts under the app's AppUserModelID, which is the bundle identifier `com.mehdimamas.claudesync`; the NSIS installer's Start menu shortcut carries the same id, so the toasts are named and iconed as claude-sync. A dev build (`target/debug`) has no such shortcut, and the plugin falls back to PowerShell's id, so dev toasts show as "Windows PowerShell". On macOS the plugin posts through `NSUserNotificationCenter` as the signed bundle; dev builds post as Terminal.
 - Logs: `tracing` to `~/.claude-sync/logs/claude-sync.log`, rotated daily, 7 kept, redacted (§9).
 
 ## 12. Relay (Vercel, free tier)

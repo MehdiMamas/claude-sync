@@ -3,8 +3,9 @@
 // shows the plugins reload notice; `?noSkills` shows a user with no skills to share;
 // `?noHistory` shows a group with no recent changes. Avatars load from GitHub when
 // online and fall back to initials offline, as in the app.
+// `?noNotifications` starts with an empty notification history.
 // The first group has one job waiting for consent, one accepted job and a plugin warning.
-import type { Backend, CommitInfo, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, PersonalStatus } from "./api";
+import type { Backend, CommitInfo, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, Notification, PersonalStatus } from "./api";
 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
@@ -38,6 +39,24 @@ const groups: GroupStatus[] = q.has("empty")
         pluginsChanged: false,
       },
     ];
+
+let notifications: Notification[] = q.has("noNotifications")
+  ? []
+  : [
+      { id: 6, time: now - 40, title: "Invitation to a claude-sync group", body: "lina-k invited you to lina-k/prompts. Open claude-sync to accept.", kind: "group", group: { owner: "lina-k", repo: "prompts" }, read: false },
+      { id: 5, time: now - 1500, title: "Plugins changed", body: "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them.", kind: "plugins", group: groups[0]?.id ?? null, read: false },
+      { id: 4, time: now - 3600, title: "Conflict in a shared file", body: "skills/review/SKILL.md (mehdimamas/claude-sync-data): the group's version won; yours was saved.", kind: "group", group: groups[0]?.id ?? null, read: true },
+      { id: 3, time: now - 7200, title: "Local change to a shared file", body: "skills/review/SKILL.md was changed on this machine. Share it with mehdimamas/claude-sync-data?", kind: "local-edit", group: groups[0]?.id ?? null, read: true },
+      { id: 2, time: now - 90000, title: "claude-sync update ready", body: "Version 0.2.0 installs when you quit, or restart now from Settings.", kind: "update", group: null, read: true },
+      { id: 1, time: now - 200000, title: "Signed in", body: "claude-sync is signed in as mehdimamas.", kind: "other", group: null, read: true },
+    ];
+let nextNotification = 7;
+let desktopNotifications = true;
+const notificationListeners: ((p: Events["notifications-changed"]) => void)[] = [];
+function notificationsChanged(): void {
+  const unread = notifications.filter((n) => !n.read).length;
+  for (const l of notificationListeners) l({ unread });
+}
 
 const mehdiContents: GroupContents = {
   marketplaces: [
@@ -239,8 +258,29 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   open_url: (a) => {
     window.open(String(a.url), "_blank", "noopener");
   },
-  get_settings: () => ({ deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false }),
-  set_settings: (a) => ({ deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false, ...(a.settings as object) }),
+  get_settings: () => ({ deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false, desktopNotifications }),
+  set_settings: (a) => {
+    const s = a.settings as { desktopNotifications?: boolean };
+    if (s.desktopNotifications !== undefined) desktopNotifications = s.desktopNotifications;
+    return { deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false, desktopNotifications, ...s };
+  },
+  notifications: () => notifications.map((n) => ({ ...n })),
+  mark_notification_read: (a) => {
+    for (const n of notifications) if (n.id === a.id) n.read = true;
+    notificationsChanged();
+  },
+  mark_all_notifications_read: () => {
+    for (const n of notifications) n.read = true;
+    notificationsChanged();
+  },
+  clear_notifications: () => {
+    notifications = [];
+    notificationsChanged();
+  },
+  test_notification: () => {
+    notifications.unshift({ id: nextNotification++, time: Math.floor(Date.now() / 1000), title: "Test notification", body: "Notifications from claude-sync show up like this.", kind: "other", group: null, read: false });
+    notificationsChanged();
+  },
   feedback_logs: () => "2026-10-13T10:00:01Z INFO sync: 2 groups up to date\n2026-10-13T10:01:01Z INFO sync: pulled mehdimamas/claude-sync-data",
   update_status: () => ({ current: "0.1.0", available: !q.has("empty"), version: "0.2.0", notes: null, downloaded: true }),
   check_update: () => ({ current: "0.1.0", available: false, version: null, notes: null, downloaded: false }),
@@ -255,6 +295,7 @@ export const backend: Backend = {
   },
   async listen<K extends keyof Events>(event: K, cb: (p: Events[K]) => void) {
     if (event === "plugins-changed" && q.has("plugins")) setTimeout(() => cb(null as Events[K]), 300);
+    if (event === "notifications-changed") notificationListeners.push(cb as (p: Events["notifications-changed"]) => void);
     return () => {};
   },
 };
