@@ -151,6 +151,39 @@ export interface AuthStatus {
   login: string | null;
   clientIdMissing: boolean;
 }
+/** What personal memory syncs. */
+export interface Kinds {
+  claudeMd: boolean;
+  memory: boolean;
+}
+export interface DeviceStatus {
+  id: string;
+  name: string;
+  os: string;
+  lastSeenUnix: number;
+  thisDevice: boolean;
+}
+/** Personal memory (docs/architecture.md): this account's devices share it; groups never see it. */
+export interface PersonalStatus {
+  enabled: boolean;
+  /** The user turned it on or off, or said "Not now", on this device. */
+  decided: boolean;
+  /** The account's other devices share personal memory and this one was not asked yet. */
+  offer: boolean;
+  kinds: Kinds;
+  /** `owner/repo` */
+  repo: string;
+  repoUrl: string;
+  deviceId: string;
+  devices: DeviceStatus[];
+  /** null until the repo was read once. */
+  newDevicesJoin: boolean | null;
+  lastSyncUnix: number | null;
+  lastError: string | null;
+  conflicts: ConflictInfo[];
+  /** Files left out of the last sync and why. */
+  skipped: string[];
+}
 export interface AppInfo {
   version: string;
   os: string;
@@ -169,6 +202,7 @@ export interface Events {
   "signed-in": { login: string };
   "sign-in-failed": { message: string };
   navigate: string;
+  personal: PersonalStatus;
 }
 
 export interface Backend {
@@ -229,6 +263,13 @@ export const api = {
   checkUpdate: () => call<UpdateInfo>("check_update"),
   updateStatus: () => call<UpdateInfo>("update_status"),
   installUpdate: () => call<void>("install_update"),
+  personalStatus: () => call<PersonalStatus>("personal_status"),
+  personalEnable: () => call<PersonalStatus>("personal_enable"),
+  personalDisable: () => call<PersonalStatus>("personal_disable"),
+  personalSetKinds: (kinds: Kinds) => call<PersonalStatus>("personal_set_kinds", { kinds }),
+  personalSetNewDevicesJoin: (join: boolean) => call<PersonalStatus>("personal_set_new_devices_join", { join }),
+  personalRemoveDevice: (id: string) => call<PersonalStatus>("personal_remove_device", { id }),
+  personalDismissOffer: () => call<void>("personal_dismiss_offer"),
   openUrl: (url: string) => call<void>("open_url", { url }),
   openPath: (path: string, reveal = false) => call<void>("open_path", { path, reveal }),
 };

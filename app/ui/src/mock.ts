@@ -1,7 +1,7 @@
 // A fake backend for `pnpm dev` in a plain browser (never bundled into the app).
 // `?signedOut` shows the sign-in screen; `?empty` shows a user with no groups; `?plugins`
 // shows the plugins reload notice; `?noSkills` shows a user with no skills to share.
-import type { Backend, Events, GroupContents, GroupId, GroupStatus } from "./api";
+import type { Backend, Events, GroupContents, GroupId, GroupStatus, Kinds, PersonalStatus } from "./api";
 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
@@ -74,7 +74,37 @@ const acmeContents: GroupContents = {
   claudeMd: null,
 };
 
+// `?personalOffer` shows a device that was offered personal memory; `?personalOff` one that has it off.
+let personal: PersonalStatus = {
+  enabled: !q.has("personalOffer") && !q.has("personalOff"),
+  decided: q.has("personalOff"),
+  offer: q.has("personalOffer"),
+  kinds: { claudeMd: true, memory: true },
+  repo: "mehdimamas/claude-sync-personal",
+  repoUrl: "https://github.com/mehdimamas/claude-sync-personal",
+  deviceId: "d1",
+  devices: [
+    { id: "d1", name: "desktop", os: "windows", lastSeenUnix: now - 60, thisDevice: true },
+    { id: "d2", name: "macbook", os: "macos", lastSeenUnix: now - 7200, thisDevice: false },
+  ],
+  newDevicesJoin: q.has("personalOffer") ? false : true,
+  lastSyncUnix: now - 90,
+  lastError: null,
+  conflicts: [{ path: "memory/home--projects-app/MEMORY.md", savedTo: "C:/Users/me/.claude-sync/app/conflicts/personal/1/MEMORY.md", atUnix: now - 600 }],
+  skipped: ["memory/home--projects-app/dump.md: larger than 256 KB"],
+};
+const setPersonal = (patch: Partial<PersonalStatus>) => (personal = { ...personal, ...patch });
+
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
+  personal_status: () => personal,
+  personal_enable: () => setPersonal({ enabled: true, decided: true, offer: false }),
+  personal_disable: () => setPersonal({ enabled: false, decided: true, offer: false }),
+  personal_set_kinds: (a) => setPersonal({ kinds: a.kinds as Kinds }),
+  personal_set_new_devices_join: (a) => setPersonal({ newDevicesJoin: a.join as boolean }),
+  personal_remove_device: (a) => setPersonal({ devices: personal.devices.filter((d) => d.id !== a.id) }),
+  personal_dismiss_offer: () => {
+    setPersonal({ decided: true, offer: false });
+  },
   app_info: () => ({ version: "0.1.0", os: "windows 11 (x86_64)", relayConfigured: true, clientIdMissing: false, stateDir: "C:/Users/me/.claude-sync/app" }),
   auth_status: () => ({ signedIn, login: signedIn ? "mehdimamas" : null, clientIdMissing: false }),
   start_sign_in: () => ({ userCode: "WDJB-MJHT", verificationUri: "https://github.com/login/device", expiresIn: 900 }),
