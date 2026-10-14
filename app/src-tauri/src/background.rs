@@ -38,6 +38,7 @@ async fn sync_loop(app: AppHandle) {
 
 async fn tick(app: &AppHandle) {
     let _ = run_sync(app, false).await;
+    crate::personal::after_sync(app, false).await;
     check_local_edits(app);
     feedback::retry_outbox(app).await;
 }
@@ -47,6 +48,7 @@ pub fn sync_soon(app: &AppHandle, full: bool) {
     let a = app.clone();
     tauri::async_runtime::spawn(async move {
         let _ = run_sync(&a, full).await;
+        crate::personal::after_sync(&a, full).await;
         check_local_edits(&a);
     });
 }

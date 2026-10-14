@@ -26,6 +26,10 @@ The app updates itself after that.
 3. To invite friends, open the group and add their GitHub logins. GitHub sends each of them an invitation. Any member can add or remove members, but the invitations go out from the host's app, so they are sent the next time the host's app runs.
 4. To join, a friend installs claude-sync and signs in. The invitation shows under **Pending invitations**. They click **Accept** and the app sets up the group on their machine.
 
+### Personal memory
+
+What you tell Claude to remember about you is yours, not the group's. Turn on **Settings → Personal memory** and your own `CLAUDE.md` text and Claude's memories (the memory folder of each project) follow you to your other computers. The app keeps them in a private repo on your account, `<your login>/claude-sync-personal`. Your other computers join it automatically when they sign in with the same GitHub account; you can switch that off, choose what syncs, see and remove your devices, or turn it off on one computer. Turning it off leaves your files and the repo as they are.
+
 Each person can sign in on as many computers as they like. Before the app changes one of your own files for the first time, it saves a copy in `~/.claude-sync/backups/`. When two people change the same file at once, the group's version wins and your version is saved next to it.
 
 ## What access it asks for
@@ -45,6 +49,7 @@ A group can share Claude Code plugins. A plugin runs code on every member's mach
 
 - Your GitHub token is kept in the operating system's keychain (Windows Credential Manager, macOS Keychain). It is never written to files or logs.
 - Your group's files stay in the private repo on GitHub and on the members' computers. There is no claude-sync server that stores them.
+- **Personal memory is only yours.** It goes to a private repo on your own GitHub account, and only your own computers read it. It never goes into a group repo, and group members are never added to it. The app refuses to use the repo if it is made public. The same secret check runs before anything is pushed, and memory files over 256 KB stay on their computer.
 - The app's update checks and the feedback form go through a small web service (the relay, in `relay/`). It uses your GitHub token only to check who you are, and does not save it.
 - **Feedback is public.** The feedback form creates a public issue on this repo. Anyone can read its title, the description and your GitHub username. Logs are off by default; if you include them, tokens are removed but file paths and repo names can still show. A screenshot is public too.
 - Before it shares a file, the app checks it for tokens and keys and refuses to share a file that has one. Tokens are also removed from the app's logs.

@@ -9,6 +9,7 @@ mod ctx;
 mod feedback;
 mod guard;
 mod notify;
+mod personal;
 mod tray;
 mod updates;
 mod window;
@@ -117,6 +118,13 @@ fn main() {
             commands::install_update,
             commands::open_url,
             commands::open_path,
+            personal::personal_status,
+            personal::personal_enable,
+            personal::personal_disable,
+            personal::personal_set_kinds,
+            personal::personal_set_new_devices_join,
+            personal::personal_remove_device,
+            personal::personal_dismiss_offer,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

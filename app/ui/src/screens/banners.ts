@@ -1,8 +1,9 @@
-// Notices shown above every screen: a ready update, plugins to reload, and local edits to
-// shared files (§7).
+// Notices shown above every screen: a ready update, plugins to reload, the personal memory
+// offer, and local edits to shared files (§7).
 import { api, groupKey, type EditAction, type LocalEdit } from "../api";
 import { busy, h, toast } from "../dom";
 import { store } from "../store";
+import { personalOffer } from "./personal";
 
 export const PLUGINS_CHANGED = "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them.";
 
@@ -70,6 +71,8 @@ export function banners(): HTMLElement[] {
       ),
     );
   }
+  const offer = personalOffer();
+  if (offer) out.push(offer);
   for (const e of store.edits) out.push(editNotice(e));
   return out;
 }

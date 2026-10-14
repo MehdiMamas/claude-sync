@@ -11,6 +11,7 @@ pub mod logging;
 pub mod members;
 pub mod merge;
 pub mod paths;
+pub mod personal;
 pub mod remote;
 pub mod secrets;
 pub mod settings;

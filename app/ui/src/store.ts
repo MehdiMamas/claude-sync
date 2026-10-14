@@ -1,5 +1,5 @@
 // Global UI state fed by commands and backend events.
-import type { AppInfo, AuthStatus, Invitation, LocalEdit, Status, UpdateInfo } from "./api";
+import type { AppInfo, AuthStatus, Invitation, LocalEdit, PersonalStatus, Status, UpdateInfo } from "./api";
 
 interface State {
   auth: AuthStatus | null;
@@ -10,6 +10,8 @@ interface State {
   update: UpdateInfo | null;
   /** A sync, join or leave changed plugins; cleared when the user dismisses the notice. */
   pluginsChanged: boolean;
+  /** Personal memory on this device; drives the offer notice. */
+  personal: PersonalStatus | null;
 }
 
 type Listener = () => void;
@@ -27,6 +29,7 @@ export const store: State & {
   invitations: [],
   update: null,
   pluginsChanged: false,
+  personal: null,
   set(patch) {
     Object.assign(this, patch);
     for (const l of listeners) l();

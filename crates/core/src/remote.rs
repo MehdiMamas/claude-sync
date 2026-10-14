@@ -15,6 +15,8 @@ pub mod fake;
 
 /// `Commit` changes: path -> new content, `None` = delete.
 pub type Changes = BTreeMap<String, Option<Vec<u8>>>;
+/// Which repo paths `files_matching` reads.
+pub type PathFilter = fn(&str) -> bool;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
 pub struct Head {
@@ -48,8 +50,14 @@ pub trait RemoteRepo: Send + Sync {
     async fn head_if_changed(&self) -> crate::Result<Option<Head>>;
     /// `Head::empty()` for a repo with no commits.
     async fn head(&self) -> crate::Result<Head>;
-    /// All allowlisted files at a commit.
-    async fn files_at(&self, commit: &str) -> crate::Result<crate::FileSet>;
+    /// All group-allowlisted files at a commit.
+    async fn files_at(&self, commit: &str) -> crate::Result<crate::FileSet> {
+        self.files_matching(commit, crate::group::is_allowlisted)
+            .await
+    }
+    /// The files at a commit whose path passes `keep` (the personal repo has its own list).
+    async fn files_matching(&self, commit: &str, keep: PathFilter)
+        -> crate::Result<crate::FileSet>;
     /// Commit `changes` (`None` = delete) on top of `parent` and move the branch,
     /// never forcing. `Err(Error::PushRace)` when the branch moved.
     /// `parent` may be `Head::empty()` to make the first commit of an empty repo.
@@ -85,6 +93,9 @@ pub trait RemoteFactory: Send + Sync {
     async fn accept_invitation(&self, id: u64) -> crate::Result<GroupId>;
     /// Group repos this user can access.
     async fn group_repos(&self) -> crate::Result<Vec<GroupId>>;
+    /// An empty private repo without the group topic (the personal memory repo), so it is
+    /// never discovered or offered as a group.
+    async fn create_personal_repo(&self, name: &str) -> crate::Result<GroupId>;
 }
 
 pub struct GitHubRemotes {
@@ -121,6 +132,9 @@ impl RemoteFactory for GitHubRemotes {
     }
     async fn group_repos(&self) -> crate::Result<Vec<GroupId>> {
         self.gh.group_repos().await
+    }
+    async fn create_personal_repo(&self, name: &str) -> crate::Result<GroupId> {
+        self.gh.create_private_repo(name).await
     }
 }
 
@@ -360,7 +374,7 @@ impl RemoteRepo for GitHubRepo {
         Ok(self.fetch_head(false).await?.expect("unconditional"))
     }
 
-    async fn files_at(&self, commit: &str) -> crate::Result<FileSet> {
+    async fn files_matching(&self, commit: &str, keep: PathFilter) -> crate::Result<FileSet> {
         if commit.is_empty() {
             return Ok(FileSet::new());
         }
@@ -387,7 +401,7 @@ impl RemoteRepo for GitHubRepo {
         }
         let mut files = FileSet::new();
         for e in tree.tree {
-            if e.kind == "blob" && crate::group::is_allowlisted(&e.path) {
+            if e.kind == "blob" && keep(&e.path) {
                 let bytes = self.blob(&e.sha).await?;
                 files.insert(e.path, bytes);
             }

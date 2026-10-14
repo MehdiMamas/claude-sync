@@ -136,6 +136,10 @@ async function boot(): Promise<void> {
     on("sync-report", () => store.bump()),
     on("plugins-changed", () => store.set({ pluginsChanged: true })),
     on("navigate", (route) => go(route)),
+    on("personal", (personal) => {
+      store.set({ personal });
+      store.bump();
+    }),
   ]);
   const [auth, status, info, update] = await Promise.all([
     api.authStatus(),
@@ -147,6 +151,10 @@ async function boot(): Promise<void> {
   if (auth.signedIn) {
     api.localEdits().then(
       (edits) => store.set({ edits }),
+      () => {},
+    );
+    api.personalStatus().then(
+      (personal) => store.set({ personal }),
       () => {},
     );
   }

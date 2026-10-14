@@ -1,7 +1,9 @@
-// Settings: device name, how often to check, start at login, pause, account, updates.
+// Settings: device name, how often to check, start at login, pause, personal memory, account,
+// updates.
 import { api, errorText, type Settings } from "../api";
 import { busy, errorBox, h, replace, spinner, toast } from "../dom";
-import { store } from "../store";
+import { onRefresh, store } from "../store";
+import { personalCard } from "./personal";
 
 const POLL: [number, string][] = [
   [30, "Every 30 seconds"],
@@ -59,8 +61,10 @@ function form(s: Settings): HTMLElement[] {
       toast(errorText(e), "error");
     }
   };
+  const personal = personalCard();
+  onRefresh(personal.reload);
 
-  const device = h("input", { id: "s-device", value: s.deviceName, maxlength: 64, autocomplete: "off" });
+  const device =h("input", { id: "s-device", value: s.deviceName, maxlength: 64, autocomplete: "off" });
   const saveDevice = h("button", { type: "submit" }, "Save");
   const deviceForm = h(
     "form",
@@ -72,7 +76,10 @@ function form(s: Settings): HTMLElement[] {
   device.setAttribute("aria-describedby", "s-device-hint");
   deviceForm.addEventListener("submit", (ev) => {
     ev.preventDefault();
-    busy(saveDevice, "Saving…", () => save({ deviceName: device.value }, "Device name saved"));
+    busy(saveDevice, "Saving…", async () => {
+      await save({ deviceName: device.value }, "Device name saved");
+      personal.reload();
+    });
   });
 
   const poll = h(
@@ -111,6 +118,7 @@ function form(s: Settings): HTMLElement[] {
       h("div", { class: "check" }, autostart, h("label", { for: "s-autostart" }, "Start claude-sync when I log in")),
       h("div", { class: "check" }, paused, h("label", { for: "s-paused" }, "Pause syncing")),
     ),
+    personal.card,
     h(
       "section",
       { class: "card", "aria-labelledby": "account-h" },

@@ -304,6 +304,7 @@ pub async fn recent_commits(
 #[tauri::command]
 pub async fn sync_now(app: AppHandle) -> Res<SyncReport> {
     let r = background::run_sync(&app, true).await;
+    crate::personal::after_sync(&app, true).await;
     background::check_local_edits(&app);
     r
 }

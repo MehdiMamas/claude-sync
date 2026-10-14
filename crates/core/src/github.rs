@@ -637,17 +637,9 @@ impl GitHub {
 
     /// Create an empty private repo on the signed-in account and tag it as a group.
     pub async fn create_group_repo(&self, name: &str) -> crate::Result<GroupId> {
-        let body = json!({
-            "name": name,
-            "private": true,
-            "auto_init": false,
-            "description": "claude-sync group (shared Claude Code setup)",
-        });
-        let repo: RawRepo = self.send(Method::POST, "/user/repos", &body).await?;
-        let id = repo.id();
-        if !repo.private {
-            return Err(Error::PublicRepo(id.to_string()));
-        }
+        let id = self
+            .create_repo(name, "claude-sync group (shared Claude Code setup)")
+            .await?;
         let topics = json!({ "names": [crate::group::TOPIC] });
         self.call(
             Method::PUT,
@@ -655,6 +647,28 @@ impl GitHub {
             Some(&topics),
         )
         .await?;
+        Ok(id)
+    }
+
+    /// Create an empty private repo on the signed-in account with no topic: the personal
+    /// memory repo, which must never look like a group.
+    pub async fn create_private_repo(&self, name: &str) -> crate::Result<GroupId> {
+        self.create_repo(name, "claude-sync personal memory (private to you)")
+            .await
+    }
+
+    async fn create_repo(&self, name: &str, description: &str) -> crate::Result<GroupId> {
+        let body = json!({
+            "name": name,
+            "private": true,
+            "auto_init": false,
+            "description": description,
+        });
+        let repo: RawRepo = self.send(Method::POST, "/user/repos", &body).await?;
+        let id = repo.id();
+        if !repo.private {
+            return Err(Error::PublicRepo(id.to_string()));
+        }
         Ok(id)
     }
 }
