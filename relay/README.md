@@ -74,12 +74,11 @@ Body (JSON, at most 4.5 MB, the Vercel limit):
 The screenshot type is checked by its magic bytes. The app should send at most the last ~500 KB of logs so the whole body stays under 4.5 MB.
 
 1. Title, description and logs are redacted again (the patterns of `crates/core/src/secrets.rs` plus `Bearer <token>`), then the logs are cut to their last 200 KB.
-2. A screenshot is committed to branch `feedback-assets` at `feedback/<yyyy-mm>/<uuid>.png` (or `.jpg`). The branch is created from the default branch head when missing.
-3. GitHub refuses issue bodies over 65,536 characters, so logs that do not fit are also committed next to the screenshot as `feedback/<yyyy-mm>/<uuid>.log`, and the issue shows their end plus a link to the file.
-4. The issue goes to `FEEDBACK_REPO`, opened with the caller's token, so GitHub shows the user as its author. Its body has the description, kind, app version, OS, the screenshot (`https://github.com/<repo>/blob/feedback-assets/<path>?raw=true`) and the logs in a collapsed `<details>` block.
-5. GitHub drops labels and milestone sent by someone without push access, so the relay then sets labels `feedback` and `type:bug` / `type:idea` and the milestone with its own token (`PATCH /issues/{n}`, skipped when GitHub already kept them). This step is best effort: a failure is logged and the post still answers 201.
-6. Milestone: the open milestone titled `Sprint N` with the earliest due date that is today (UTC) or later; else the open `Sprint N` with the latest due date; else none.
-7. Response `201 {"number": 42, "url": "https://github.com/MehdiMamas/claude-sync/issues/42"}`.
+2. The issue goes to `FEEDBACK_REPO`, opened with the caller's token, so GitHub shows the user as its author. It has the title and a body with the description, kind, app version and OS. Nothing from the user's disk goes into it, and no labels yet.
+3. The screenshot (`screenshot.png` or `.jpg`), the logs (`logs.txt`) and `report.json` (issue repo, number and URL, login, kind, app version, OS, time) are committed with the relay token to the private `FEEDBACK_ATTACHMENTS_REPO` at `issues/<number>/`, as one commit on its default branch (Git Data API: blobs, tree, commit, then the ref, retried when another post moved the ref first). Skipped when there is neither a screenshot nor logs. Best effort: on a failure the issue body says the attachments could not be stored. Because this runs after the create, a refused issue leaves no files behind.
+4. GitHub drops labels and milestone sent by someone without push access, so the relay then sets labels `feedback` and `type:bug` / `type:idea` and the milestone with its own token (`PATCH /issues/{n}`, which also rewrites the body when storing failed). This comes last because the `feedback` label starts the triage workflow (below), which reads the attachments. Best effort: a failure is logged and the post still answers 201.
+5. Milestone: the open milestone titled `Sprint N` with the earliest due date that is today (UTC) or later; else the open `Sprint N` with the latest due date; else none.
+6. Response `201 {"number": 42, "url": "https://github.com/MehdiMamas/claude-sync/issues/42"}`.
 
 **No other author.** The issue is only ever created with the caller's token. The relay token never creates an issue, so a report always sits under the account that wrote it and never under the owner's. When GitHub refuses the caller's create, the relay logs the status and files nothing:
 
@@ -93,9 +92,19 @@ The screenshot type is checked by its magic bytes. The app should send at most t
 
 GitHub's `message` is redacted, put on one line and cut to 200 characters.
 
-If storing the screenshot fails, the issue is still filed and says so. Rate limit: 5 posts per login per hour (sliding window, in memory per function instance). Invalid posts do not count against it.
+Rate limit: 5 posts per login per hour (sliding window, in memory per function instance). Invalid posts do not count against it.
 
-The issue, the screenshot and the logs are public when `FEEDBACK_REPO` is a public repo, and the issue shows the user's GitHub account as its author. The app says so on the feedback form, and logs are only sent when the user ticks the box.
+The issue is public when `FEEDBACK_REPO` is a public repo, and it shows the user's GitHub account as its author. The screenshot and the logs never go into it: only the maintainer can read the attachments repo. The app says so on the feedback form, and logs are only sent when the user ticks the box.
+
+### Triage (`triage/`, not deployed)
+
+`triage/run.ts` is not part of the relay; the workflow `.github/workflows/feedback-triage.yml` runs it on GitHub Actions when the repo owner (the relay's token) adds the `feedback` label, or by hand with `gh workflow run feedback-triage.yml -f issue=<n|all> [-f force=true]`. Claude reads the issue, its private attachments and the code, and comments a write-up another agent can fix it from; spam and abuse are closed, locked and labelled `needs-moderation` instead. The steps and the checks on the comment are in `docs/architecture.md` §12. What keeps it safe:
+
+- Only issues whose `feedback` label was added by the owner (or a login in the `TRIAGE_TRUSTED_LOGINS` variable) are read, checked from the issue's events, so a hand-made issue cannot get Claude to read another report's attachments.
+- The attachments repo is cloned with a read-only deploy key (`FEEDBACK_DEPLOY_KEY`), only `issues/<number>/` of the queued issues is checked out, and the key and the clone are deleted before Claude starts.
+- Claude gets Read, Grep and Glob and nothing else, and an environment without any GitHub token. Its answer is scrubbed of secrets, user names in paths and emails, its mentions, closing keywords, outside links and images are removed, and only then does the Actions token post it.
+
+Secrets on this repo: `FEEDBACK_DEPLOY_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`). Labels `feedback`, `triaged` and `needs-moderation` must exist.
 
 ## Install page
 
@@ -132,6 +141,7 @@ A darwin request first looks for `claude-sync_<version>_darwin_<arch>.app.tar.gz
 | `RELAY_GITHUB_TOKEN` | yes | Fine-grained PAT, see below |
 | `RELEASES_REPO` | yes | `MehdiMamas/claude-sync` |
 | `FEEDBACK_REPO` | no | Where feedback issues go. Defaults to `RELEASES_REPO` |
+| `FEEDBACK_ATTACHMENTS_REPO` | no | Private repo for feedback screenshots and logs. Defaults to `<FEEDBACK_REPO>-feedback` |
 | `BLOCKED_GITHUB_USERS` | no | Comma-separated logins refused with 403. Everyone else with a valid GitHub token may use the relay |
 | `GITHUB_OAUTH_CLIENT_ID` | for `/install` | Client ID of the GitHub OAuth App (see "Install page") |
 | `GITHUB_OAUTH_CLIENT_SECRET` | for `/install` | Its client secret. Used only to exchange the sign-in code |
@@ -143,10 +153,10 @@ A darwin request first looks for `claude-sync_<version>_darwin_<arch>.app.tar.gz
 GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token:
 
 - **Resource owner:** `MehdiMamas`. **Expiration:** up to a year; note the date, the relay returns 502 once it expires.
-- **Repository access:** Only select repositories → `MehdiMamas/claude-sync` (and `FEEDBACK_REPO` if it is another repo). The relay does not need access to any group repo.
+- **Repository access:** Only select repositories → `MehdiMamas/claude-sync`, the attachments repo (`MehdiMamas/claude-sync-feedback`, private), and `FEEDBACK_REPO` if it is another repo. The relay does not need access to any group repo.
 - **Repository permissions:**
-  - **Contents: Read and write.** Read: latest release, release assets, git refs. Write: create the `feedback-assets` branch (`POST /git/refs`) and commit screenshots (`PUT /contents/...`).
-  - **Issues: Read and write.** List milestones, and set labels and milestone on the issue the user opened. The relay token never creates an issue.
+  - **Contents: Read and write.** Read: latest release, release assets. Write, on the attachments repo: commit the screenshot and logs (`POST /git/blobs`, `/git/trees`, `/git/commits`, `PATCH /git/refs/heads/<default>`).
+  - **Issues: Read and write.** List milestones, and set labels, milestone and (when the attachments could not be stored) the body on the issue the user opened. The relay token never creates an issue.
   - **Metadata: Read** (always on). Repo info.
 
 No response includes this token. Callers get only release data, a download redirect, or the new issue's number and URL.

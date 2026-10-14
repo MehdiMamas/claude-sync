@@ -1,14 +1,13 @@
-import { randomUUID } from "node:crypto";
+import { commitFiles } from "../lib/attachments.ts";
 import { requireCallerWithToken } from "../lib/auth.ts";
 import { env } from "../lib/env.ts";
-import { buildIssueBody, type Feedback, logsNeedFile, parseFeedback } from "../lib/feedback.ts";
+import { attachmentsFor, buildIssueBody, type Feedback, parseFeedback } from "../lib/feedback.ts";
 import { discard, github, GitHubError, githubJson, type Milestone, repoPath } from "../lib/github.ts";
 import { handler, HttpError, json, logError, logWarn } from "../lib/http.ts";
 import { redact } from "../lib/redact.ts";
 import { pickSprint } from "../lib/milestone.ts";
 import { FEEDBACK_LIMIT, FEEDBACK_WINDOW_MS, take } from "../lib/ratelimit.ts";
 
-const ASSETS_BRANCH = "feedback-assets";
 // Vercel caps request bodies at 4.5 MB; refuse early above that.
 const MAX_BODY_BYTES = 4_500_000;
 // Why GitHub refused the caller's create, in words the app can show. The relay never
@@ -25,48 +24,7 @@ const MAX_REASON = 200;
 interface CreatedIssue {
   number: number;
   html_url: string;
-  labels?: Array<string | { name?: string }>;
-  milestone?: { number?: number } | null;
-}
-
-function refPath(branch: string): string {
-  return branch.split("/").map(encodeURIComponent).join("/");
-}
-
-/** Creates `feedback-assets` from the default branch head when it does not exist. */
-async function ensureAssetsBranch(repo: string, token: string): Promise<void> {
-  const base = repoPath(repo);
-  const res = await github(`${base}/git/ref/heads/${ASSETS_BRANCH}`, { token });
-  discard(res);
-  if (res.ok) return;
-  if (res.status !== 404) throw new GitHubError("feedback-assets ref", res.status);
-
-  const { default_branch } = await githubJson<{ default_branch: string }>("repo", base, { token });
-  const head = await githubJson<{ object: { sha: string } }>(
-    "default branch ref",
-    `${base}/git/ref/heads/${refPath(default_branch)}`,
-    { token },
-  );
-  const created = await github(`${base}/git/refs`, {
-    token,
-    method: "POST",
-    body: { ref: `refs/heads/${ASSETS_BRANCH}`, sha: head.object.sha },
-  });
-  discard(created);
-  // 422: another request created it first.
-  if (!created.ok && created.status !== 422) throw new GitHubError("create feedback-assets", created.status);
-}
-
-/** Commits one file to `feedback-assets` and returns a URL that renders it. */
-async function commitAsset(repo: string, token: string, path: string, bytes: Buffer, message: string): Promise<string> {
-  const res = await github(`${repoPath(repo)}/contents/${refPath(path)}`, {
-    token,
-    method: "PUT",
-    body: { message, content: bytes.toString("base64"), branch: ASSETS_BRANCH },
-  });
-  discard(res);
-  if (!res.ok) throw new GitHubError("commit feedback asset", res.status);
-  return `https://github.com/${repo}/blob/${ASSETS_BRANCH}/${path}?raw=true`;
+  created_at?: string;
 }
 
 async function nearestSprint(repo: string, token: string): Promise<number | null> {
@@ -84,21 +42,35 @@ async function nearestSprint(repo: string, token: string): Promise<number | null
 }
 
 /**
- * GitHub silently drops labels and milestone sent by someone without push access, so
- * after the caller opens the issue the relay sets them. Best effort: the issue exists,
- * so a failure here is logged and the post still succeeds.
+ * Commits the screenshot and logs to the private attachments repo under issues/<number>/.
+ * Best effort: the issue exists, so a failure is logged and the issue says so.
  */
-async function triage(repo: string, token: string, issue: CreatedIssue, labels: string[], milestone: number | null): Promise<void> {
-  const have = new Set((issue.labels ?? []).map((l) => (typeof l === "string" ? l : l.name)));
-  const labelsSet = labels.every((l) => have.has(l));
-  const milestoneSet = milestone === null || issue.milestone?.number === milestone;
-  if (labelsSet && milestoneSet) return;
+async function storeAttachments(token: string, feedback: Feedback, issue: CreatedIssue, login: string, repo: string): Promise<boolean> {
+  const files = attachmentsFor(feedback, {
+    number: issue.number,
+    url: issue.html_url,
+    login,
+    repo,
+    createdAt: issue.created_at ?? new Date().toISOString(),
+  });
   try {
-    const res = await github(`${repoPath(repo)}/issues/${issue.number}`, {
-      token,
-      method: "PATCH",
-      body: { labels, ...(milestone !== null ? { milestone } : {}) },
-    });
+    await commitFiles(env.attachmentsRepo(), token, files, `feedback: ${repo}#${issue.number}`);
+    return true;
+  } catch (err) {
+    logError("feedback attachments", err);
+    return false;
+  }
+}
+
+/**
+ * GitHub silently drops labels and milestone sent by someone without push access, so
+ * the relay sets them. The `feedback` label starts the triage workflow, which reads the
+ * attachments, so this runs after they are stored. Best effort: a failure is logged and
+ * the post still succeeds.
+ */
+async function label(repo: string, token: string, number: number, fields: Record<string, unknown>): Promise<void> {
+  try {
+    const res = await github(`${repoPath(repo)}/issues/${number}`, { token, method: "PATCH", body: fields });
     discard(res);
     if (!res.ok) throw new GitHubError("label issue", res.status);
   } catch (err) {
@@ -160,35 +132,6 @@ async function readBody(req: Request): Promise<unknown> {
   }
 }
 
-async function storeAssets(
-  repo: string,
-  token: string,
-  feedback: Feedback,
-): Promise<{ screenshotUrl: string | null | "failed"; fullLogsUrl: string | null | "failed" }> {
-  const wantLogs = logsNeedFile(feedback);
-  if (!feedback.screenshot && !wantLogs) return { screenshotUrl: null, fullLogsUrl: null };
-
-  const now = new Date();
-  const dir = `feedback/${now.toISOString().slice(0, 7)}`;
-  const id = randomUUID();
-  let screenshotUrl: string | null | "failed" = feedback.screenshot ? "failed" : null;
-  let fullLogsUrl: string | null | "failed" = wantLogs ? "failed" : null;
-  // Best effort: feedback without its screenshot beats no feedback.
-  try {
-    await ensureAssetsBranch(repo, token);
-    if (feedback.screenshot) {
-      const { bytes, ext } = feedback.screenshot;
-      screenshotUrl = await commitAsset(repo, token, `${dir}/${id}.${ext}`, bytes, `feedback: screenshot ${id}`);
-    }
-    if (wantLogs) {
-      fullLogsUrl = await commitAsset(repo, token, `${dir}/${id}.log`, Buffer.from(feedback.logs, "utf8"), `feedback: logs ${id}`);
-    }
-  } catch (err) {
-    logError("feedback assets", err);
-  }
-  return { screenshotUrl, fullLogsUrl };
-}
-
 /**
  * POST /api/feedback
  * JSON { title, description, kind: "bug"|"idea", appVersion, os, logs?, screenshot? }
@@ -208,21 +151,24 @@ export const POST = handler("feedback", async (req) => {
 
   const repo = env.feedbackRepo();
   const relayToken = env.relayToken();
-  // Users cannot push, so the relay commits the screenshot and logs.
-  const assets = await storeAssets(repo, relayToken, feedback);
-  const milestone = await nearestSprint(repo, relayToken);
-  const labels = ["feedback", `type:${feedback.kind}`];
-  const fields = {
-    title: feedback.title,
-    body: buildIssueBody({ feedback, ...assets }),
-    labels,
-    ...(milestone !== null ? { milestone } : {}),
-  };
 
-  // Opened with the caller's token, so GitHub shows them as the author.
-  const res = await github(`${repoPath(repo)}/issues`, { token: userToken, method: "POST", body: fields });
+  // Opened with the caller's token, so GitHub shows them as the author. The body holds
+  // nothing from the user's disk, and no labels: those come last (see `label`).
+  const res = await github(`${repoPath(repo)}/issues`, {
+    token: userToken,
+    method: "POST",
+    body: { title: feedback.title, body: buildIssueBody(feedback) },
+  });
   if (!res.ok) throw await refused(repo, login, res);
   const issue = (await res.json()) as CreatedIssue;
-  await triage(repo, relayToken, issue, labels, milestone);
+
+  // Users cannot push, so the relay commits the screenshot and logs, privately.
+  const stored = await storeAttachments(relayToken, feedback, issue, login, repo);
+  const milestone = await nearestSprint(repo, relayToken);
+  await label(repo, relayToken, issue.number, {
+    labels: ["feedback", `type:${feedback.kind}`],
+    ...(milestone !== null ? { milestone } : {}),
+    ...(stored ? {} : { body: buildIssueBody(feedback, false) }),
+  });
   return json(201, { number: issue.number, url: issue.html_url });
 });

@@ -1,3 +1,4 @@
+import type { Attachment } from "./attachments.ts";
 import { HttpError } from "./http.ts";
 import { keepTail, redact } from "./redact.ts";
 
@@ -5,8 +6,6 @@ export const MAX_TITLE = 200;
 export const MAX_DESCRIPTION = 20_000;
 export const MAX_SCREENSHOT_BYTES = 3 * 1024 * 1024;
 export const MAX_LOG_BYTES = 200 * 1024;
-// GitHub rejects issue bodies over 65,536 characters; keep a margin.
-export const MAX_ISSUE_BODY = 60_000;
 
 export type Kind = "bug" | "idea";
 
@@ -85,36 +84,30 @@ export function parseFeedback(raw: unknown): Feedback {
   };
 }
 
-/** A backtick fence longer than any backtick run in `text`, so the text cannot close it. */
-export function fenceFor(text: string): string {
-  const longest = Math.max(0, ...Array.from(text.matchAll(/`+/g), (m) => m[0].length));
-  return "`".repeat(Math.max(3, longest + 1));
-}
-
 /** Text safe for inline code inside a table cell: no backticks, pipes or angle brackets. */
 function cell(s: string): string {
   const clean = s.replace(/[`|<>\\]/g, "").trim();
   return clean ? `\`${clean}\`` : "_unknown_";
 }
 
-function lastChars(text: string, max: number): string {
-  if (text.length <= max) return text;
-  let out = text.slice(text.length - max);
-  // Do not start on the second half of a surrogate pair.
-  if (/^[\udc00-\udfff]/.test(out)) out = out.slice(1);
-  return out;
+/** "screenshot and logs", "screenshot", "logs", or "" when there is nothing to attach. */
+function attachedWhat(feedback: Feedback): string {
+  return [feedback.screenshot ? "screenshot" : "", feedback.logs ? "logs" : ""].filter(Boolean).join(" and ");
 }
 
-export interface IssueBodyInput {
-  feedback: Feedback;
-  /** Markdown image URL, "failed" when the upload failed, or null when there was no screenshot. */
-  screenshotUrl: string | null | "failed";
-  /** Link to the full log file when the logs had to be cut to fit the issue body. */
-  fullLogsUrl: string | null | "failed";
-}
-
-export function buildIssueBody({ feedback, screenshotUrl, fullLogsUrl }: IssueBodyInput): string {
-  const head: string[] = [
+/**
+ * The public issue body: the description and the environment, nothing from the user's
+ * disk. The screenshot and logs go to the private attachments repo (`stored: false`
+ * when that failed).
+ */
+export function buildIssueBody(feedback: Feedback, stored = true): string {
+  const what = attachedWhat(feedback);
+  const note = !what
+    ? "_No screenshot or logs attached._"
+    : stored
+      ? `_The ${what} went privately to the maintainer._`
+      : `_The ${what} could not be stored._`;
+  return [
     feedback.description,
     "",
     "---",
@@ -125,38 +118,32 @@ export function buildIssueBody({ feedback, screenshotUrl, fullLogsUrl }: IssueBo
     `| App version | ${cell(feedback.appVersion)} |`,
     `| OS | ${cell(feedback.os)} |`,
     "",
-  ];
-  if (screenshotUrl === "failed") {
-    head.push("### Screenshot", "", "_The screenshot could not be stored._", "");
-  } else if (screenshotUrl) {
-    head.push("### Screenshot", "", `![screenshot](${screenshotUrl})`, "");
-  }
-  if (!feedback.logs) {
-    head.push("_No logs attached._");
-    return head.join("\n");
-  }
-
-  const headText = head.join("\n");
-  const overhead = 400; // details, summary, fences and the cut note
-  const budget = Math.max(0, MAX_ISSUE_BODY - headText.length - overhead);
-  const shown = lastChars(feedback.logs, budget);
-  const cut = shown.length < feedback.logs.length;
-  const fence = fenceFor(shown);
-  const summary = cut ? "Logs (end only, redacted)" : "Logs (redacted)";
-  const lines = [headText, "<details>", `<summary>${summary}</summary>`, ""];
-  if (cut) {
-    lines.push(
-      fullLogsUrl && fullLogsUrl !== "failed"
-        ? `Only the end fits here. [Full logs (last 200 KB)](${fullLogsUrl}).`
-        : "Only the end fits here; the full logs could not be stored.",
-      "",
-    );
-  }
-  lines.push(`${fence}text`, shown, fence, "", "</details>");
-  return lines.join("\n");
+    note,
+  ].join("\n");
 }
 
-/** True when the logs will not fit in the issue body next to the rest. */
-export function logsNeedFile(feedback: Feedback): boolean {
-  return feedback.logs.length + feedback.description.length + 2_000 > MAX_ISSUE_BODY;
+/** The files kept privately for issue `number`: the screenshot, the logs and the report. */
+export function attachmentsFor(
+  feedback: Feedback,
+  issue: { number: number; url: string; login: string; repo: string; createdAt: string },
+): Attachment[] {
+  if (!attachedWhat(feedback)) return [];
+  const dir = `issues/${issue.number}`;
+  const files: Attachment[] = [];
+  if (feedback.screenshot) {
+    files.push({ path: `${dir}/screenshot.${feedback.screenshot.ext}`, bytes: feedback.screenshot.bytes });
+  }
+  if (feedback.logs) files.push({ path: `${dir}/logs.txt`, bytes: Buffer.from(feedback.logs, "utf8") });
+  const report = {
+    repo: issue.repo,
+    number: issue.number,
+    url: issue.url,
+    login: issue.login,
+    kind: feedback.kind,
+    appVersion: feedback.appVersion,
+    os: feedback.os,
+    createdAt: issue.createdAt,
+  };
+  files.push({ path: `${dir}/report.json`, bytes: Buffer.from(`${JSON.stringify(report, null, 2)}\n`, "utf8") });
+  return files;
 }
