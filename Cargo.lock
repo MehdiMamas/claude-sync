@@ -665,6 +665,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "keyring",
+ "libc",
  "notify",
  "notify-debouncer-mini",
  "regex",

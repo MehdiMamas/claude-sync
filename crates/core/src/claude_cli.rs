@@ -7,6 +7,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// `CREATE_NO_WINDOW`: a console child of a GUI app would otherwise open a window.
@@ -118,13 +119,13 @@ pub fn quiet(cmd: &mut Command) -> &mut Command {
     cmd
 }
 
-/// Kill `child` and everything it started.
+/// Kill `child` and everything it started. `child` must have been spawned through [`quiet`],
+/// and not yet reaped, so that on unix its pid is still its process group's id.
 pub fn kill_tree(child: &mut Child) {
-    let pid = child.id().to_string();
     #[cfg(windows)]
     {
         let mut cmd = Command::new("taskkill");
-        cmd.args(["/PID", &pid, "/T", "/F"])
+        cmd.args(["/PID", &child.id().to_string(), "/T", "/F"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -132,12 +133,12 @@ pub fn kill_tree(child: &mut Child) {
     }
     #[cfg(unix)]
     {
-        let _ = Command::new("kill")
-            .args(["-KILL", &format!("-{pid}")])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        // A syscall, not the `kill` command: procps 4.0.4 (Ubuntu 24.04) fails to parse
+        // `kill -KILL -<pgid>`, which left the grandchildren running.
+        if let Ok(pgid) = libc::pid_t::try_from(child.id()) {
+            // SAFETY: killpg takes no pointers; at worst the group is gone (ESRCH).
+            unsafe { libc::killpg(pgid, libc::SIGKILL) };
+        }
     }
     let _ = child.kill();
 }
@@ -178,40 +179,68 @@ pub fn run(program: &Path, args: &[&str], timeout: Duration) -> std::io::Result<
     run_command(cmd, timeout)
 }
 
+/// How long the output is still read after the child exits or is killed. A process that left
+/// its group (or a daemon it started) can hold the pipes open for good.
+const PIPE_GRACE: Duration = Duration::from_secs(2);
+
 /// [`run`] for a prepared command (arguments, environment).
 pub fn run_command(mut cmd: Command, timeout: Duration) -> std::io::Result<Output> {
     quiet(&mut cmd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    let deadline = Instant::now() + timeout;
     let mut child = cmd.spawn()?;
-    let drain = |r: Option<Box<dyn Read + Send>>| {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            if let Some(mut r) = r {
-                let _ = r.read_to_end(&mut buf);
-            }
-            String::from_utf8_lossy(&buf).into_owned()
-        })
-    };
-    let out = drain(
-        child
-            .stdout
-            .take()
-            .map(|s| Box::new(s) as Box<dyn Read + Send>),
-    );
-    let err = drain(
-        child
-            .stderr
-            .take()
-            .map(|s| Box::new(s) as Box<dyn Read + Send>),
-    );
-    let code = wait_until(&mut child, Instant::now() + timeout)?;
+    let out = drain(child.stdout.take());
+    let err = drain(child.stderr.take());
+    let code = wait_until(&mut child, deadline)?;
+    let until = deadline.max(Instant::now()) + PIPE_GRACE;
     Ok(Output {
         code,
-        stdout: out.join().unwrap_or_default(),
-        stderr: err.join().unwrap_or_default(),
+        stdout: out.collect(until),
+        stderr: err.collect(until),
     })
+}
+
+/// A pipe read to its end on its own thread.
+struct Drain {
+    buf: Arc<Mutex<Vec<u8>>>,
+    /// Disconnects when the reader is done.
+    done: mpsc::Receiver<()>,
+}
+
+fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> Drain {
+    let buf = Arc::new(Mutex::new(Vec::new()));
+    let (tx, done) = mpsc::channel::<()>();
+    let shared = Arc::clone(&buf);
+    std::thread::spawn(move || {
+        let _tx = tx;
+        let Some(mut pipe) = pipe else { return };
+        let mut chunk = [0u8; 8192];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => shared
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .extend_from_slice(&chunk[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => break,
+            }
+        }
+    });
+    Drain { buf, done }
+}
+
+impl Drain {
+    /// What was read, waiting for the end of the pipe until `until` at most.
+    fn collect(self, until: Instant) -> String {
+        let _ = self
+            .done
+            .recv_timeout(until.saturating_duration_since(Instant::now()));
+        let buf = self.buf.lock().unwrap_or_else(|e| e.into_inner());
+        String::from_utf8_lossy(&buf).into_owned()
+    }
 }
 
 #[cfg(test)]
@@ -248,7 +277,9 @@ mod tests {
         let (shell, flag, echo, slow) = if cfg!(windows) {
             ("cmd", "/C", "echo hi", "ping -n 30 127.0.0.1 >NUL")
         } else {
-            ("sh", "-c", "echo hi", "sleep 30")
+            // Not the last command, so the shell cannot exec it: `sleep` is a grandchild that
+            // holds the pipes until the whole group is killed.
+            ("sh", "-c", "echo hi", "sleep 30; exit 0")
         };
         let out = run(Path::new(shell), &[flag, echo], Duration::from_secs(30)).unwrap();
         assert!(out.ok());
@@ -257,5 +288,25 @@ mod tests {
         let out = run(Path::new(shell), &[flag, slow], Duration::from_millis(500)).unwrap();
         assert_eq!(out.code, None);
         assert!(start.elapsed() < Duration::from_secs(20));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_timeout_kills_the_grandchildren() {
+        let out = run(
+            Path::new("sh"),
+            &["-c", "sleep 30 & echo $!; wait"],
+            Duration::from_millis(500),
+        )
+        .unwrap();
+        assert_eq!(out.code, None);
+        let pid: libc::pid_t = out.stdout.trim().parse().unwrap();
+        // Reparented to init once `sh` is gone, which reaps it shortly after.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        // SAFETY: signal 0 only checks that the process exists.
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            assert!(Instant::now() < deadline, "sleep {pid} is still running");
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 }
