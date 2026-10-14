@@ -949,3 +949,63 @@ button.act-more {
 .review-ask p {
   margin: 0 0 0.5rem;
 }
+
+/* Rules that clash between groups, and copying to another group (§7b) */
+.list.flat.clash-list > li.clash {
+  padding: 0.6rem 0;
+}
+.clash-side {
+  display: grid;
+  grid-template-columns: minmax(7rem, 11rem) 1fr;
+  gap: 0.6rem;
+  align-items: baseline;
+  margin: 0.35rem 0;
+}
+.clash-name {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.clash-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+li.clash .actions {
+  margin-top: 0.4rem;
+}
+li.clash p {
+  margin: 0.4rem 0 0;
+}
+.clash-warnings {
+  margin: 0.4rem 0;
+  padding: 0.4rem 0.7rem;
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+}
+.clash-warnings ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.2rem;
+}
+.pick-sections > li {
+  padding: 0.3rem 0;
+}
+.pick-list {
+  list-style: none;
+  margin: 0;
+  padding-left: 1.5rem;
+}
+.pick-list .check {
+  margin: 0.2rem 0;
+  align-items: flex-start;
+}
+.pick-line {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 620px) {
+  .clash-side {
+    grid-template-columns: 1fr;
+    gap: 0.1rem;
+  }
+}

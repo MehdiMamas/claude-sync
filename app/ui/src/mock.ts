@@ -6,8 +6,10 @@
 // `?noNotifications` starts with an empty notification history.
 // `?noClaudeMd` shows a user whose CLAUDE.md has no text of their own.
 // `?noReview` shows no CLAUDE.md changes waiting.
+// `?noConflicts` shows no rules clashing between groups; `?noPush` makes "Copy to another
+// group" find the other group read-only.
 // The first group has one job waiting for consent, one accepted job and a plugin warning.
-import type { Backend, ClaudeMdReview, ClaudeMdShare, CommitInfo, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, Notification, PersonalStatus, ReviewItem } from "./api";
+import type { Backend, Clash, ClashSide, ClashSource, ClaudeMdReview, ClaudeMdShare, CommitInfo, CopyPreview, CopyRequest, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, Notification, PersonalStatus, ReviewItem } from "./api";
 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
@@ -131,6 +133,69 @@ const ownClaudeMd = `# How I work
 - Deploy key: [redacted:ghp]
 `;
 const sharedClaudeMd = new Set<string>();
+
+// Rules and settings that clash between the groups and the user's own CLAUDE.md (§7b).
+const mehdi: ClashSource = { kind: "group", id: { owner: "mehdimamas", repo: "claude-sync-data" } };
+const acme: ClashSource = { kind: "group", id: { owner: "acme", repo: "claude-team" } };
+const own: ClashSource = { kind: "own" };
+const side = (source: ClashSource, name: string, text: string): ClashSide => ({ source, name, text });
+const sameSource = (a: ClashSource, b: ClashSource) =>
+  a.kind === b.kind && (a.kind === "own" || (b.kind === "group" && a.id.owner === b.id.owner && a.id.repo === b.id.repo));
+let clashes: Clash[] = q.has("noConflicts")
+  ? []
+  : [
+      {
+        id: "d1",
+        kind: "duplicate",
+        pointer: null,
+        a: side(mehdi, "Mehdi & friends", "- Run the tests before saying something works."),
+        b: side(own, "Your CLAUDE.md", "- Run the tests before saying something works."),
+      },
+      {
+        id: "c1",
+        kind: "contradiction",
+        pointer: null,
+        a: side(mehdi, "Mehdi & friends", "- Always answer in English."),
+        b: side(acme, "Acme team", "- Never answer in English; use the customer's language."),
+      },
+      { id: "s1", kind: "setting", pointer: "/model", a: side(mehdi, "Mehdi & friends", '"opus"'), b: side(acme, "Acme team", '"sonnet"') },
+    ];
+// Lines a text would clash with once shared, by their normalized form.
+const known: [string, Clash["kind"], ClashSide][] = [
+  ["run the tests before saying something works", "duplicate", side(own, "Your CLAUDE.md", "- Run the tests before saying something works.")],
+  ["always answer in english", "contradiction", side(acme, "Acme team", "- Never answer in English; use the customer's language.")],
+  ["answer in short, plain sentences", "duplicate", side(mehdi, "Mehdi & friends", "- Answer in short, plain sentences.")],
+];
+const norm = (line: string) => line.replace(/^\s*(?:[-*+]|\d+\.)\s+/, "").replace(/[.!]+$/, "").trim().toLowerCase();
+const groupClaudeMd = `# How we work
+
+- Run the tests before saying something works.
+- Use pnpm, never npm.
+- Always answer in English.
+
+## Reviews
+
+- Keep PRs small: one change per PR.
+- A PR says why, what and how it was tested.
+`;
+const copyPreview = (to: GroupId): CopyPreview => ({
+  to,
+  toName: groups.find((g) => g.id.owner === to.owner && g.id.repo === to.repo)?.name ?? `${to.owner}/${to.repo}`,
+  host: to.owner === "acme" ? "acme-bot" : "mehdimamas",
+  canPush: !q.has("noPush"),
+  syncs: { claudeMd: true, skills: true, agents: true, settings: true },
+  claudeMd: groupClaudeMd,
+  skills: [
+    { name: "review", inTarget: false, same: false },
+    { name: "deploy", inTarget: true, same: false },
+  ],
+  agents: [{ name: "scout.md", inTarget: true, same: true }],
+  settings: [
+    { pointer: "/model", value: '"opus"', target: '"sonnet"', clash: true },
+    { pointer: "/permissions/allow", value: '["Bash(git status:*)"]', target: '["Bash(pnpm test:*)"]', clash: false },
+    { pointer: "/env/TZ", value: '"UTC"', target: null, clash: false },
+  ],
+});
 
 const setPersonal = (patch: Partial<PersonalStatus>) => (personal = { ...personal, ...patch });
 
@@ -318,6 +383,31 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     const appended = !sharedClaudeMd.has(text);
     sharedClaudeMd.add(text);
     return { appended, removedOwn: (a.share as ClaudeMdShare).removeOwn };
+  },
+  conflicts: () => clashes,
+  claude_md_check: (a) =>
+    (a.text as string)
+      .split("\n")
+      .flatMap((line) => known.filter(([k]) => norm(line) === k).map(([, kind, b], i): Clash => ({ id: `w${i}`, kind, pointer: null, a: side(own, "", line.trim()), b })))
+      .filter((c) => !(a.from === null && c.b.source.kind === "own")),
+  drop_claude_md_line: (a) => {
+    clashes = clashes.filter((c) => ![c.a, c.b].some((s) => sameSource(s.source, a.source as ClashSource) && s.text === a.line));
+  },
+  edit_claude_md_line: (a) => {
+    if ((a.text as string).includes("ghp_")) throw "the new text holds a token; take it out first";
+    clashes = clashes.filter((c) => !(sameSource(c.a.source, a.source as ClashSource) && c.a.text === a.line));
+  },
+  keep_setting: (a) => {
+    clashes = clashes.filter((c) => c.pointer !== a.pointer);
+  },
+  copy_preview: (a) => copyPreview(a.to as GroupId),
+  copy_to_group: (a) => {
+    const r = a.request as CopyRequest;
+    if (q.has("noPush")) throw "You can't push to Acme team: your GitHub account can read it but not write to it. Ask its host (acme-bot) for write access.";
+    if (r.skills.includes("deploy")) throw "Acme team already has a different skill named deploy";
+    const files = r.skills.length + r.agents.length;
+    const claudeMd = r.claudeMd.trim() !== "";
+    return { committed: claudeMd || files + r.settings.length > 0, claudeMd, files, settings: r.settings.length };
   },
   group_contents: (a) => ((a.group as GroupId).owner === "acme" ? acmeContents : mehdiContents),
   recent_commits: (a) => (q.has("noHistory") ? [] : commits.slice(0, Number(a.limit ?? 20))),

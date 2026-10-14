@@ -39,6 +39,8 @@ struct State {
     private: bool,
     topics: Vec<String>,
     collaborators: Vec<String>,
+    /// Collaborators with read access only: commits fail with `403`.
+    readers: Vec<String>,
     invitations: Vec<(u64, String)>,
     failures: Vec<Failure>,
     before_commit: Option<Hook>,
@@ -126,6 +128,7 @@ impl FakeRepo {
                 private: true,
                 topics: vec![crate::group::TOPIC.into()],
                 collaborators: Vec::new(),
+                readers: Vec::new(),
                 invitations: Vec::new(),
                 failures: Vec::new(),
                 before_commit: None,
@@ -244,6 +247,12 @@ impl FakeRepo {
         }
     }
 
+    /// Give `login` read access only: they can pull, but commits fail with `403`.
+    pub fn add_reader(&self, login: &str) {
+        self.add_collaborator(login);
+        self.lock().readers.push(login.into());
+    }
+
     /// Collaborators other than the owner.
     pub fn collaborator_logins(&self) -> Vec<String> {
         self.lock().collaborators.clone()
@@ -333,6 +342,13 @@ impl FakeRepo {
         Ok(st)
     }
 
+    fn pushable(&self) -> bool {
+        let st = self.lock();
+        self.viewer
+            .as_ref()
+            .is_none_or(|v| !st.readers.iter().any(|r| r.eq_ignore_ascii_case(v)))
+    }
+
     fn enter_as_owner(&self, op: &str) -> crate::Result<std::sync::MutexGuard<'_, State>> {
         let st = self.enter(op)?;
         match &self.viewer {
@@ -384,6 +400,12 @@ impl RemoteRepo for FakeRepo {
 
     async fn commit(&self, parent: &Head, changes: &Changes, message: &str) -> crate::Result<Head> {
         drop(self.enter("commit")?);
+        if !self.pushable() {
+            return Err(Error::GitHub {
+                status: 403,
+                message: "Permission denied".into(),
+            });
+        }
         let hook = self.lock().before_commit.take();
         if let Some(mut hook) = hook {
             hook(self);
@@ -403,6 +425,11 @@ impl RemoteRepo for FakeRepo {
 
     async fn is_private(&self) -> crate::Result<bool> {
         Ok(self.enter("is_private")?.private)
+    }
+
+    async fn can_push(&self) -> crate::Result<bool> {
+        drop(self.enter("can_push")?);
+        Ok(self.pushable())
     }
 
     async fn owner_login(&self) -> crate::Result<String> {

@@ -79,6 +79,21 @@ A person's own `~/.claude/CLAUDE.md` often holds the very instructions a group w
 
 **No double instructions.** Once the group has the text, the managed block imports it, so Claude would read it twice. "Remove it from my own CLAUDE.md (it now comes from the group)" is on by default. It removes the shared lines (blank lines aside, trailing spaces ignored, each shared line once) from the user's own text only; the managed block and import lines stay. It runs only when this device applies the group's `CLAUDE.md` (not kept local), and the file is backed up to `~/.claude-sync/backups/<UTC time>/` first. With personal memory on, the shorter text reaches the person's other devices too; they get the instructions back from the group once they join it.
 
+**Clashes.** Under the preview, the app lists the lines that would say the same thing as, or the opposite of, a line Claude already reads from that group or from the user's other groups (§7b), with the group's name and its line ("\"Always answer in English\" contradicts Acme team: \"Never answer in English\""). It is a warning: the user can still share.
+
+### Copying to another group
+
+A group's page has "Copy to another group" when the user is in at least two groups. It copies from the group on screen (A) to the group the user picks (B):
+
+- **`CLAUDE.md`**: A's text (redacted with the §9 patterns) is cut into sections at its headings and into lines (a fenced code block is one item). The user ticks whole sections or single lines; the text B will get is an editable preview built from the ticks. It is appended to B's `CLAUDE.md` under `## From <A's name>`, and the preview lists the lines that would clash with B or the user's other groups (§7b; A itself is left out).
+- **Skills and agents**: one box per skill folder and agent file. One B already has the same is shown as there already; one B has in another version is refused ("Acme team already has a different skill named deploy"), never overwritten.
+- **Settings**: one box per value of A's `settings.shared.json` (JSON pointer). Arrays are merged into B's array (union); a plain value B already sets differently is refused and shown with B's value.
+- Kinds B does not sync (`sync.*` off) are shown as such and not offered.
+
+Everything goes to B in one commit, `<login>@<device>: copy from <A>: CLAUDE.md, skills/x, agents/y.md, 2 settings`, through the same path as sharing the user's own content: redaction, the secret scan, and fetch and try again on a concurrent push (§6). B's other members get the new `CLAUDE.md` lines as changes to review (§7a). Text B already has is not appended again.
+
+**Write access.** Copying needs push access to B. The preview asks GitHub (`permissions.push` on the repo); when the user can only read B, the card says so plainly ("You can't push to Acme team: your GitHub account can read it but not write to it. Ask its host (acme-bot) for write access.") and offers no Copy button. A push GitHub refuses with 403 gets the same message.
+
 ### Plugins
 
 A group can bundle Claude Code plugin marketplaces (issue #30). `plugins/<marketplace>/` is a marketplace folder exactly as Claude Code expects it: `.claude-plugin/marketplace.json` plus the plugins it lists.
@@ -132,7 +147,7 @@ Moves the merged group state into `~/.claude` without touching anything it does 
   @~/.claude-sync/groups/MehdiMamas__claude-sync-data/CLAUDE.md
   <!-- claude-sync:end -->
   ```
-  Everything outside the block is the user's.
+  Everything outside the block is the user's. Lines that say the same thing as, or the opposite of, a line in another group or the user's own text are listed on the group page (§7b).
 - **Local edits.** A file watcher (debounced, 2 s) on managed paths compares hashes against the manifest. A changed managed file shows a notice: **Share with group** (commit it), **Keep local** (stop managing that path on this device), or **Undo** (restore the group's version). A new local skill can be shared from the app. The watcher also covers `~/.claude-sync/marketplaces/`: an edited plugin file, or a new file inside a marketplace folder a group placed, gets the same notice, and Share commits it under `plugins/<marketplace>/`. Undo of a new file removes it (a copy goes to the backups).
 - Every write goes through write-to-temp-then-rename. Before the first change to an existing user file (`CLAUDE.md`, `settings.json`) the app copies it to `~/.claude-sync/backups/<UTC time>/`.
 
@@ -160,9 +175,32 @@ A person can be in several groups, and a line from one group's `CLAUDE.md` may b
 
 **Telling the user.** A sync that finds new items sends one notification per group ("ana changed Friends's CLAUDE.md: 1 addition, 1 removal to review"). The tray tooltip and the nav show the number waiting, the Groups list tags the group, and the group page lists each item with its author, time, commit message and lines, with Accept and Decline (and Accept all / Decline all).
 
-**Other groups.** Review state is per group. Accepting, declining or deleting a line in one group never touches another group's copy, even when the same line is in both.
+**Other groups.** Review state is per group. Accepting, declining or deleting a line in one group never touches another group's copy, even when the same line is in both. Settling a clash between groups (§7b) uses the same decline: the line left out is declined in that group's copy on this device only.
 
 **Scope.** Only `CLAUDE.md` is reviewed. Skills, agents, commands and output styles still follow §6 and §7 (the group's version applies; a local edit gets the Share / Keep local / Undo notice). Settings merge per key (§8).
+
+## 7b. Groups that must not conflict
+
+Claude reads every group's `CLAUDE.md` and the user's own text together, and every group's settings are merged into one `settings.json`. Two groups, or a group and the user, can say the same thing twice or the opposite. The app finds these clashes and lets the user settle each one on this device.
+
+**What counts as a clash.** Deterministic checks, no model involved:
+
+- Each `CLAUDE.md` Claude reads here (each group's copy as accepted, §7a, and the user's own text outside the managed block) is cut into rule lines. Headings, code blocks, import lines, HTML comments, table rows and lines of fewer than two words are left out.
+- **Duplicate:** two lines from different sources that are equal once case, list markers, punctuation and spacing are ignored, or equal apart from words that only set strength or direction ("always", "do", "must", "please"), with the same sense ("Never push to main" and "Do not push to main").
+- **Contradiction:** two such lines that are equal apart from those words, where one is negated and the other is not ("Always use tabs" and "Never use tabs").
+- **Setting:** two groups' `settings.shared.json` set the same plain value (JSON pointer) to different values. The group joined first wins on apply (§8), so its side is marked "applies now". Arrays are merged by union and never clash. A value kept local for a group (below) is not applied, so it no longer clashes.
+
+At most 200 clashes are listed. Each has an id that stays the same while both sides do.
+
+**The Conflicts card.** On each group page: the clashes with a side in that group, both sides with the group name (or "Your CLAUDE.md") and the line or value. The card is hidden when there are none. Per item:
+
+- **Keep A's / Keep B's** for a line: the other line is taken out of what Claude reads on this device only. In a group's copy it is declined like a change under review (§7a), so "Use the group's version" brings it back; it never changes the group for anyone else. In the user's own `CLAUDE.md` the line is removed after the file is backed up. For a duplicate, this is "keep one".
+- **Edit** a line of the group on screen: the new text (redacted and scanned, §9) replaces the line in the group's `CLAUDE.md` and is committed as `edit CLAUDE.md`; the group's other members get it to review (§7a). Empty text removes the line.
+- **Keep A's / Use B's** for a setting: the dropped group's value is kept local on this device (`settings.shared.json#<pointer>` in the keep-local list), so it is not applied; both groups are synced again.
+
+**Warnings before sharing.** Sharing the user's `CLAUDE.md` with a group and copying lines to another group (§4) run the same check on the text in the preview against the target group and the user's other groups, and list the clashes under it. The source of the text (the user's own file, or the group copied from) is left out of the check.
+
+**Not built: "Check with Claude".** A semantic check (rules that clash in meaning but not in words) could run `claude -p` the way scheduled jobs do (§17). It is not implemented; the checks above compare words only.
 
 ## 8. Settings merge
 
@@ -171,6 +209,7 @@ A person can be in several groups, and a line from one group's `CLAUDE.md` may b
 - Objects merge key by key. Arrays get the shared items they lack, appended after local items. For plain values, the shared value wins.
 - `~/.claude-sync/settings-owned.json` records, per group, every value the app set (JSON pointer and value) and every array item it added.
 - A key or array item the group no longer has is removed locally **only if** the local value still equals what the app set. If the user changed it, it stays, and the app offers to share the user's value with the group.
+- Two groups that set the same plain value differently: the group joined first wins and the clash is listed on both group pages (§7b), where the user can pick the other group's value instead.
 - If either file is not one JSON object, nothing is merged and the app says so. If the result equals the current file, nothing is written.
 - Never shared, even if present in `settings.shared.json`: `apiKeyHelper`, `env` values that the secret scan flags, and `hooks` whose commands contain absolute paths (reported, not applied).
 

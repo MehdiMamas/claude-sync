@@ -9,9 +9,11 @@ use crate::jobs as app_jobs;
 use crate::notify;
 use crate::updates::{self, UpdateInfo};
 use claude_sync_core::apply::Manifest;
+use claude_sync_core::conflicts::{Conflict, Source};
 use claude_sync_core::contents::{self, GroupContents};
 use claude_sync_core::engine::{
-    ClaudeMdReview, ClaudeMdShare, ClaudeMdShared, CommitInfo, GroupStatus, SyncReport,
+    ClaudeMdReview, ClaudeMdShare, ClaudeMdShared, CommitInfo, Copied, CopyPreview, CopyRequest,
+    GroupStatus, SyncReport,
 };
 use claude_sync_core::github::Invitation;
 use claude_sync_core::jobs::JobsOverview;
@@ -392,6 +394,105 @@ pub async fn use_group_claude_md(
     background::refresh_status(&app);
     background::check_local_edits(&app);
     Ok(r)
+}
+
+/// Duplicate and contradicting rules across the user's groups and own CLAUDE.md, and
+/// settings two groups set differently (§7b).
+#[tauri::command]
+pub fn conflicts(ctx: CtxState) -> Res<Vec<Conflict>> {
+    let e = ctx.engine()?;
+    e.conflicts().map_err(guard::logged("conflicts"))
+}
+
+/// How `text` would clash once shared with or copied to `group`; `from` is the group it is
+/// copied from, none for the user's own text.
+#[tauri::command]
+pub fn claude_md_check(
+    ctx: CtxState,
+    group: GroupId,
+    text: String,
+    from: Option<GroupId>,
+) -> Res<Vec<Conflict>> {
+    let e = ctx.engine()?;
+    e.claude_md_check(&group, &text, from.as_ref())
+        .map_err(guard::logged("CLAUDE.md check"))
+}
+
+/// Keep the other side of a clash: take `line` out of what Claude reads from `source` on
+/// this device only.
+#[tauri::command]
+pub async fn drop_claude_md_line(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    source: Source,
+    line: String,
+) -> Res<()> {
+    let e = ctx.engine()?;
+    e.drop_claude_md_line(&source, &line)
+        .await
+        .map_err(guard::logged("conflicts"))?;
+    background::refresh_status(&app);
+    Ok(())
+}
+
+/// Replace `line` of `source` with `text`. A group's line is committed for everyone.
+#[tauri::command]
+pub async fn edit_claude_md_line(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    source: Source,
+    line: String,
+    text: String,
+) -> Res<()> {
+    let e = ctx.engine()?;
+    e.edit_claude_md_line(&source, &line, &text)
+        .await
+        .map_err(guard::logged("conflicts"))?;
+    background::sync_soon(&app, true);
+    Ok(())
+}
+
+/// Settle a setting two groups set differently: `keep`'s value applies on this device.
+#[tauri::command]
+pub async fn keep_setting(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    keep: GroupId,
+    drop: GroupId,
+    pointer: String,
+) -> Res<()> {
+    let e = ctx.engine()?;
+    e.keep_setting(&keep, &drop, &pointer)
+        .await
+        .map_err(guard::logged("conflicts"))?;
+    background::refresh_status(&app);
+    Ok(())
+}
+
+/// What copying from `from` to `to` would bring (§7b).
+#[tauri::command]
+pub async fn copy_preview(ctx: CtxState<'_>, from: GroupId, to: GroupId) -> Res<CopyPreview> {
+    let e = ctx.engine()?;
+    e.copy_preview(&from, &to)
+        .await
+        .map_err(guard::logged("copy to another group"))
+}
+
+#[tauri::command]
+pub async fn copy_to_group(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    from: GroupId,
+    to: GroupId,
+    request: CopyRequest,
+) -> Res<Copied> {
+    let e = ctx.engine()?;
+    let done = e
+        .copy_to_group(&from, &to, &request)
+        .await
+        .map_err(guard::logged("copy to another group"))?;
+    background::sync_soon(&app, true);
+    Ok(done)
 }
 
 #[tauri::command]

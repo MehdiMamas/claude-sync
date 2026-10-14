@@ -237,6 +237,41 @@ impl ReviewState {
         items.len()
     }
 
+    /// Decline one line of the accepted text for this user only (a clash with another
+    /// group, docs/architecture.md §7b): it is taken out of `accepted` and remembered with
+    /// the declined items, so "Use the group's version" brings it back. Lines compare
+    /// without surrounding spaces. `None` when the text has no such line.
+    pub fn drop_line(&mut self, line: &str, now: u64) -> Option<Item> {
+        let line = line.trim();
+        let lines = split(&self.accepted);
+        let at = lines.iter().position(|l| key(l).trim() == line)?;
+        let new: String = lines[..at]
+            .iter()
+            .chain(&lines[at + 1..])
+            .copied()
+            .collect();
+        let step = Step {
+            text: new.clone(),
+            mine: true,
+            author: String::new(),
+            commit: format!("local:{now}"),
+            message: String::new(),
+            at_unix: now,
+        };
+        let item = items_between(&self.accepted, &new, &step)
+            .into_iter()
+            .find(|i| i.kind == Kind::Remove)?;
+        self.accepted = new;
+        self.declined.push(Declined {
+            id: item.id.clone(),
+            at_unix: now,
+        });
+        let excess = self.declined.len().saturating_sub(MAX_DECLINED);
+        self.declined.drain(..excess);
+        self.settle();
+        Some(item)
+    }
+
     /// "Use the group's version": the copy follows the group again, decisions forgotten.
     pub fn reset(&mut self) {
         self.accepted = self.group.clone();
@@ -778,6 +813,50 @@ mod tests {
         let items = items_between(&a, &b, &s);
         assert_eq!(items.len(), 2);
         assert_eq!(apply_all(&a, &items), b);
+    }
+
+    #[test]
+    fn a_dropped_line_stays_out_until_the_group_version_is_used() {
+        let text = "# G
+- Use tabs
+- Run tests
+";
+        let mut st = ReviewState::new(text);
+        assert_eq!(st.drop_line("nothing like it", 5), None);
+        let item = st.drop_line("  - Use tabs ", 5).unwrap();
+        assert_eq!(
+            (
+                item.kind,
+                item.lines.clone(),
+                st.accepted.as_str(),
+                st.declined.len()
+            ),
+            (
+                Kind::Remove,
+                vec!["- Use tabs".to_string()],
+                "# G
+- Run tests
+",
+                1
+            )
+        );
+        // Later changes by others still apply around it.
+        let next = "# G
+- Use tabs
+- Run tests
+- Be kind
+";
+        st.review = false;
+        st.pull(&[step(next, "cy", false, "c2")]);
+        assert_eq!(
+            st.accepted,
+            "# G
+- Run tests
+- Be kind
+"
+        );
+        st.reset();
+        assert_eq!(st.accepted, next);
     }
 
     #[test]
