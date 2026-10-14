@@ -184,6 +184,7 @@ async function boot(): Promise<void> {
     on("invitations", (invitations) => store.set({ invitations })),
     on("update-available", (update) => store.set({ update })),
     on("signed-in", async () => store.set({ auth: await api.authStatus() })),
+    on("sign-in-expired", async () => store.set({ auth: await api.authStatus() })),
     on("sync-report", () => {
       store.bump();
       api.groups().then(countReview, () => {});

@@ -110,7 +110,7 @@ function form(s: Settings): HTMLElement[] {
   signOut.addEventListener("click", () =>
     busy(signOut, "Signing out…", async () => {
       await api.signOut();
-      store.set({ auth: { signedIn: false, login: null, clientIdMissing: store.auth?.clientIdMissing ?? false } });
+      store.set({ auth: { signedIn: false, login: null, expiredLogin: null, clientIdMissing: store.auth?.clientIdMissing ?? false } });
     }),
   );
 

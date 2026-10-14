@@ -12,12 +12,13 @@ pub struct Hit {
 }
 
 /// v0's patterns, same names and order: longer, more specific ones first so a
-/// `github_pat` is not reported as something else.
+/// `github_pat` is not reported as something else. `gh-token` also covers `ghr_` refresh
+/// tokens. GitHub tokens match to their end, so redaction leaves no tail of a longer one.
 const PATTERNS: &[(&str, &str)] = &[
     ("github_pat", r"github_pat_[A-Za-z0-9_]{50,}"),
     ("sk-ant", r"sk-ant-[A-Za-z0-9_-]{20,}"),
-    ("ghp", r"ghp_[A-Za-z0-9]{36}"),
-    ("gh-token", r"gh[osu]_[A-Za-z0-9]{36}"),
+    ("ghp", r"ghp_[A-Za-z0-9]{36,}"),
+    ("gh-token", r"gh[orsu]_[A-Za-z0-9]{36,}"),
     ("aws-access-key", r"AKIA[0-9A-Z]{16}"),
     ("slack-token", r"xox[abpr]-[A-Za-z0-9-]{10,}"),
     (
@@ -135,6 +136,7 @@ pub(crate) mod tests {
             (format!("gho_{}", rep('a', 36)), "gh-token"),
             (format!("ghs_{}", rep('b', 36)), "gh-token"),
             (format!("ghu_{}", rep('c', 36)), "gh-token"),
+            (format!("ghr_{}", rep('d', 76)), "gh-token"),
             (format!("AKIA{}", rep('A', 16)), "aws-access-key"),
             (format!("xoxb-{}", rep('a', 10)), "slack-token"),
             (format!("xoxp-{}", rep('1', 12)), "slack-token"),
@@ -227,6 +229,17 @@ pub(crate) mod tests {
                 assert!(out.ends_with(" after"), "{name}: {out}");
             }
         }
+    }
+
+    #[test]
+    fn redact_leaves_no_tail_of_a_long_token() {
+        let refresh = format!("ghr_{}", rep('e', 76));
+        assert_eq!(
+            redact(&format!("refresh {refresh}!")),
+            "refresh [redacted:gh-token]!"
+        );
+        let access = format!("ghu_{}", rep('f', 40));
+        assert_eq!(redact(&access), "[redacted:gh-token]");
     }
 
     #[test]

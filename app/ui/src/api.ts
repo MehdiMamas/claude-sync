@@ -199,7 +199,7 @@ export interface LocalEdit {
 }
 export type EditAction = "share" | "keepLocal" | "undo";
 export interface Status {
-  state: "signedOut" | "paused" | "syncing" | "ok" | "error" | "idle";
+  state: "signedOut" | "expired" | "paused" | "syncing" | "ok" | "error" | "idle";
   text: string;
   lastSyncUnix: number | null;
   error: string | null;
@@ -258,6 +258,8 @@ export interface DeviceCode {
 export interface AuthStatus {
   signedIn: boolean;
   login: string | null;
+  /** Signed out because GitHub stopped accepting this login's sign-in. */
+  expiredLogin: string | null;
   clientIdMissing: boolean;
 }
 /** What personal memory syncs. */
@@ -364,6 +366,8 @@ export interface Events {
   invitations: Invitation[];
   "update-available": UpdateInfo;
   "signed-in": { login: string };
+  /** GitHub stopped accepting the sign-in; the app is signed out until the user signs in again. */
+  "sign-in-expired": { login: string };
   "sign-in-failed": { message: string };
   "notifications-changed": { unread: number };
   navigate: string;

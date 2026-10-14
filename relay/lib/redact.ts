@@ -6,7 +6,7 @@ const PATTERNS: ReadonlyArray<readonly [name: string, regex: RegExp, replace?: s
   ["github_pat", /github_pat_[A-Za-z0-9_]{50,}/g],
   ["sk-ant", /sk-ant-[A-Za-z0-9_-]{20,}/g],
   ["ghp", /ghp_[A-Za-z0-9]{36,}/g],
-  ["gh-token", /gh[osu]_[A-Za-z0-9]{36,}/g],
+  ["gh-token", /gh[orsu]_[A-Za-z0-9]{36,}/g],
   ["aws-access-key", /AKIA[0-9A-Z]{16,}/g],
   ["slack-token", /xox[abpr]-[A-Za-z0-9-]{10,}/g],
   // The header, plus the key body up to its END line; with no END line (a cut log),

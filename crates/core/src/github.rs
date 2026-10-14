@@ -7,6 +7,9 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+mod session;
+pub use session::{refresh_tokens_at, Session, Tokens, REFRESH_MARGIN_SECS};
+
 pub const API: &str = "https://api.github.com";
 /// Where the OAuth device-flow endpoints live.
 pub const LOGIN: &str = "https://github.com";
@@ -49,7 +52,7 @@ pub enum DevicePoll {
     Pending,
     /// GitHub asked to slow down; new interval in seconds.
     SlowDown(u64),
-    Token(String),
+    Token(Tokens),
     Expired,
     Denied,
 }
@@ -109,8 +112,8 @@ pub async fn poll_device_flow_at(
         ],
     )
     .await?;
-    if let Some(token) = reply.get("access_token").and_then(Value::as_str) {
-        return Ok(DevicePoll::Token(token.into()));
+    if let Some(tokens) = Tokens::from_reply(&reply, crate::state::now_unix()) {
+        return Ok(DevicePoll::Token(tokens));
     }
     match reply.get("error").and_then(Value::as_str) {
         Some("authorization_pending") => Ok(DevicePoll::Pending),
@@ -190,8 +193,12 @@ fn oauth_error(code: &str, reply: &Value) -> Error {
 /// OS keychain storage (service `claude-sync`). Never files, never logs.
 ///
 /// Two entries: account `@current` holds the signed-in login (`@` cannot appear in a GitHub
-/// login), and account `<login>` holds that login's token.
+/// login), and account `<login>` holds that login's tokens: the bare access token when it
+/// does not expire (the only layout up to 0.1.1), or JSON [`Tokens`](super::Tokens) with the
+/// refresh token and expiry times. Both layouts load.
 pub mod token_store {
+    use super::Tokens;
+
     pub const SERVICE: &str = "claude-sync";
     const CURRENT: &str = "@current";
 
@@ -230,30 +237,33 @@ pub mod token_store {
         }
     }
 
-    /// `(login, token)` of the signed-in account.
-    pub fn load() -> crate::Result<Option<(String, String)>> {
+    /// `(login, tokens)` of the signed-in account.
+    pub fn load() -> crate::Result<Option<(String, Tokens)>> {
         load_from(&Keychain)
     }
-    pub fn save(login: &str, token: &str) -> crate::Result<()> {
-        save_to(&Keychain, login, token)
+    pub fn save(login: &str, tokens: &Tokens) -> crate::Result<()> {
+        save_to(&Keychain, login, tokens)
     }
     pub fn delete() -> crate::Result<()> {
         delete_from(&Keychain)
     }
 
-    pub fn load_from(store: &impl Store) -> crate::Result<Option<(String, String)>> {
+    pub fn load_from(store: &impl Store) -> crate::Result<Option<(String, Tokens)>> {
         let Some(login) = store.get(CURRENT)? else {
             return Ok(None);
         };
-        Ok(store.get(&login)?.map(|token| (login, token)))
+        Ok(store
+            .get(&login)?
+            .map(|secret| (login, Tokens::from_secret(&secret))))
     }
-    pub fn save_to(store: &impl Store, login: &str, token: &str) -> crate::Result<()> {
+    /// One write holds the whole token set, so a refresh never leaves a mismatched pair.
+    pub fn save_to(store: &impl Store, login: &str, tokens: &Tokens) -> crate::Result<()> {
         if let Some(old) = store.get(CURRENT)? {
             if old != login {
                 store.delete(&old)?;
             }
         }
-        store.set(login, token)?;
+        store.set(login, &tokens.to_secret())?;
         store.set(CURRENT, login)
     }
     pub fn delete_from(store: &impl Store) -> crate::Result<()> {
@@ -264,10 +274,10 @@ pub mod token_store {
     }
 }
 
-/// Authenticated client. Cheap to clone; clones share the rate-limit state.
+/// Authenticated client. Cheap to clone; clones share the session and the rate-limit state.
 #[derive(Clone)]
 pub struct GitHub {
-    pub token: String,
+    session: Arc<Session>,
     pub api: String,
     pub http: reqwest::Client,
     /// Unix time until which GitHub said we are rate limited.
@@ -346,8 +356,13 @@ impl GitHub {
 
     /// A client for another API root (tests, GitHub Enterprise).
     pub fn with_api(token: String, api: impl Into<String>) -> Self {
+        Self::with_session(Arc::new(Session::new(Tokens::plain(token))), api)
+    }
+
+    /// A client of a signed-in session, which refreshes its token as needed.
+    pub fn with_session(session: Arc<Session>, api: impl Into<String>) -> Self {
         Self {
-            token,
+            session,
             api: api.into().trim_end_matches('/').to_string(),
             http: http_client(),
             limited_until: Arc::default(),
@@ -375,9 +390,18 @@ impl GitHub {
         Ok(format!("{}{}", self.api, path))
     }
 
+    /// The session this client sends the token of.
+    pub fn session(&self) -> &Arc<Session> {
+        &self.session
+    }
+
     /// One API call. `Ok` for 2xx and 304; GitHub errors, rate limits and network failures
     /// map to `Error`. Network failures and 502-504 are retried with backoff for GETs
     /// (and for connection failures of any method, where nothing was sent).
+    ///
+    /// A `401` renews the token once (another caller's refresh or a refresh of our own)
+    /// and retries. When that is not possible and `GET /user` also answers `401`, the
+    /// session expires: this call and every later one fail with `Error::SignInExpired`.
     pub async fn request(
         &self,
         method: Method,
@@ -387,16 +411,53 @@ impl GitHub {
     ) -> crate::Result<Response> {
         self.check_limit()?;
         let url = self.url(path)?;
+        let mut token = self.session.token().await?;
+        let mut renewed = false;
+        loop {
+            let result = self.send_with(&method, &url, body, etag, &token).await;
+            if token.is_empty() || !matches!(result, Err(Error::GitHub { status: 401, .. })) {
+                return result;
+            }
+            if !renewed {
+                renewed = true;
+                if let Some(newer) = self.session.renew(&token).await? {
+                    token = newer;
+                    continue;
+                }
+            }
+            let confirmed = (method == Method::GET && path == "/user")
+                || matches!(
+                    self.send_with(&Method::GET, &self.url("/user")?, None, None, &token)
+                        .await,
+                    Err(Error::GitHub { status: 401, .. })
+                );
+            if confirmed {
+                self.session.expire();
+                return Err(Error::SignInExpired);
+            }
+            return result;
+        }
+    }
+
+    /// `request` without the session: one call with `token`, retried as described there.
+    async fn send_with(
+        &self,
+        method: &Method,
+        url: &str,
+        body: Option<&Value>,
+        etag: Option<&str>,
+        token: &str,
+    ) -> crate::Result<Response> {
         let mut attempt = 0;
         loop {
             let mut req = self
                 .http
-                .request(method.clone(), &url)
+                .request(method.clone(), url)
                 .header(header::ACCEPT, "application/vnd.github+json")
                 .header(header::USER_AGENT, USER_AGENT)
                 .header("X-GitHub-Api-Version", API_VERSION);
-            if !self.token.is_empty() {
-                req = req.bearer_auth(&self.token);
+            if !token.is_empty() {
+                req = req.bearer_auth(token);
             }
             if let Some(tag) = etag {
                 req = req.header(header::IF_NONE_MATCH, tag);
@@ -411,7 +472,7 @@ impl GitHub {
                 Err(e)
                     if retry_left
                         && (e.is_connect()
-                            || (method == Method::GET && (e.is_timeout() || e.is_request()))) =>
+                            || (*method == Method::GET && (e.is_timeout() || e.is_request()))) =>
                 {
                     self.backoff(attempt).await;
                     continue;
@@ -419,7 +480,7 @@ impl GitHub {
                 Err(e) => return Err(Error::Network(e.without_url().to_string())),
             };
             let status = resp.status();
-            if method == Method::GET && retry_left && matches!(status.as_u16(), 502..=504) {
+            if *method == Method::GET && retry_left && matches!(status.as_u16(), 502..=504) {
                 self.backoff(attempt).await;
                 continue;
             }
@@ -743,7 +804,7 @@ mod tests {
             (json!({"error": "access_denied"}), DevicePoll::Denied),
             (
                 json!({"access_token": "gho_x", "token_type": "bearer"}),
-                DevicePoll::Token("gho_x".into()),
+                DevicePoll::Token(Tokens::plain("gho_x")),
             ),
         ];
         for (reply, want) in replies {
@@ -807,11 +868,11 @@ mod tests {
                 Err(Error::Network("reset".into())),
                 Ok(DevicePoll::SlowDown(0)),
                 Ok(DevicePoll::SlowDown(20)),
-                Ok(DevicePoll::Token("t".into())),
+                Ok(DevicePoll::Token(Tokens::plain("t"))),
             ],
         )
         .await;
-        assert_eq!(out.unwrap(), DevicePoll::Token("t".into()));
+        assert_eq!(out.unwrap(), DevicePoll::Token(Tokens::plain("t")));
         assert_eq!(
             slept,
             [5, 5, 5, 10, 20],
@@ -850,20 +911,38 @@ mod tests {
         use token_store::*;
         let store = MemStore::default();
         assert_eq!(load_from(&store).unwrap(), None);
-        save_to(&store, "alice", "t1").unwrap();
+        save_to(&store, "alice", &Tokens::plain("t1")).unwrap();
         assert_eq!(
             load_from(&store).unwrap(),
-            Some(("alice".into(), "t1".into()))
+            Some(("alice".into(), Tokens::plain("t1")))
         );
-        save_to(&store, "bob", "t2").unwrap();
-        assert_eq!(
-            load_from(&store).unwrap(),
-            Some(("bob".into(), "t2".into()))
-        );
+        let expiring = Tokens {
+            access_token: "ghu_t2".into(),
+            refresh_token: Some("ghr_r2".into()),
+            expires_at: Some(1_000),
+            refresh_token_expires_at: Some(2_000),
+        };
+        save_to(&store, "bob", &expiring).unwrap();
+        assert_eq!(load_from(&store).unwrap(), Some(("bob".into(), expiring)));
         assert_eq!(store.0.borrow().len(), 2, "the old login's token is gone");
         delete_from(&store).unwrap();
         assert_eq!(load_from(&store).unwrap(), None);
         assert!(store.0.borrow().is_empty());
+    }
+
+    #[test]
+    fn token_store_reads_a_bare_token_saved_by_0_1_1() {
+        use token_store::*;
+        let store = MemStore::default();
+        store.set("@current", "alice").unwrap();
+        store.set("alice", "gho_legacy").unwrap();
+        assert_eq!(
+            load_from(&store).unwrap(),
+            Some(("alice".into(), Tokens::plain("gho_legacy")))
+        );
+        // A token that does not expire is still saved bare, readable by 0.1.1.
+        save_to(&store, "alice", &Tokens::plain("gho_new")).unwrap();
+        assert_eq!(store.get("alice").unwrap().as_deref(), Some("gho_new"));
     }
 
     #[tokio::test]

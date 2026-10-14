@@ -93,7 +93,7 @@ State that must not sync (lock, last-run times, log) lives in `${XDG_STATE_HOME:
 # 7. Secret safety
 
 - The allowlist (§4) is the first line. The user repo's `.gitignore` (§9) repeats the never-sync list as a second line.
-- Before every commit, scan the staged diff's added lines for: `sk-ant-[A-Za-z0-9_-]{20,}`, `ghp_[A-Za-z0-9]{36}`, `github_pat_[A-Za-z0-9_]{50,}`, `gh[osu]_[A-Za-z0-9]{36}`, `AKIA[0-9A-Z]{16}`, `xox[abpr]-[A-Za-z0-9-]{10,}`, `-----BEGIN [A-Z ]*PRIVATE KEY-----`, and `"(access|refresh)_token"\s*:`.
+- Before every commit, scan the staged diff's added lines for: `sk-ant-[A-Za-z0-9_-]{20,}`, `ghp_[A-Za-z0-9]{36}`, `github_pat_[A-Za-z0-9_]{50,}`, `gh[orsu]_[A-Za-z0-9]{36}`, `AKIA[0-9A-Z]{16}`, `xox[abpr]-[A-Za-z0-9-]{10,}`, `-----BEGIN [A-Z ]*PRIVATE KEY-----`, and `"(access|refresh)_token"\s*:`.
 - A hit blocks the commit (§6 push step 3). The message names the file, line number and pattern name. It never prints the matched text.
 - An escape hatch for false positives: a line containing `claude-sync: allow-secret` is skipped. Documented, not advertised.
 - `init` refuses to create a **public** repo, and `join`/`init --remote` warn if `gh` reports the remote is public.

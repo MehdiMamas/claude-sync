@@ -225,13 +225,19 @@ async fn send(ctx: &Ctx, payload: &Payload) -> Result<FeedbackResult, SendError>
     let auth = ctx
         .auth()
         .ok_or_else(|| SendError::Rejected("sign in to send feedback".into()))?;
+    // Only an expired sign-in fails here: keep the report until the user signs in again.
+    let token = auth
+        .session
+        .token()
+        .await
+        .map_err(|e| SendError::Offline(e.to_string()))?;
     let http = claude_sync_core::github::client_builder()
         .timeout(Duration::from_secs(60))
         .build()
         .map_err(|e| SendError::Offline(e.to_string()))?;
     let resp = http
         .post(config::relay("/api/feedback"))
-        .bearer_auth(&auth.token)
+        .bearer_auth(&token)
         .header("User-Agent", format!("claude-sync/{}", config::VERSION))
         .json(payload)
         .send()

@@ -56,6 +56,8 @@ pub fn app_info(ctx: CtxState) -> AppInfo {
 pub struct AuthStatus {
     signed_in: bool,
     login: Option<String>,
+    /// Signed out because GitHub stopped accepting this login's sign-in.
+    expired_login: Option<String>,
     client_id_missing: bool,
 }
 
@@ -65,6 +67,7 @@ pub fn auth_status(ctx: CtxState) -> AuthStatus {
     AuthStatus {
         signed_in: login.is_some(),
         login,
+        expired_login: ctx.expired_login(),
         client_id_missing: config::GITHUB_CLIENT_ID.is_empty(),
     }
 }

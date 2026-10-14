@@ -86,6 +86,12 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
     } else {
         guard::call_async("sync", engine.sync_if_changed()).await
     };
+    if ctx.auth().is_none() {
+        // The sign-in expired (or the user signed out) during the pass: show that, not
+        // this pass's errors.
+        refresh_status(app);
+        return Err(claude_sync_core::Error::SignInExpired.to_string());
+    }
     match &result {
         Ok(report) => {
             refresh_watcher(app);
@@ -176,7 +182,14 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
 pub fn refresh_status(app: &AppHandle) {
     let ctx = app.state::<Arc<Ctx>>();
     let cur = ctx.status();
-    let s = if ctx.auth().is_none() {
+    let s = if ctx.auth().is_none() && ctx.expired_login().is_some() {
+        Status {
+            state: "expired",
+            text: "Sign-in expired".into(),
+            last_sync_unix: cur.last_sync_unix,
+            error: None,
+        }
+    } else if ctx.auth().is_none() {
         Status {
             state: "signedOut",
             text: "Not signed in".into(),
@@ -189,7 +202,7 @@ pub fn refresh_status(app: &AppHandle) {
             text: "Paused".into(),
             ..cur
         }
-    } else if matches!(cur.state, "signedOut" | "paused" | "idle") {
+    } else if matches!(cur.state, "signedOut" | "expired" | "paused" | "idle") {
         Status {
             state: "idle",
             text: "Waiting to sync".into(),
