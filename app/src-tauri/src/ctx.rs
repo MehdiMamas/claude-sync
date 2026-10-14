@@ -1,6 +1,6 @@
 //! Shared app state: paths, saved state, sign-in, the cached engine and the status line.
 use crate::config;
-use crate::guard::{self, Error};
+use crate::guard::Error;
 use claude_sync_core::github::GitHub;
 use claude_sync_core::state::AppState;
 use claude_sync_core::watch::LocalEdit;
@@ -75,19 +75,28 @@ pub fn now_unix() -> u64 {
 }
 
 impl Ctx {
-    pub fn load() -> Self {
-        let paths = guard::call("Paths::from_env", Paths::from_env).unwrap_or_else(|e| {
-            tracing::warn!("using fallback paths: {e}");
-            fallback_paths()
+    /// Saved state and the keychain sign-in. Runs after logging starts so problems are logged.
+    pub fn load(paths: Paths) -> Self {
+        let state = AppState::load(&paths).unwrap_or_else(|e| {
+            tracing::warn!("could not read the saved state, starting fresh: {e}");
+            AppState::default()
         });
-        let state = guard::call("AppState::load", || AppState::load(&paths)).unwrap_or_default();
-        let auth = guard::call(
-            "token_store::load",
-            claude_sync_core::github::token_store::load,
-        )
-        .ok()
-        .flatten()
-        .map(|(login, token)| Auth { login, token });
+        #[cfg(debug_assertions)]
+        let use_keychain = crate::auth::dev_token().is_none();
+        #[cfg(not(debug_assertions))]
+        let use_keychain = true;
+        let keychain = if use_keychain {
+            claude_sync_core::github::token_store::load()
+        } else {
+            Ok(None)
+        };
+        let auth = match keychain {
+            Ok(a) => a.map(|(login, token)| Auth { login, token }),
+            Err(e) => {
+                tracing::warn!("could not read the sign-in from the keychain: {e}");
+                None
+            }
+        };
         Self {
             paths,
             state: Mutex::new(state),
@@ -109,7 +118,10 @@ impl Ctx {
             f(&mut s);
             s.clone()
         };
-        guard::call("AppState::save", || snapshot.save(&self.paths))
+        snapshot.save(&self.paths).map_err(|e| {
+            tracing::warn!("could not save the state: {e}");
+            e.to_string()
+        })
     }
 
     pub fn auth(&self) -> Option<Auth> {
@@ -214,32 +226,4 @@ pub fn default_device_name() -> String {
         .to_string_lossy()
         .trim()
         .to_lowercase()
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-}
-
-/// §10, used only while `Paths::from_env` is not implemented in the core.
-fn fallback_paths() -> Paths {
-    let home = home_dir();
-    let claude_home = std::env::var_os("CLAUDE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".claude"));
-    let state_dir = std::env::var_os("CLAUDE_SYNC_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let dir = home.join(".claude-sync");
-            if dir.join(".git").exists() {
-                dir.join("app")
-            } else {
-                dir
-            }
-        });
-    Paths {
-        claude_home,
-        state_dir,
-    }
 }

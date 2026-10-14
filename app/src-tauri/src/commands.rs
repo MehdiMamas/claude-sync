@@ -6,6 +6,7 @@ use crate::ctx::{lock, Ctx, Status};
 use crate::feedback::{self, FeedbackInput, FeedbackResult, Screenshot};
 use crate::guard::{self, Error};
 use crate::updates::{self, UpdateInfo};
+use claude_sync_core::apply::Manifest;
 use claude_sync_core::engine::{CommitInfo, GroupStatus, SyncReport};
 use claude_sync_core::github::Invitation;
 use claude_sync_core::watch::{EditAction, LocalEdit};
@@ -82,7 +83,7 @@ pub fn status(ctx: CtxState) -> Status {
 #[tauri::command]
 pub async fn groups(ctx: CtxState<'_>) -> Res<Vec<GroupStatus>> {
     let e = ctx.engine()?;
-    guard::call_async("groups", e.groups()).await
+    e.groups().await.map_err(guard::logged("groups"))
 }
 
 #[tauri::command]
@@ -101,7 +102,10 @@ pub async fn create_group(
         .filter(|r| !r.is_empty())
         .unwrap_or_else(|| group::DEFAULT_REPO.into());
     let e = ctx.engine()?;
-    let g = guard::call_async("create group", e.create_group(name, &repo)).await?;
+    let g = e
+        .create_group(name, &repo)
+        .await
+        .map_err(guard::logged("create group"))?;
     background::sync_soon(&app, true);
     Ok(g)
 }
@@ -114,7 +118,10 @@ pub async fn invitations(app: AppHandle) -> Res<Vec<Invitation>> {
 #[tauri::command]
 pub async fn accept_invitation(app: AppHandle, ctx: CtxState<'_>, id: u64) -> Res<GroupStatus> {
     let e = ctx.engine()?;
-    let g = guard::call_async("accept invitation", e.accept_invitation(id)).await?;
+    let g = e
+        .accept_invitation(id)
+        .await
+        .map_err(guard::logged("accept invitation"))?;
     lock(&ctx.known_invitations).retain(|i| *i != id);
     background::sync_soon(&app, true);
     Ok(g)
@@ -123,13 +130,13 @@ pub async fn accept_invitation(app: AppHandle, ctx: CtxState<'_>, id: u64) -> Re
 #[tauri::command]
 pub async fn discover(ctx: CtxState<'_>) -> Res<Vec<GroupId>> {
     let e = ctx.engine()?;
-    guard::call_async("discover groups", e.discover()).await
+    e.discover().await.map_err(guard::logged("discover groups"))
 }
 
 #[tauri::command]
 pub async fn join(app: AppHandle, ctx: CtxState<'_>, group: GroupId) -> Res<GroupStatus> {
     let e = ctx.engine()?;
-    let g = guard::call_async("join group", e.join(&group)).await?;
+    let g = e.join(&group).await.map_err(guard::logged("join group"))?;
     background::sync_soon(&app, true);
     Ok(g)
 }
@@ -154,7 +161,9 @@ pub async fn add_member(
 ) -> Res<()> {
     let login = valid_login(&login)?;
     let e = ctx.engine()?;
-    guard::call_async("add member", e.add_member(&group, login)).await?;
+    e.add_member(&group, login)
+        .await
+        .map_err(guard::logged("add member"))?;
     background::sync_soon(&app, true);
     Ok(())
 }
@@ -168,7 +177,9 @@ pub async fn remove_member(
 ) -> Res<()> {
     let login = valid_login(&login)?;
     let e = ctx.engine()?;
-    guard::call_async("remove member", e.remove_member(&group, login)).await?;
+    e.remove_member(&group, login)
+        .await
+        .map_err(guard::logged("remove member"))?;
     background::sync_soon(&app, true);
     Ok(())
 }
@@ -176,13 +187,13 @@ pub async fn remove_member(
 #[tauri::command]
 pub async fn leave_group(ctx: CtxState<'_>, group: GroupId) -> Res<()> {
     let e = ctx.engine()?;
-    guard::call_async("leave group", e.leave(&group)).await
+    e.leave(&group).await.map_err(guard::logged("leave group"))
 }
 
 #[tauri::command]
 pub fn local_edits(ctx: CtxState) -> Res<Vec<LocalEdit>> {
     let e = ctx.engine()?;
-    let edits = guard::call("local edits", || e.local_edits())?;
+    let edits = e.local_edits().map_err(guard::logged("local edits"))?;
     *lock(&ctx.last_edits) = edits.clone();
     Ok(edits)
 }
@@ -195,7 +206,9 @@ pub async fn resolve_edit(
     action: EditAction,
 ) -> Res<()> {
     let e = ctx.engine()?;
-    guard::call_async("resolve edit", e.resolve_edit(&edit, action)).await?;
+    e.resolve_edit(&edit, action)
+        .await
+        .map_err(guard::logged("resolve edit"))?;
     let remaining = {
         let mut last = lock(&ctx.last_edits);
         last.retain(|x| *x != edit);
@@ -205,19 +218,33 @@ pub async fn resolve_edit(
     Ok(())
 }
 
-/// Skill folders in `~/.claude/skills`, for the "Share a skill" picker.
+/// The user's own skill folders in `~/.claude/skills`, for the "Share a skill" picker.
+/// Skills a group put there are left out: they are shared already.
 #[tauri::command]
-pub fn local_skills(ctx: CtxState) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(ctx.paths.claude_home.join("skills"))
-        .map(|rd| {
-            rd.flatten()
-                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-                .filter_map(|e| e.file_name().into_string().ok())
-                .collect()
-        })
-        .unwrap_or_default();
+pub fn local_skills(ctx: CtxState) -> Res<Vec<String>> {
+    let manifest = Manifest::load(&ctx.paths).map_err(guard::logged("read the manifest"))?;
+    let rd = match std::fs::read_dir(ctx.paths.claude_home.join("skills")) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("could not list the skills: {e}")),
+    };
+    let mut names: Vec<String> = rd
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| !n.starts_with('.') && !group_managed(&manifest, n))
+        .collect();
     names.sort();
-    names
+    Ok(names)
+}
+
+fn group_managed(manifest: &Manifest, skill: &str) -> bool {
+    let prefix = format!("skills/{skill}/");
+    manifest
+        .files
+        .range(prefix.clone()..)
+        .next()
+        .is_some_and(|(path, _)| path.starts_with(&prefix))
 }
 
 #[tauri::command]
@@ -231,7 +258,9 @@ pub async fn share_skill(
         return Err("not a skill folder name".into());
     }
     let e = ctx.engine()?;
-    guard::call_async("share skill", e.share_skill(&group, &skill)).await?;
+    e.share_skill(&group, &skill)
+        .await
+        .map_err(guard::logged("share skill"))?;
     background::sync_soon(&app, true);
     Ok(())
 }
@@ -243,11 +272,9 @@ pub async fn recent_commits(
     limit: Option<usize>,
 ) -> Res<Vec<CommitInfo>> {
     let e = ctx.engine()?;
-    guard::call_async(
-        "recent changes",
-        e.recent_commits(&group, limit.unwrap_or(20).min(100)),
-    )
-    .await
+    e.recent_commits(&group, limit.unwrap_or(20).min(100))
+        .await
+        .map_err(guard::logged("recent changes"))
 }
 
 #[tauri::command]
@@ -399,7 +426,9 @@ pub fn open_path(app: AppHandle, ctx: CtxState, path: String, reveal: Option<boo
 
 #[cfg(test)]
 mod tests {
-    use super::valid_login;
+    use super::{group_managed, valid_login};
+    use claude_sync_core::apply::{ManagedFile, Manifest};
+    use claude_sync_core::GroupId;
 
     #[test]
     fn logins() {
@@ -408,5 +437,23 @@ mod tests {
         assert!(valid_login("-x").is_err());
         assert!(valid_login("").is_err());
         assert!(valid_login(&"a".repeat(40)).is_err());
+    }
+
+    #[test]
+    fn group_skills_are_not_offered_for_sharing() {
+        let mut m = Manifest::default();
+        let owner = ManagedFile {
+            group: GroupId {
+                owner: "o".into(),
+                repo: "r".into(),
+            },
+            sha256: String::new(),
+        };
+        m.files.insert("skills/team/SKILL.md".into(), owner.clone());
+        m.files.insert("skills/team-b/x.md".into(), owner);
+        assert!(group_managed(&m, "team"));
+        assert!(group_managed(&m, "team-b"));
+        assert!(!group_managed(&m, "tea"));
+        assert!(!group_managed(&m, "mine"));
     }
 }

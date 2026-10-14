@@ -62,9 +62,9 @@ struct Payload {
 }
 
 pub fn logs(ctx: &Ctx) -> Result<String, Error> {
-    guard::call("logging::tail", || {
-        claude_sync_core::logging::tail(&ctx.paths, config::FEEDBACK_LOG_BYTES)
-    })
+    // Capped well under the relay's 4.5 MB body limit (§12).
+    claude_sync_core::logging::tail(&ctx.paths, config::FEEDBACK_LOG_BYTES)
+        .map_err(guard::logged("read the log"))
 }
 
 /// Hide the window, capture the primary monitor, show the window again.
@@ -197,7 +197,8 @@ enum SendError {
 
 async fn send(ctx: &Ctx, payload: &Payload) -> Result<FeedbackResult, SendError> {
     if !config::relay_configured() {
-        return Err(SendError::Rejected(
+        // Kept in the outbox: a later build with a relay sends it.
+        return Err(SendError::Offline(
             "this build has no relay URL (CLAUDE_SYNC_RELAY_URL)".into(),
         ));
     }
@@ -256,7 +257,7 @@ fn save_to_outbox(dir: &Path, payload: &Payload) -> std::io::Result<()> {
 /// Send reports saved while offline. Stops at the first network failure.
 pub async fn retry_outbox(app: &AppHandle) {
     let ctx = app.state::<Arc<Ctx>>().inner().clone();
-    if ctx.auth().is_none() {
+    if ctx.auth().is_none() || !config::relay_configured() {
         return;
     }
     let dir = ctx.outbox_dir();

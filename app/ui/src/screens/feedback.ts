@@ -116,7 +116,7 @@ export function feedbackScreen(view: HTMLElement): void {
       try {
         const r = await api.feedbackSubmit(report);
         if (r.queued) {
-          replace(result, h("div", { class: "notice info", role: "status" }, h("div", { class: "notice-text" }, "You are offline or the server did not answer. The report is saved and is sent automatically later.")));
+          replace(result, h("div", { class: "notice info", role: "status" }, h("div", { class: "notice-text" }, "The feedback server could not be reached. The report is saved on this computer and is sent automatically later.")));
         } else {
           const link = h("button", { type: "button", class: "link" }, `issue #${r.number ?? "?"}`);
           link.addEventListener("click", () => r.url && api.openUrl(r.url).catch((e) => toast(errorText(e), "error")));
@@ -136,7 +136,7 @@ export function feedbackScreen(view: HTMLElement): void {
     view,
     h("header", { class: "head" }, h("h1", null, "Send feedback")),
     store.info && !store.info.relayConfigured &&
-      h("div", { class: "notice", role: "note" }, h("div", { class: "notice-text" }, "This build has no feedback server set up (CLAUDE_SYNC_RELAY_URL), so reports can't be sent from this copy.")),
+      h("div", { class: "notice", role: "note" }, h("div", { class: "notice-text" }, "This build has no feedback server set up (CLAUDE_SYNC_RELAY_URL). Reports are saved on this computer and sent once a build that has one is installed.")),
     h("p", { class: "muted" }, "Your report becomes a GitHub issue on the claude-sync project, opened by your GitHub account."),
     form,
   );

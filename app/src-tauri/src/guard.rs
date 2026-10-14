@@ -1,8 +1,6 @@
-//! Calls into the core with panics turned into errors.
-//!
-//! The core is still being filled in and some functions are `todo!()`. A panic in one
-//! call must never take the app or its background loop down, so every core call goes
-//! through `call` or `call_async`. This is why the release profile keeps `panic = "unwind"`.
+//! Core calls made by the background loop and the file watcher, with panics turned into
+//! errors: a bug in one pass must not end the loop or the watcher thread for the rest of
+//! the session. This is why the release profile keeps `panic = "unwind"`.
 use futures_util::FutureExt;
 use std::any::Any;
 use std::future::Future;
@@ -17,13 +15,17 @@ fn panic_text(what: &str, payload: Box<dyn Any + Send>) -> Error {
         .map(|s| s.to_string())
         .or_else(|| payload.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "panic".into());
-    let err = if msg.starts_with("not yet implemented") {
-        format!("{what}: not implemented yet ({msg})")
-    } else {
-        format!("{what}: internal error ({msg})")
-    };
+    let err = format!("{what}: internal error ({msg})");
     tracing::error!("{err}");
     err
+}
+
+/// Log a core error and turn it into the text the UI shows.
+pub fn logged(what: &'static str) -> impl Fn(claude_sync_core::Error) -> Error {
+    move |e| {
+        tracing::warn!("{what}: {e}");
+        e.to_string()
+    }
 }
 
 /// Run a synchronous core call.
@@ -72,9 +74,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn todo_becomes_an_error() {
-        let r: Result<(), Error> = call("thing", || todo!());
-        assert!(r.unwrap_err().contains("thing: not implemented yet"));
+    fn panic_becomes_an_error() {
+        let r: Result<(), Error> = call("thing", || panic!("boom"));
+        assert_eq!(r.unwrap_err(), "thing: internal error (boom)");
     }
 
     #[test]
@@ -88,8 +90,8 @@ mod tests {
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
-        let r: Result<u8, Error> = rt.block_on(call_async("later", async { todo!() }));
-        assert!(r.unwrap_err().starts_with("later: not implemented yet"));
+        let r: Result<u8, Error> = rt.block_on(call_async("later", async { panic!("late") }));
+        assert_eq!(r.unwrap_err(), "later: internal error (late)");
         let ok = rt.block_on(call_async("fine", async { Ok(7u8) }));
         assert_eq!(ok, Ok(7));
     }

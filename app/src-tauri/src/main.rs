@@ -11,26 +11,25 @@ mod guard;
 mod notify;
 mod tray;
 mod updates;
-mod watcher;
 mod window;
 
+use claude_sync_core::Paths;
 use ctx::Ctx;
 use std::sync::Arc;
 use tauri::{RunEvent, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
-fn init_logging(ctx: &Ctx) {
-    match guard::call("logging::init", || {
-        claude_sync_core::logging::init(&ctx.paths)
-    }) {
+/// Log to `<state>/logs` (§11). If that fails the app still runs, logging to stderr.
+fn init_logging(paths: &Paths) {
+    match claude_sync_core::logging::init(paths) {
         // The guard flushes the log on drop; it must live as long as the process.
         Ok(log_guard) => std::mem::forget(log_guard),
-        Err(_) => {
+        Err(e) => {
             let _ = tracing_subscriber::fmt()
                 .with_writer(std::io::stderr)
                 .with_ansi(false)
                 .try_init();
-            tracing::warn!("core logging is not available; logging to stderr");
+            tracing::warn!("could not open the log file, logging to stderr: {e}");
         }
     }
 }
@@ -58,8 +57,15 @@ fn first_run_autostart(app: &tauri::AppHandle, ctx: &Ctx) {
 
 fn main() {
     guard::install_panic_hook();
-    let ctx = Arc::new(Ctx::load());
-    init_logging(&ctx);
+    let paths = match Paths::from_env() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("claude-sync: {e}");
+            std::process::exit(1);
+        }
+    };
+    init_logging(&paths);
+    let ctx = Arc::new(Ctx::load(paths));
     tracing::info!(version = config::VERSION, state = %ctx.paths.state_dir.display(), "claude-sync starting");
     let background_start = std::env::args().any(|a| a == config::BACKGROUND_ARG);
 
@@ -113,6 +119,10 @@ fn main() {
         .setup(move |app| {
             let handle = app.handle().clone();
             first_run_autostart(&handle, &ctx);
+            #[cfg(debug_assertions)]
+            if let Some(token) = auth::dev_token() {
+                auth::sign_in_with_dev_token(&handle, token);
+            }
             tray::build(&handle)?;
             background::refresh_status(&handle);
             background::start(&handle);
