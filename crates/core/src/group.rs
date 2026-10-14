@@ -151,7 +151,10 @@ pub fn is_allowlisted(path: &str) -> bool {
         return false;
     }
     let parts: Vec<&str> = path.split('/').collect();
-    if parts.iter().any(|p| p.is_empty() || *p == "." || *p == "..") {
+    if parts
+        .iter()
+        .any(|p| p.is_empty() || *p == "." || *p == "..")
+    {
         return false;
     }
     if let [PLUGINS, marketplace, rest @ ..] = parts.as_slice() {
@@ -160,7 +163,8 @@ pub fn is_allowlisted(path: &str) -> bool {
         return is_marketplace_name(marketplace)
             && !rest.is_empty()
             && !rest.iter().any(|p| {
-                matches!(*p, ".git" | ".DS_Store" | ".env" | "node_modules") || p.starts_with(".env.")
+                matches!(*p, ".git" | ".DS_Store" | ".env" | "node_modules")
+                    || p.starts_with(".env.")
             });
     }
     // Dot-file segments (`.git`, `.DS_Store`) never sync outside `plugins/`.
@@ -358,7 +362,10 @@ mod tests {
 
     #[test]
     fn plugin_paths() {
-        assert_eq!(marketplace_of("plugins/claude-mods/mods/x.ts"), Some("claude-mods"));
+        assert_eq!(
+            marketplace_of("plugins/claude-mods/mods/x.ts"),
+            Some("claude-mods")
+        );
         assert_eq!(marketplace_of("plugins/claude-mods"), None);
         assert_eq!(marketplace_of("plugins/Bad/x"), None);
         assert_eq!(marketplace_of("skills/a/b"), None);

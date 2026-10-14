@@ -1158,7 +1158,10 @@ mod tests {
             let mut st = self.st.lock().unwrap();
             let mut report = ApplyReport::default();
             let old = st.local.remove(group).unwrap_or_default();
-            let applied = st.applied.insert(group.clone(), files.clone()).unwrap_or_default();
+            let applied = st
+                .applied
+                .insert(group.clone(), files.clone())
+                .unwrap_or_default();
             let mut new = FileSet::new();
             for (path, bytes) in files {
                 if st.collide.contains(path) {
@@ -1480,7 +1483,11 @@ mod tests {
         bo.apply.delete(&id, "agents/a.md");
         bo.engine.sync_all().await.unwrap();
         assert!(repo.file("agents/a.md").is_some());
-        assert_eq!(bo.apply.file(&id, "agents/a.md"), None, "still a local edit");
+        assert_eq!(
+            bo.apply.file(&id, "agents/a.md"),
+            None,
+            "still a local edit"
+        );
 
         let mut deleted = edit(&id, "agents/a.md");
         deleted.deleted = true;
@@ -2106,7 +2113,12 @@ mod tests {
         let settings = home.join("settings.json");
         std::fs::write(&settings, "{\"a\": 2}\n").unwrap();
         let listed = |e: &Engine| {
-            let mut p: Vec<String> = e.local_edits().unwrap().into_iter().map(|e| e.path).collect();
+            let mut p: Vec<String> = e
+                .local_edits()
+                .unwrap()
+                .into_iter()
+                .map(|e| e.path)
+                .collect();
             p.sort();
             p
         };
@@ -2117,7 +2129,10 @@ mod tests {
             assert_eq!(listed(&bo), want, "an unshared edit must stay a local edit");
         }
         assert_eq!(repo.commits().len(), before);
-        assert_eq!(std::fs::read_to_string(home.join("agents").join("a.md")).unwrap(), "mine\n");
+        assert_eq!(
+            std::fs::read_to_string(home.join("agents").join("a.md")).unwrap(),
+            "mine\n"
+        );
     }
 
     #[tokio::test]
