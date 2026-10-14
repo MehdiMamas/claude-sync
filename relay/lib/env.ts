@@ -34,6 +34,11 @@ export const env = {
     const value = process.env.FEEDBACK_REPO?.trim();
     return value ? repo("FEEDBACK_REPO", value) : env.releasesRepo();
   },
+  /** The private repo for screenshots and logs; defaults to `<FEEDBACK_REPO>-feedback`. */
+  attachmentsRepo: (): string => {
+    const value = process.env.FEEDBACK_ATTACHMENTS_REPO?.trim();
+    return value ? repo("FEEDBACK_ATTACHMENTS_REPO", value) : `${env.feedbackRepo()}-feedback`;
+  },
   /** Logins refused with 403 (abuse); everyone else with a valid GitHub token is allowed. */
   blockedUsers: (): Set<string> => new Set(list(process.env.BLOCKED_GITHUB_USERS).map((s) => s.toLowerCase())),
   publicUrl: (): string | undefined => process.env.RELAY_PUBLIC_URL?.trim().replace(/\/+$/, "") || undefined,

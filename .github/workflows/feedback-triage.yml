@@ -1,0 +1,118 @@
+# Claude reads each in-app feedback report (the public issue, its private screenshot and
+# logs, and the code) and comments a write-up another agent can fix it from. Abusive
+# reports are closed, locked and labelled needs-moderation instead. relay/triage/run.ts
+# does the work in three steps; see docs/architecture.md §12.
+#
+# Starts when the relay adds the `feedback` label. The relay labels with the owner's token,
+# so the sender is the repo owner; a label anyone else adds does not start it, and the
+# script checks the label's author again from the issue events. Or by hand:
+#   gh workflow run feedback-triage.yml -f issue=42 [-f force=true]
+#   gh workflow run feedback-triage.yml -f issue=all
+#
+# Secrets: FEEDBACK_DEPLOY_KEY (read-only deploy key of the attachments repo) and
+# CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`). Variables (optional):
+# FEEDBACK_ATTACHMENTS_REPO (default <this repo>-feedback), TRIAGE_TRUSTED_LOGINS.
+
+name: feedback-triage
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number, or "all" for every open feedback issue not triaged yet
+        required: true
+        default: all
+      force:
+        description: Triage again even if it was triaged before
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: feedback-triage-${{ github.event.issue.number || inputs.issue }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.label.name == 'feedback' && github.event.sender.login == github.repository_owner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ISSUE: ${{ github.event.issue.number || inputs.issue }}
+      FORCE: ${{ inputs.force && '--force' || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Check the secrets
+        env:
+          HAS_KEY: ${{ secrets.FEEDBACK_DEPLOY_KEY != '' }}
+          HAS_CLAUDE: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [ "$HAS_KEY" != true ]; then echo "::error::secret FEEDBACK_DEPLOY_KEY is not set"; exit 1; fi
+          if [ "$HAS_CLAUDE" != true ]; then echo "::error::secret CLAUDE_CODE_OAUTH_TOKEN is not set (claude setup-token)"; exit 1; fi
+
+      # Blobs are not downloaded here: prepare checks out only issues/<n>/ of each queued
+      # issue, so Claude never sees another reporter's files.
+      - name: Clone the attachments repo
+        env:
+          DEPLOY_KEY: ${{ secrets.FEEDBACK_DEPLOY_KEY }}
+          ATTACHMENTS_REPO: ${{ vars.FEEDBACK_ATTACHMENTS_REPO || format('{0}-feedback', github.repository) }}
+        run: |
+          install -m 700 -d "$RUNNER_TEMP/ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/ssh/key"
+          chmod 600 "$RUNNER_TEMP/ssh/key"
+          # GitHub's published host key.
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$RUNNER_TEMP/ssh/known_hosts"
+          ssh_cmd="ssh -i $RUNNER_TEMP/ssh/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/ssh/known_hosts -o StrictHostKeyChecking=yes"
+          GIT_SSH_COMMAND="$ssh_cmd" git clone --quiet --depth 1 --filter=blob:none --no-checkout \
+            "git@github.com:$ATTACHMENTS_REPO.git" "$RUNNER_TEMP/attachments"
+          git -C "$RUNNER_TEMP/attachments" config core.sshCommand "$ssh_cmd"
+
+      - name: Prepare
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIAGE_TRUSTED_LOGINS: ${{ vars.TRIAGE_TRUSTED_LOGINS }}
+        run: |
+          node relay/triage/run.ts prepare --issue "$ISSUE" $FORCE --out "$RUNNER_TEMP/triage" --attachments "$RUNNER_TEMP/attachments"
+          echo "count=$(node -p "require(process.argv[1]).issues.length" "$RUNNER_TEMP/triage/queue.json")" >> "$GITHUB_OUTPUT"
+
+      # Claude runs after the key and the clone are gone.
+      - name: Remove the deploy key and the clone
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/ssh" "$RUNNER_TEMP/attachments"
+
+      - name: Install Claude Code
+        if: steps.prepare.outputs.count != '0'
+        run: npm install --prefix "$RUNNER_TEMP/claude-code" --no-audit --no-fund --loglevel=error @anthropic-ai/claude-code@2.1.287
+
+      - name: Analyze
+        if: steps.prepare.outputs.count != '0'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CLAUDE_CONFIG_DIR: ${{ runner.temp }}/claude-config
+        run: node relay/triage/run.ts analyze --out "$RUNNER_TEMP/triage" --claude "$RUNNER_TEMP/claude-code/node_modules/.bin/claude"
+
+      - name: Post
+        if: steps.prepare.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: GITHUB_SHA="$(git rev-parse HEAD)" node relay/triage/run.ts post --out "$RUNNER_TEMP/triage"
+
+      - name: Clean up
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/triage" "$RUNNER_TEMP/claude-config" "$RUNNER_TEMP/claude-code" "$RUNNER_TEMP/ssh" "$RUNNER_TEMP/attachments"
