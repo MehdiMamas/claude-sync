@@ -77,9 +77,9 @@ pub struct CommitInfo {
 }
 
 /// Retries after someone else pushed first (§6).
-const PUSH_RETRIES: usize = 3;
+pub(crate) const PUSH_RETRIES: usize = 3;
 /// Conflicts remembered per group for the UI.
-const MAX_CONFLICTS: usize = 50;
+pub(crate) const MAX_CONFLICTS: usize = 50;
 
 /// What the engine needs from the apply layer and the watcher. `FsApply` is the real thing;
 /// tests plug in their own.
@@ -157,18 +157,20 @@ pub struct Engine {
     pub gh: GitHub,
     pub login: String,
     pub device: String,
-    remotes: Arc<dyn RemoteFactory>,
-    apply: Arc<dyn ApplyLayer>,
-    scanner: Scanner,
+    pub(crate) remotes: Arc<dyn RemoteFactory>,
+    pub(crate) apply: Arc<dyn ApplyLayer>,
+    pub(crate) scanner: Scanner,
     /// One operation at a time: syncs and user actions share the base snapshots.
-    busy: tokio::sync::Mutex<()>,
+    pub(crate) busy: tokio::sync::Mutex<()>,
+    /// The user's home folder: personal memory keys are relative to it (`crate::personal`).
+    pub(crate) user_home: Option<PathBuf>,
 }
 
 /// Last synced state of a group (§6): the remote head and its allowlisted files.
 #[derive(Debug, Clone, PartialEq)]
-struct Base {
-    head: Head,
-    files: FileSet,
+pub(crate) struct Base {
+    pub(crate) head: Head,
+    pub(crate) files: FileSet,
 }
 
 impl Default for Base {
@@ -253,6 +255,7 @@ impl Engine {
             apply: Arc::new(FsApply),
             scanner: crate::secrets::scan,
             busy: tokio::sync::Mutex::new(()),
+            user_home: std::env::home_dir(),
         }
     }
 
@@ -263,6 +266,12 @@ impl Engine {
 
     pub fn with_scanner(mut self, scanner: Scanner) -> Self {
         self.scanner = scanner;
+        self
+    }
+
+    /// The home folder personal memory keys are made from (tests use a temp folder).
+    pub fn with_user_home(mut self, home: PathBuf) -> Self {
+        self.user_home = Some(home);
         self
     }
 
@@ -963,43 +972,50 @@ impl Engine {
         }
     }
 
-    /// `base/head.json` and `base/files/<path>`.
     fn load_base(&self, id: &GroupId) -> crate::Result<Base> {
-        let dir = self.paths.base_dir(id);
-        // `base.old` only survives a crash in the middle of `save_base`.
-        let dir = [dir.clone(), dir.with_extension("old")]
-            .into_iter()
-            .find(|d| d.join("head.json").is_file());
-        let Some(dir) = dir else {
-            return Ok(Base::default());
-        };
-        let head: Head = serde_json::from_slice(&std::fs::read(dir.join("head.json"))?)?;
-        let files = match read_tree(&dir.join("files")) {
-            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => FileSet::new(),
-            r => r?,
-        };
-        Ok(Base { head, files })
+        load_base_dir(&self.paths.base_dir(id))
     }
 
-    /// Written next to the old snapshot, then swapped in.
     fn save_base(&self, id: &GroupId, base: &Base) -> crate::Result<()> {
-        let dir = self.paths.base_dir(id);
-        let new = dir.with_extension("new");
-        let old = dir.with_extension("old");
-        remove_dir_if_exists(&new)?;
-        for (path, bytes) in &base.files {
-            let file = join_rel(&new.join("files"), path);
-            std::fs::create_dir_all(file.parent().expect("has a parent"))?;
-            std::fs::write(file, bytes)?;
-        }
-        write_json(&new.join("head.json"), &base.head)?;
-        remove_dir_if_exists(&old)?;
-        if dir.exists() {
-            std::fs::rename(&dir, &old)?;
-        }
-        std::fs::rename(&new, &dir)?;
-        remove_dir_if_exists(&old)
+        save_base_dir(&self.paths.base_dir(id), base)
     }
+}
+
+/// `<dir>/head.json` and `<dir>/files/<path>`.
+pub(crate) fn load_base_dir(dir: &Path) -> crate::Result<Base> {
+    let dir = dir.to_path_buf();
+    // `base.old` only survives a crash in the middle of `save_base`.
+    let dir = [dir.clone(), dir.with_extension("old")]
+        .into_iter()
+        .find(|d| d.join("head.json").is_file());
+    let Some(dir) = dir else {
+        return Ok(Base::default());
+    };
+    let head: Head = serde_json::from_slice(&std::fs::read(dir.join("head.json"))?)?;
+    let files = match read_tree(&dir.join("files")) {
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => FileSet::new(),
+        r => r?,
+    };
+    Ok(Base { head, files })
+}
+
+/// Written next to the old snapshot, then swapped in.
+pub(crate) fn save_base_dir(dir: &Path, base: &Base) -> crate::Result<()> {
+    let new = dir.with_extension("new");
+    let old = dir.with_extension("old");
+    remove_dir_if_exists(&new)?;
+    for (path, bytes) in &base.files {
+        let file = join_rel(&new.join("files"), path);
+        std::fs::create_dir_all(file.parent().expect("has a parent"))?;
+        std::fs::write(file, bytes)?;
+    }
+    write_json(&new.join("head.json"), &base.head)?;
+    remove_dir_if_exists(&old)?;
+    if dir.exists() {
+        std::fs::rename(dir, &old)?;
+    }
+    std::fs::rename(&new, dir)?;
+    remove_dir_if_exists(&old)
 }
 
 /// The group file of a snapshot, and `SchemaTooNew` when it is from a newer app: then the
@@ -1019,7 +1035,7 @@ fn read_group_file(id: &GroupId, files: &FileSet) -> crate::Result<(GroupFile, O
     }
 }
 
-fn is_lost_access(e: &Error) -> bool {
+pub(crate) fn is_lost_access(e: &Error) -> bool {
     matches!(
         e,
         Error::GitHub {
@@ -1029,7 +1045,7 @@ fn is_lost_access(e: &Error) -> bool {
     )
 }
 
-fn only(files: &FileSet, keep: impl Fn(&str) -> bool) -> FileSet {
+pub(crate) fn only(files: &FileSet, keep: impl Fn(&str) -> bool) -> FileSet {
     files
         .iter()
         .filter(|(p, _)| keep(p))
@@ -1037,7 +1053,7 @@ fn only(files: &FileSet, keep: impl Fn(&str) -> bool) -> FileSet {
         .collect()
 }
 
-fn with_changes(mut files: FileSet, changes: &Changes) -> FileSet {
+pub(crate) fn with_changes(mut files: FileSet, changes: &Changes) -> FileSet {
     for (path, content) in changes {
         match content {
             Some(bytes) => files.insert(path.clone(), bytes.clone()),
@@ -1048,7 +1064,7 @@ fn with_changes(mut files: FileSet, changes: &Changes) -> FileSet {
 }
 
 /// `update CLAUDE.md, skills/review`, `remove agents/old.md` or `update 5 items`.
-fn summarize(changes: &Changes) -> String {
+pub(crate) fn summarize(changes: &Changes) -> String {
     let unit = |p: &str| match p.split('/').collect::<Vec<_>>()[..] {
         ["skills", name, ..] => format!("skills/{name}"),
         _ => p.to_string(),
@@ -1085,13 +1101,13 @@ fn valid_login(login: &str) -> bool {
         && !login.contains("--")
 }
 
-fn join_rel(root: &Path, rel: &str) -> PathBuf {
+pub(crate) fn join_rel(root: &Path, rel: &str) -> PathBuf {
     rel.split('/')
         .fold(root.to_path_buf(), |p, part| p.join(part))
 }
 
 /// Every regular file under `root`, keyed by its relative path with `/`. Symlinks are skipped.
-fn read_tree(root: &Path) -> crate::Result<FileSet> {
+pub(crate) fn read_tree(root: &Path) -> crate::Result<FileSet> {
     let mut out = FileSet::new();
     let mut dirs = vec![root.to_path_buf()];
     while let Some(dir) = dirs.pop() {
@@ -1114,7 +1130,7 @@ fn read_tree(root: &Path) -> crate::Result<FileSet> {
     Ok(out)
 }
 
-fn remove_dir_if_exists(dir: &Path) -> crate::Result<()> {
+pub(crate) fn remove_dir_if_exists(dir: &Path) -> crate::Result<()> {
     match std::fs::remove_dir_all(dir) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
         _ => Ok(()),

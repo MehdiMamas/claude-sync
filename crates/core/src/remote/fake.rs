@@ -3,7 +3,7 @@
 //! `FakeGitHub` is a world of repos. `FakeGitHub::account(login)` is what one signed-in user
 //! sees: repo handles that answer `404` once that user has no access, like GitHub does.
 //! A `FakeRepo` made with `FakeRepo::new` has no viewer and can do anything (the test's view).
-use super::{Changes, Collaborator, Head, RemoteFactory, RemoteRepo};
+use super::{Changes, Collaborator, Head, PathFilter, RemoteFactory, RemoteRepo};
 use crate::engine::CommitInfo;
 use crate::github::Invitation;
 use crate::{Error, FileSet, GroupId};
@@ -351,7 +351,7 @@ impl RemoteRepo for FakeRepo {
         Ok(self.enter("head")?.head())
     }
 
-    async fn files_at(&self, commit: &str) -> crate::Result<FileSet> {
+    async fn files_matching(&self, commit: &str, keep: PathFilter) -> crate::Result<FileSet> {
         let st = self.enter("files_at")?;
         if commit.is_empty() {
             return Ok(FileSet::new());
@@ -363,7 +363,7 @@ impl RemoteRepo for FakeRepo {
             .ok_or_else(not_found)?;
         Ok(c.files
             .iter()
-            .filter(|(p, _)| crate::group::is_allowlisted(p))
+            .filter(|(p, _)| keep(p))
             .map(|(p, b)| (p.clone(), b.clone()))
             .collect())
     }
@@ -545,6 +545,13 @@ impl RemoteFactory for FakeAccount {
             });
         }
         self.world.add(&FakeRepo::new(id.clone()));
+        Ok(id)
+    }
+
+    async fn create_personal_repo(&self, name: &str) -> crate::Result<GroupId> {
+        let id = self.create_repo(name).await?;
+        let repo = self.world.repo(&id).expect("just created");
+        repo.set_topics(&[]);
         Ok(id)
     }
 

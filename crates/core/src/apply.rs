@@ -941,6 +941,19 @@ fn find_block(text: &[u8]) -> Option<(usize, usize)> {
     }
 }
 
+/// The lines inside the managed block of `text` (none without a block), line ends trimmed.
+pub fn block_lines(text: &[u8]) -> Vec<String> {
+    let Some((s, e)) = find_block(text) else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&text[s..e])
+        .lines()
+        .map(|l| l.trim_end_matches('\r'))
+        .filter(|l| *l != BLOCK_BEGIN && *l != BLOCK_END)
+        .map(str::to_string)
+        .collect()
+}
+
 /// `existing` with the block set to `lines` (no lines: block removed). Everything outside
 /// the block is kept byte for byte. A new block goes at the top, followed by one blank
 /// line when the file has other content; removing the block removes that line again.
@@ -1058,7 +1071,7 @@ fn touches_plugins(report: &ApplyReport) -> bool {
         .any(|p| group::marketplace_of(p).is_some())
 }
 
-fn safe_segment(s: &str) -> bool {
+pub(crate) fn safe_segment(s: &str) -> bool {
     if s.is_empty() || s == "." || s == ".." || s.ends_with('.') || s.ends_with(' ') {
         return false;
     }
@@ -1081,7 +1094,7 @@ fn target_path(root: &Path, rel: &str) -> PathBuf {
 
 /// True when a folder on the way to `rel` is a link (symlink or junction) or a file: the
 /// app never writes through it.
-fn blocked_by_user(root: &Path, rel: &str) -> bool {
+pub(crate) fn blocked_by_user(root: &Path, rel: &str) -> bool {
     let segs: Vec<&str> = rel.split('/').collect();
     let mut cur = root.to_path_buf();
     for s in &segs[..segs.len().saturating_sub(1)] {
