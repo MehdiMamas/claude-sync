@@ -30,19 +30,23 @@ pub enum EditAction {
     Undo,
 }
 
-/// Managed files whose content differs from the manifest, edited `CLAUDE.md` copies, and
-/// settings values the user changed after the app set them. Sorted by group, then path.
+/// Managed files whose content differs from the manifest, files added inside a bundled
+/// marketplace folder, edited `CLAUDE.md` copies, and settings values the user changed
+/// after the app set them. Sorted by group, then path.
 pub fn local_edits(paths: &Paths) -> crate::Result<Vec<LocalEdit>> {
     let m = Manifest::load(paths)?;
     let mut out = Vec::new();
     for (rel, mf) in &m.files {
-        let target = rel
-            .split('/')
-            .fold(paths.claude_home.clone(), |p, s| p.join(s));
-        match read_file(&target)? {
+        match read_file(&apply::target_of(paths, rel))? {
             None => out.push(edit(&mf.group, rel, true)),
             Some(b) if apply::sha256_hex(&b) != mf.sha256 => out.push(edit(&mf.group, rel, false)),
             Some(_) => {}
+        }
+    }
+    let owners: BTreeSet<&GroupId> = m.marketplaces.values().map(|o| &o.group).collect();
+    for group in owners {
+        for rel in apply::added_plugin_files(paths, &m, group)? {
+            out.push(edit(group, &rel, false));
         }
     }
     for (key, entry) in &m.groups {
@@ -160,6 +164,7 @@ impl Inner {
                 self.paths.state_dir.join("groups"),
                 RecursiveMode::Recursive,
             ),
+            (self.paths.marketplaces_dir(), RecursiveMode::Recursive),
         ];
         want.extend(
             TREES
@@ -191,10 +196,10 @@ impl Inner {
     }
 }
 
-/// Watch the managed folders, `~/.claude/settings.json`, `~/.claude/CLAUDE.md` and the
-/// groups' `CLAUDE.md` copies. `on_change` runs on a background thread at most once per
-/// settled batch of changes (2 s). The app's own writes trigger it too; `local_edits` then
-/// finds nothing. Folders that do not exist yet are picked up when they are created.
+/// Watch the managed folders, `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, the
+/// groups' `CLAUDE.md` copies and the bundled plugin marketplaces. `on_change` runs on a
+/// background thread at most once per settled batch of changes (2 s). The app's own writes
+/// trigger it too; `local_edits` then finds nothing. Folders that do not exist yet are picked up when they are created.
 pub fn spawn_watcher(
     paths: &Paths,
     on_change: impl Fn() + Send + 'static,
@@ -269,7 +274,7 @@ pub(crate) fn relevant(paths: &Paths, p: &Path) -> bool {
         let segs = segments(rel);
         return segs.len() == 2 && segs[1] == CLAUDE_MD;
     }
-    false
+    p.starts_with(paths.marketplaces_dir())
 }
 
 /// A folder the watcher should start watching now that it exists.
@@ -278,7 +283,7 @@ fn new_watch_root(paths: &Paths, p: &Path) -> bool {
         let segs = segments(rel);
         return segs.len() == 1 && TREES.contains(&segs[0].as_str());
     }
-    p == paths.state_dir.join("groups")
+    p == paths.state_dir.join("groups") || p == paths.marketplaces_dir()
 }
 
 fn segments(rel: &Path) -> Vec<String> {
@@ -498,6 +503,65 @@ mod tests {
             &paths,
             &paths.group_dir(&g("a")).join("base").join("x.md")
         ));
+        assert!(relevant(
+            &paths,
+            &paths.marketplaces_dir().join("mods").join("hooks.json")
+        ));
+    }
+
+    fn plugin_files() -> FileSet {
+        let mut f = files();
+        for (p, b) in [
+            (
+                "plugins/mods/.claude-plugin/marketplace.json",
+                &br#"{"name":"mods","plugins":[]}"#[..],
+            ),
+            ("plugins/mods/router/hooks/hooks.json", b"{}\n"),
+        ] {
+            f.insert(p.to_string(), b.to_vec());
+        }
+        f
+    }
+
+    #[test]
+    fn a_plugin_file_edit_is_a_local_edit_and_shares_under_plugins() {
+        let (_t, paths) = env();
+        let a = g("a");
+        let order = std::slice::from_ref(&a);
+        apply_group(&paths, &a, order, &plugin_files()).unwrap();
+        assert!(local_edits(&paths).unwrap().is_empty());
+        let mp = paths.marketplaces_dir().join("mods");
+        write(&mp.join("router/hooks/hooks.json"), b"{\"v\":2}\n");
+        write(&mp.join("router/hooks/new.ts"), b"export {}\n");
+        assert_eq!(
+            local_edits(&paths).unwrap(),
+            vec![
+                edit(&a, "plugins/mods/router/hooks/hooks.json", false),
+                edit(&a, "plugins/mods/router/hooks/new.ts", false),
+            ]
+        );
+        // Share: the repo paths come back from local_files, and the next apply of the
+        // shared version clears both.
+        let mut shared = plugin_files();
+        let local = local_files(&paths, &a).unwrap();
+        for p in [
+            "plugins/mods/router/hooks/hooks.json",
+            "plugins/mods/router/hooks/new.ts",
+        ] {
+            shared.insert(p.to_string(), local[p].clone());
+        }
+        let r = apply_group(&paths, &a, order, &shared).unwrap();
+        assert!(
+            !r.plugins_changed,
+            "the files already hold the shared bytes"
+        );
+        assert!(local_edits(&paths).unwrap().is_empty());
+        // Deleting a plugin file is listed as a delete.
+        fs::remove_file(mp.join("router/hooks/new.ts")).unwrap();
+        assert_eq!(
+            local_edits(&paths).unwrap(),
+            vec![edit(&a, "plugins/mods/router/hooks/new.ts", true)]
+        );
     }
 
     fn wait(rx: &mpsc::Receiver<()>) -> bool {
@@ -530,6 +594,26 @@ mod tests {
         handle.refresh();
         write(&paths.claude_home.join("commands/new.md"), b"x\n");
         assert!(wait(&rx), "no callback inside the new folder");
+        drop(handle);
+    }
+
+    #[test]
+    fn watcher_reports_plugin_file_edits() {
+        let (_t, paths) = env();
+        let a = g("a");
+        apply_group(&paths, &a, std::slice::from_ref(&a), &plugin_files()).unwrap();
+        let (tx, rx) = mpsc::channel();
+        let handle = spawn_with(&paths, Duration::from_millis(200), move || {
+            let _ = tx.send(());
+        })
+        .unwrap();
+        drain(&rx);
+        let mp = paths.marketplaces_dir().join("mods");
+        write(&mp.join("router/hooks/hooks.json"), b"edited\n");
+        assert!(wait(&rx), "no callback for a plugin file");
+        drain(&rx);
+        write(&mp.join("router/new/added.md"), b"x\n");
+        assert!(wait(&rx), "no callback for a new plugin file");
         drop(handle);
     }
 }
