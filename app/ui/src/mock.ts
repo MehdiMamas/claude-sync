@@ -32,6 +32,8 @@ const groups: GroupStatus[] = q.has("empty")
         pluginsChanged: false,
         reviewPending: 0,
         reviewClaudeMd: true,
+        isHost: true,
+        hostLock: q.has("noLock") ? "unavailable" : "on",
       },
       {
         id: { owner: "acme", repo: "claude-team" },
@@ -46,6 +48,8 @@ const groups: GroupStatus[] = q.has("empty")
         pluginsChanged: false,
         reviewPending: 0,
         reviewClaudeMd: true,
+        isHost: false,
+        hostLock: null,
       },
     ];
 
@@ -370,6 +374,8 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
       pluginsChanged: false,
       reviewPending: 0,
       reviewClaudeMd: true,
+      isHost: true,
+      hostLock: "on",
     };
     groups.push(g);
     return g;

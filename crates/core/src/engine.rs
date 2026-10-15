@@ -48,6 +48,11 @@ pub struct GroupStatus {
     pub review_pending: usize,
     /// "Review changes others make to CLAUDE.md" is on for this group.
     pub review_claude_md: bool,
+    /// This user hosts the group (owns its repo): only the host's app changes the group.
+    pub is_host: bool,
+    /// `"on"`: GitHub enforces host-only pushes. `"unavailable"`: it can't on this plan.
+    /// `None`: not known yet, or this user is not the host.
+    pub host_lock: Option<String>,
 }
 
 /// The review of a group's `CLAUDE.md` (§7a), for the group screen.
@@ -218,6 +223,8 @@ pub struct Engine {
     pub(crate) scanner: Scanner,
     /// One operation at a time: syncs and user actions share the base snapshots.
     pub(crate) busy: tokio::sync::Mutex<()>,
+    /// Groups whose host lock this run already ensured.
+    pub(crate) locked: std::sync::Mutex<BTreeSet<GroupId>>,
     /// The user's home folder: personal memory keys are relative to it (`crate::personal`).
     pub(crate) user_home: Option<PathBuf>,
 }
@@ -252,6 +259,8 @@ struct Status {
     collisions: Vec<StoredCollision>,
     /// Paths whose local edit the user chose to share; pushed by the next sync.
     shared: BTreeSet<String>,
+    /// Host only: `"on"` or `"unavailable"` once the ruleset was ensured.
+    host_lock: Option<String>,
 }
 
 /// `apply::Collision` is not `Deserialize`; this mirrors it on disk.
@@ -311,6 +320,7 @@ impl Engine {
             apply: Arc::new(FsApply),
             scanner: crate::secrets::scan,
             busy: tokio::sync::Mutex::new(()),
+            locked: std::sync::Mutex::new(BTreeSet::new()),
             user_home: std::env::home_dir(),
         }
     }
@@ -470,6 +480,7 @@ impl Engine {
         }
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
+        self.require_host(id).await?;
         let summary = format!("add member {login}");
         if self
             .edit_group_file(id, &summary, |gf| Ok(gf.add_member(login)))
@@ -483,6 +494,7 @@ impl Engine {
     pub async fn remove_member(&self, id: &GroupId, login: &str) -> crate::Result<()> {
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
+        self.require_host(id).await?;
         let host = self.remotes.open(id).owner_login().await?;
         if host.eq_ignore_ascii_case(login) {
             return Err(Error::Invalid(format!(
@@ -519,6 +531,7 @@ impl Engine {
         let whole_file = file == edit.path;
         match action {
             EditAction::Share => {
+                self.require_host(id).await?;
                 let local = self.apply.local_files(&self.paths, id)?;
                 if let Some(bytes) = local.get(file).filter(|b| group::too_large(file, b.len())) {
                     return Err(Error::Invalid(format!(
@@ -569,6 +582,7 @@ impl Engine {
         }
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
+        self.require_host(id).await?;
         let dir = self.paths.claude_home.join("skills").join(skill);
         if !dir.join("SKILL.md").is_file() {
             return Err(Error::Invalid(format!(
@@ -708,6 +722,23 @@ impl Engine {
         format!("{}@{}: {summary}", self.login, self.device)
     }
 
+    /// Only the host (the owner of the group repo) changes a group. Checked before any write.
+    async fn require_host(&self, id: &GroupId) -> crate::Result<()> {
+        let host = self.remotes.open(id).owner_login().await?;
+        if host.eq_ignore_ascii_case(&self.login) {
+            return Ok(());
+        }
+        let name = self.load_status(id).name;
+        Err(Error::HostOnly {
+            group: if name.is_empty() {
+                id.repo.clone()
+            } else {
+                name
+            },
+            host,
+        })
+    }
+
     fn require_joined(&self, id: &GroupId) -> crate::Result<()> {
         if AppState::load(&self.paths)?.groups.contains(id) {
             Ok(())
@@ -750,6 +781,7 @@ impl Engine {
         summary: &str,
         edit: impl Fn(&mut GroupFile) -> crate::Result<bool>,
     ) -> crate::Result<bool> {
+        self.require_host(id).await?;
         let remote = self.remotes.open(id);
         let message = self.message(summary);
         let mut attempt = 0;
@@ -782,6 +814,7 @@ impl Engine {
         summary: &str,
         mut change: impl FnMut(&GroupFile, &FileSet) -> crate::Result<Option<Changes>>,
     ) -> crate::Result<bool> {
+        self.require_host(id).await?;
         let remote = self.remotes.open(id);
         let message = self.message(summary);
         let mut attempt = 0;
@@ -876,6 +909,12 @@ impl Engine {
         let order = AppState::load(&self.paths)?.groups;
         let mut base = self.load_base(id)?;
         let mut attempt = 0;
+        let host = remote.owner_login().await?;
+        let is_host = host.eq_ignore_ascii_case(&self.login);
+        // Only the host's app writes to the group; a member's edits stay local.
+        if !is_host {
+            status.shared.clear();
+        }
         let (gf, read_only) = loop {
             let remote_files = if head == base.head {
                 base.files.clone()
@@ -894,7 +933,8 @@ impl Engine {
                 for files in [&mut base_v, &mut remote_v, &mut local] {
                     files.remove(group::CLAUDE_MD);
                 }
-                let shared = read_only.is_none() && status.shared.contains(group::CLAUDE_MD);
+                let shared =
+                    is_host && read_only.is_none() && status.shared.contains(group::CLAUDE_MD);
                 let pass = self
                     .review_pull(
                         remote,
@@ -912,7 +952,7 @@ impl Engine {
                 remove_file_if_exists(&self.review_file(id))?;
                 None
             };
-            let md_push = md.as_ref().and_then(|m| m.push.clone());
+            let md_push = md.as_ref().and_then(|m| m.push.clone()).filter(|_| is_host);
             let merged = merge::three_way(&base_v, &local, &remote_v);
 
             // Save losing local copies before the apply overwrites them.
@@ -924,7 +964,7 @@ impl Engine {
             // A local edit that is not being shared stays a local edit: the apply gets the
             // group's version, so it leaves the edit in place instead of adopting it.
             for p in merged.to_push.keys() {
-                if read_only.is_none() && status.shared.contains(p) {
+                if is_host && read_only.is_none() && status.shared.contains(p) {
                     continue;
                 }
                 match remote_v.get(p) {
@@ -954,7 +994,7 @@ impl Engine {
             let mut push: Changes = merged
                 .to_push
                 .into_iter()
-                .filter(|(p, _)| read_only.is_none() && status.shared.contains(p))
+                .filter(|(p, _)| is_host && read_only.is_none() && status.shared.contains(p))
                 .collect();
             if let Some(content) = md_push {
                 push.insert(group::CLAUDE_MD.into(), content);
@@ -988,19 +1028,35 @@ impl Engine {
             }
         };
 
-        let host = remote.owner_login().await?;
         status.name = gf.name.clone();
         status.members = gf.members.clone();
         status.host = host.clone();
         if let Some(e) = read_only {
             return Err(e);
         }
-        if host.eq_ignore_ascii_case(&self.login) {
+        if is_host {
+            self.ensure_lock(remote, id, status).await;
             status.invited = self.reconcile(remote, &gf, &host).await?;
         } else {
             status.invited.clear();
+            status.host_lock = None;
         }
         Ok(())
+    }
+
+    /// The host's app asks GitHub to refuse everyone else's pushes, once per group per run.
+    /// GitHub may say no (a private repo on a free plan): never an error, only `host_lock`.
+    async fn ensure_lock(&self, remote: &dyn RemoteRepo, id: &GroupId, status: &mut Status) {
+        if !self.locked.lock().expect("lock").insert(id.clone()) {
+            return;
+        }
+        status.host_lock = Some(match remote.ensure_host_lock().await {
+            Ok(()) => "on".into(),
+            Err(e) => {
+                tracing::warn!(group = %id, error = %e, "GitHub would not lock the group to its host");
+                "unavailable".into()
+            }
+        });
     }
 
     /// The local side of the merge. The apply layer reads managed files back; the engine
@@ -1189,6 +1245,7 @@ impl Engine {
                 v
             }
         };
+        let is_host = or(s.host.clone(), &id.owner).eq_ignore_ascii_case(&self.login);
         GroupStatus {
             id: id.clone(),
             name: or(s.name, &id.repo),
@@ -1202,6 +1259,8 @@ impl Engine {
             plugins_changed: false,
             review_pending: review.as_ref().map_or(0, |r| r.pending.len()),
             review_claude_md: review.is_none_or(|r| r.review),
+            is_host,
+            host_lock: s.host_lock,
         }
     }
 
@@ -1893,6 +1952,16 @@ mod tests {
         (world, id, repo, bo)
     }
 
+    /// Like [`joined`], but `bo` hosts the group (owns the repo): only a host's app pushes.
+    pub(super) async fn joined_host() -> (FakeGitHub, GroupId, FakeRepo, Device) {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&id).await.unwrap();
+        (world, id, repo, bo)
+    }
+
     fn edit(id: &GroupId, path: &str) -> LocalEdit {
         LocalEdit {
             group: id.clone(),
@@ -1953,7 +2022,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_edits_are_pushed_only_after_share() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         let before = commit_count(&repo);
         bo.apply.edit(&id, "agents/a.md", "mine\n");
 
@@ -1991,7 +2060,7 @@ mod tests {
 
     #[tokio::test]
     async fn both_sides_change_different_files() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         repo.set_file("agents/a.md", "theirs\n");
         bo.apply.edit(&id, group::CLAUDE_MD, "# Ours\n");
         bo.engine
@@ -2026,9 +2095,96 @@ mod tests {
         assert_eq!(g.conflicts, *conflicts);
     }
 
+    /// Mark `path` as shared in `bo`'s saved status, as the Share button would have.
+    fn mark_shared(bo: &Device, id: &GroupId, path: &str) {
+        let mut status = bo.engine.load_status(id);
+        status.shared.insert(path.into());
+        bo.engine.save_status(id, &status).unwrap();
+    }
+
+    #[tokio::test]
+    async fn member_sync_pushes_nothing_and_keeps_edit_local() {
+        let (_, id, repo, bo) = joined().await;
+        let before = commit_count(&repo);
+        bo.apply.edit(&id, "agents/a.md", "mine\n");
+        mark_shared(&bo, &id, "agents/a.md");
+
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(!report.groups[0].pushed);
+        assert_eq!(commit_count(&repo), before);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "mine\n", "kept");
+        assert!(bo.engine.load_status(&id).shared.is_empty());
+        let g = &bo.engine.groups().await.unwrap()[0];
+        assert!(!g.is_host);
+        assert_eq!(g.host_lock, None);
+    }
+
+    #[tokio::test]
+    async fn member_cannot_change_the_group() {
+        let (_, id, repo, bo) = joined().await;
+        bo.apply.edit(&id, "agents/a.md", "mine\n");
+        let before = commit_count(&repo);
+
+        let err = bo.engine.add_member(&id, "cy").await.unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        let err = bo.engine.share_skill(&id, "pdf").await.unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        let err = bo
+            .engine
+            .resolve_edit(&edit(&id, "agents/a.md"), EditAction::Share)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        assert_eq!(commit_count(&repo), before);
+        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "mine\n");
+    }
+
+    #[tokio::test]
+    async fn host_still_pushes() {
+        let (_, id, repo, bo) = joined_host().await;
+        let before = commit_count(&repo);
+        bo.apply.edit(&id, "agents/a.md", "mine\n");
+        mark_shared(&bo, &id, "agents/a.md");
+
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].pushed);
+        assert_eq!(commit_count(&repo), before + 1);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "mine\n");
+        assert!(bo.engine.groups().await.unwrap()[0].is_host);
+    }
+
+    #[tokio::test]
+    async fn host_lock_is_ensured_once_per_run() {
+        let (_, _, repo, bo) = joined_host().await;
+        bo.engine.sync_all().await.unwrap();
+        bo.engine.sync_all().await.unwrap();
+        assert_eq!(calls(&repo, "ensure_host_lock"), 1);
+        assert_eq!(repo.rulesets(), [crate::remote::HOST_LOCK_NAME]);
+        let g = &bo.engine.groups().await.unwrap()[0];
+        assert_eq!(g.host_lock.as_deref(), Some("on"));
+    }
+
+    #[tokio::test]
+    async fn lock_failure_never_fails_sync() {
+        // The lock is first asked for while joining, so the refusal is set up before that.
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
+        repo.fail("ensure_host_lock", 403);
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&id).await.unwrap();
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(report.groups[0].error, None);
+        let g = &bo.engine.groups().await.unwrap()[0];
+        assert_eq!(g.host_lock.as_deref(), Some("unavailable"));
+        assert_eq!(g.last_error, None);
+        assert!(repo.rulesets().is_empty());
+    }
+
     #[tokio::test]
     async fn shared_settings_merge_by_key() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         bo.apply
             .edit(&id, group::SHARED_SETTINGS, "{\"a\": 1, \"b\": 2}\n");
         repo.set_file(group::SHARED_SETTINGS, "{\"a\": 1, \"c\": 3}\n");
@@ -2047,7 +2203,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_edit_beats_a_shared_local_delete() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         bo.apply.delete(&id, "agents/a.md");
         repo.set_file("agents/a.md", "theirs\n");
         let mut deleted = edit(&id, "agents/a.md");
@@ -2065,7 +2221,7 @@ mod tests {
 
     #[tokio::test]
     async fn shared_delete_is_pushed_and_unshared_delete_is_held() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         bo.apply.delete(&id, "agents/a.md");
         bo.engine.sync_all().await.unwrap();
         assert!(repo.file("agents/a.md").is_some());
@@ -2090,7 +2246,7 @@ mod tests {
 
     #[tokio::test]
     async fn push_races_are_retried() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         let raced = Arc::new(Mutex::new(false));
         let flag = raced.clone();
         repo.before_commit(move |r| {
@@ -2113,7 +2269,7 @@ mod tests {
 
     #[tokio::test]
     async fn push_races_give_up_after_three_retries() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         let n = Arc::new(Mutex::new(0));
         let count = n.clone();
         repo.before_commit(move |r| {
@@ -2148,6 +2304,7 @@ mod tests {
     async fn secrets_block_the_push() {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
         let mut bo = device(&world, "bo", "pc");
         bo.engine = bo.engine.with_scanner(fake_scanner);
         bo.engine.join(&id).await.unwrap();
@@ -2223,8 +2380,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn members_only_edit_the_group_file() {
-        let (_, id, repo, bo) = joined().await;
+    async fn the_host_edits_the_group_file() {
+        let (_, id, repo, bo) = joined_host().await;
         bo.engine.add_member(&id, "cy").await.unwrap();
         let gf = GroupFile::parse(repo.file(group::FILE).unwrap().as_bytes()).unwrap();
         assert_eq!(gf.members, ["ana", "bo", "cy"]);
@@ -2232,8 +2389,16 @@ mod tests {
             repo.commits().pop().unwrap().message,
             "bo@pc: add member cy"
         );
-        assert_eq!(calls(&repo, "invite"), 0, "only the host invites");
-        assert_eq!(calls(&repo, "collaborators"), 0);
+        let pending: Vec<String> = repo
+            .pending_invitations()
+            .into_iter()
+            .map(|(_, l)| l)
+            .collect();
+        assert_eq!(
+            pending,
+            ["ana", "cy"],
+            "the host invites the new member (ana was never accepted)"
+        );
         let g = &bo.engine.groups().await.unwrap()[0];
         assert_eq!(g.members, ["ana", "bo", "cy"]);
         assert_eq!(g.last_error, None);
@@ -2365,6 +2530,7 @@ mod tests {
     async fn collisions_are_reported_and_never_pushed() {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
         let bo = device(&world, "bo", "pc");
         bo.apply.collide("agents/a.md");
         bo.engine.join(&id).await.unwrap();
@@ -2398,6 +2564,7 @@ mod tests {
             ],
         );
         repo.add_collaborator("bo");
+        repo.set_owner("bo");
         world.add(&repo);
         let bo = device(&world, "bo", "pc");
         let status = bo.engine.join(&id).await.unwrap();
@@ -2441,7 +2608,7 @@ mod tests {
 
     #[tokio::test]
     async fn share_skill_moves_the_folder_into_the_group() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         let dir = bo.engine.paths.claude_home.join("skills").join("review");
         std::fs::create_dir_all(dir.join("refs")).unwrap();
         std::fs::write(dir.join("SKILL.md"), "# Review\n").unwrap();
@@ -2495,6 +2662,7 @@ mod tests {
     async fn share_skill_scans_for_secrets() {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
         let mut bo = device(&world, "bo", "pc");
         bo.engine = bo.engine.with_scanner(fake_scanner);
         bo.engine.join(&id).await.unwrap();
@@ -2579,7 +2747,7 @@ mod tests {
 
     #[tokio::test]
     async fn own_claude_md_changes_apply_at_once() {
-        let (world, id, repo, bo) = joined().await;
+        let (world, id, repo, bo) = joined_host().await;
         // From a git clone under the same account.
         repo.set_file_as("BO", group::CLAUDE_MD, "# Friends\nMine.\n");
         let report = bo.engine.sync_all().await.unwrap();
@@ -2652,8 +2820,8 @@ mod tests {
 
     #[tokio::test]
     async fn declined_differences_are_never_pushed() {
-        let (_, id, repo, bo) = joined().await;
-        repo.set_file(group::CLAUDE_MD, "# Friends\nUse tabs.\n");
+        let (_, id, repo, bo) = joined_host().await;
+        repo.set_file_as("ana", group::CLAUDE_MD, "# Friends\nUse tabs.\n");
         bo.engine.sync_all().await.unwrap();
         bo.engine.decide_claude_md(&id, None, false).await.unwrap();
         // Bo edits their copy (without ana's line) and shares the edit.
@@ -2861,6 +3029,8 @@ mod tests {
     async fn two_devices_converge() {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
+        repo.add_collaborator("ana");
         let ana = device(&world, "ana", "mac");
         let bo = device(&world, "bo", "pc");
         ana.engine.join(&id).await.unwrap();
@@ -3130,6 +3300,7 @@ mod tests {
     async fn integration_secret_blocks_the_push() {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
         let (bo, _dir) = real_device(&world, "bo");
         bo.join(&id).await.unwrap();
         let before = repo.commits().len();

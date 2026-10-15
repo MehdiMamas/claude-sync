@@ -31,6 +31,10 @@ export interface GroupStatus {
   reviewPending: number;
   /** "Review changes others make to CLAUDE.md" (on by default). */
   reviewClaudeMd: boolean;
+  /** This user owns the group's repo. Only the host changes a group; everyone else's edits stay local. */
+  isHost: boolean;
+  /** The ruleset that stops others writing to the group: "on", "unavailable" (GitHub refused), or null for members. */
+  hostLock: "on" | "unavailable" | null;
 }
 /** One block of lines another member added to or removed from the group's CLAUDE.md. */
 export interface ReviewItem {

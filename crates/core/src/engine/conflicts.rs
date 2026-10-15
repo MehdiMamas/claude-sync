@@ -298,7 +298,8 @@ mod tests {
     use crate::engine::ApplyLayer;
     use crate::remote::fake::{FakeGitHub, FakeRepo};
 
-    /// `bo` in two groups: ana's ("Friends", joined first) and cy's ("Crew").
+    /// `bo` in two groups: "Friends" (hosted by `bo`, though the repo id says ana; joined first) and
+    /// cy's "Crew".
     async fn two_groups() -> (FakeGitHub, Device, [(GroupId, FakeRepo); 2]) {
         let world = FakeGitHub::new();
         let a = group_repo(&world, &["ana", "bo"]);
@@ -322,6 +323,8 @@ mod tests {
             group::SHARED_SETTINGS,
             "{\"model\": \"sonnet\", \"env\": {\"A\": \"1\"}}\n",
         );
+        a.1.set_owner("bo");
+        a.1.add_collaborator("ana");
         let bo = device(&world, "bo", "pc");
         bo.engine.join(&a.0).await.unwrap();
         bo.engine.join(&b.0).await.unwrap();

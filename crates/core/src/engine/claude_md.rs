@@ -182,7 +182,7 @@ fn read_opt(file: &std::path::Path) -> crate::Result<Option<Vec<u8>>> {
 mod tests {
     use super::*;
     use crate::apply::{block_lines, BLOCK_BEGIN, BLOCK_END};
-    use crate::engine::tests::{device, fake_scanner, group_repo, joined, Device};
+    use crate::engine::tests::{device, fake_scanner, group_repo, joined_host, Device};
     use crate::engine::ApplyLayer;
     use crate::group::GroupFile;
     use crate::remote::fake::FakeGitHub;
@@ -340,7 +340,7 @@ mod tests {
 
     #[tokio::test]
     async fn share_appends_once_under_a_heading() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         let before = write_own(&bo, "Use tabs.\n");
         let commits = repo.commits().len();
         let done = bo
@@ -389,7 +389,7 @@ mod tests {
 
     #[tokio::test]
     async fn share_is_refused_when_the_group_does_not_sync_claude_md() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         let mut gf = GroupFile::parse(repo.file(group::FILE).unwrap().as_bytes()).unwrap();
         gf.sync.claude_md = false;
         repo.set_file(group::FILE, &String::from_utf8(gf.to_bytes()).unwrap());
@@ -421,7 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn share_appends_to_a_concurrent_change() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         let raced = Arc::new(Mutex::new(false));
         let flag = raced.clone();
         repo.before_commit(move |r| {
@@ -444,7 +444,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_users_text_stays_when_the_group_copy_is_kept_local() {
-        let (_, id, _, bo) = joined().await;
+        let (_, id, _, bo) = joined_host().await;
         let before = write_own(&bo, "Use tabs.\n");
         bo.apply
             .keep_local(&bo.engine.paths, &id, group::CLAUDE_MD)

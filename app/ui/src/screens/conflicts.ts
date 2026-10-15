@@ -264,7 +264,7 @@ function copyBody(from: GroupStatus, p: CopyPreview, again: () => void): (HTMLEl
 
 /** "Copy to another group": this group's CLAUDE.md lines, skills, agents and settings. */
 export function copyCard(g: GroupStatus, groups: GroupStatus[]): HTMLElement | false {
-  const others = groups.filter((x) => !sameGroup(x.id, g.id));
+  const others = groups.filter((x) => x.isHost && !sameGroup(x.id, g.id));
   if (others.length === 0) return false;
   const select = h(
     "select",
@@ -290,7 +290,7 @@ export function copyCard(g: GroupStatus, groups: GroupStatus[]): HTMLElement | f
     "section",
     { class: "card form", "aria-labelledby": "copy-h" },
     h("h2", { id: "copy-h" }, "Copy to another group"),
-    h("p", { class: "muted small" }, `Copy lines of ${g.name}'s CLAUDE.md, its skills, agents and settings to another group you are in. You need write access to that group.`),
+    h("p", { class: "muted small" }, `Copy lines of ${g.name}'s CLAUDE.md, its skills, agents and settings to another group you host.`),
     h("label", { for: "copy-to" }, "Group"),
     select,
     body,

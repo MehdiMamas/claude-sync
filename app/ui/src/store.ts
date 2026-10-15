@@ -16,6 +16,8 @@ interface State {
   unread: number;
   /** CLAUDE.md changes from others waiting for review, over all groups (the nav badge). */
   review: number;
+  /** Groups ("owner/repo") the user does not host: their edits there stay on this device. */
+  guestOf: string[];
 }
 
 type Listener = () => void;
@@ -36,6 +38,7 @@ export const store: State & {
   personal: null,
   unread: 0,
   review: 0,
+  guestOf: [],
   set(patch) {
     Object.assign(this, patch);
     for (const l of listeners) l();
@@ -46,10 +49,11 @@ export const store: State & {
   },
 };
 
-/** Keep the nav badge in step with a fresh group list. */
+/** Keep the nav badge and the groups the user does not host in step with a fresh group list. */
 export function countReview(groups: GroupStatus[]): void {
   const review = groups.reduce((n, g) => n + (g.reviewPending ?? 0), 0);
-  if (review !== store.review) store.set({ review });
+  const guestOf = groups.filter((g) => !g.isHost).map((g) => `${g.id.owner}/${g.id.repo}`);
+  if (review !== store.review || guestOf.join() !== store.guestOf.join()) store.set({ review, guestOf });
 }
 
 export function subscribe(l: Listener): void {
