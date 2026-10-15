@@ -6,7 +6,7 @@ This document is the design the sprint issues point to. The bash CLI in `bin/` a
 
 A small desktop app (Windows and macOS first, Linux later) that lives in the tray, starts at login and keeps Claude Code setups in sync:
 
-- **Groups.** A group is a set of friends who share Claude Code settings: `settings.json` keys, skills, subagents, slash commands, output styles and `CLAUDE.md` instructions. One person **hosts** the group: the group repo lives on their GitHub account. Everyone else **joins**. Every member has the same say: anyone can change the shared settings and anyone can add or remove members.
+- **Groups.** A group is a set of friends who share Claude Code settings: `settings.json` keys, skills, subagents, slash commands, output styles and `CLAUDE.md` instructions. One person **hosts** the group: the group repo lives on their GitHub account. Everyone else **joins**. Only the host changes the group: shared settings, skills, `CLAUDE.md` and the member list. A member's edits stay on their machine; they propose a change as a pull request to the group repo, and the host merges it (§5a).
 - **Devices.** Each person can run the app on as many PCs as they like. Every device signs in with the person's own GitHub account and has full access.
 - **Personal memory.** A person's own `CLAUDE.md` text and Claude's memories follow them to their other devices through a private repo of their own, never through a group (§16).
 - **Live.** The app watches the remote for changes and applies them within about a minute. It watches the local files it manages, and when you edit one it asks whether to share the change with the group.
@@ -75,7 +75,7 @@ schedules.json          scheduled Claude Code jobs (§17); repo only, never plac
 A person's own `~/.claude/CLAUDE.md` often holds the very instructions a group wants. The app offers it in two places:
 
 - **Create a group.** The form has "Share my CLAUDE.md with the group" (checked when there is text) and an editable preview. The group repo's first `CLAUDE.md` is the text in the preview; unchecked or blank, it is `# <group name>`.
-- **A group you are in.** "Share my CLAUDE.md" on the group screen, next to "Share one of your skills", opens the same preview. The text is appended under a `## From <login>` heading, committed as `<login>@<device>: share CLAUDE.md`, and pushed like any other change (a concurrent push means fetch and try again, §6). Text the group's `CLAUDE.md` already has is not appended again, and the app says so. A group with `sync.claudeMd` off refuses it.
+- **A group you host.** "Share my CLAUDE.md" on the group screen, next to "Share one of your skills", opens the same preview. The text is appended under a `## From <login>` heading, committed as `<login>@<device>: share CLAUDE.md`, and pushed like any other change (a concurrent push means fetch and try again, §6). Text the group's `CLAUDE.md` already has is not appended again, and the app says so. A group with `sync.claudeMd` off refuses it.
 
 **Privacy.** The preview is the user's own text: everything outside the managed block (§7), without group import lines, the same text personal memory syncs (§16). Secrets are redacted with the §9 patterns before it is shown and again before it is committed, and the commit still goes through the secret scan. One line above the preview says: "Everyone in the group will see this text, so remove personal details such as emails, names and tokens." What is committed is what the preview holds after the user's edits.
 
@@ -94,7 +94,7 @@ A group's page has "Copy to another group" when the user is in at least two grou
 
 Everything goes to B in one commit, `<login>@<device>: copy from <A>: CLAUDE.md, skills/x, agents/y.md, 2 settings`, through the same path as sharing the user's own content: redaction, the secret scan, and fetch and try again on a concurrent push (§6). B's other members get the new `CLAUDE.md` lines as changes to review (§7a). Text B already has is not appended again.
 
-**Write access.** Copying needs push access to B. The preview asks GitHub (`permissions.push` on the repo); when the user can only read B, the card says so plainly ("You can't push to Acme team: your GitHub account can read it but not write to it. Ask its host (acme-bot) for write access.") and offers no Copy button. A push GitHub refuses with 403 gets the same message.
+**Write access.** Copying needs B to be a group the user hosts, because only the host changes a group; B's picker lists only those groups. The preview also asks GitHub (`permissions.push` on the repo); when the user can only read B, the card says so plainly ("You can't push to Acme team: your GitHub account can read it but not write to it. Ask its host (acme-bot) for write access.") and offers no Copy button. A push GitHub refuses with 403 gets the same message.
 
 ### Plugins
 
@@ -108,12 +108,17 @@ A group can bundle Claude Code plugin marketplaces (issue #30). `plugins/<market
 
 ## 5. Membership as code
 
-Every member has the same say over who is in the group, even though only the repo owner can call GitHub's collaborator API:
+Only the host changes the member list, even though the list lives in `claude-sync.json` in the group repo:
 
-1. Any member adds or removes a login in the app. The app commits the change to `members` in `claude-sync.json`.
-2. The **host's** app reconciles on every sync: it invites (`PUT /repos/{o}/{r}/collaborators/{login}`, permission `push`) every listed login that is not a collaborator and has no pending invitation, and removes collaborators and cancels pending invitations for logins no longer listed. The host is never removed. If the host's app is offline, reconciliation happens the next time it runs.
+1. The host adds or removes a login in the app. The app commits the change to `members` in `claude-sync.json`. A member has no add or remove control.
+2. The host's app reconciles on every sync: it invites (`PUT /repos/{o}/{r}/collaborators/{login}`, permission `pull`, read-only) every listed login that is not a collaborator and has no pending invitation, and removes collaborators and cancels pending invitations for logins no longer listed. The host is never removed. If the host's app is offline, reconciliation happens the next time it runs.
 3. GitHub sends the invitation by email and notification. The invitee's app (if installed) lists pending invitations to repos with the `claude-sync-group` topic (`GET /user/repository_invitations`) and offers **Accept**. When access appears, the app sets the group up on that device without further questions: snapshot, apply, start watching.
 4. A member whose access disappears gets the group's managed content removed from their devices (with a backup) and is told why.
+
+### 5a. Only the host changes a group
+
+- **The app.** Members are invited with read (pull) access, and only the host's app pushes to a group repo. A member's local edit to a managed file is never pushed: the notice offers **Keep local** and **Undo** but no **Share with group**, the group screen shows "Only <host> can change this group. Your edits stay on this machine.", and the core refuses a member's change with `Error::HostOnly` ("Only <host> can change <group>. Your change stays on this machine; ask <host>, or propose it as a pull request."). A member who wants a change opens a pull request on the group repo; the host reviews and merges it.
+- **GitHub.** The host's app creates a repository ruleset on the default branch that blocks update, deletion and non-fast-forward pushes for everyone except repository admins. If GitHub refuses (for example a private repo on a free plan), the app still only pushes from the host's machine, and the host sees "GitHub can't lock this repo on your plan; the app still only sends changes from your machine." (`GroupStatus.hostLock` is `on`, `unavailable`, or null for members.)
 
 ## 6. Sync engine
 
@@ -150,7 +155,7 @@ Moves the merged group state into `~/.claude` without touching anything it does 
   <!-- claude-sync:end -->
   ```
   Everything outside the block is the user's. Lines that say the same thing as, or the opposite of, a line in another group or the user's own text are listed on the group page (§7b).
-- **Local edits.** A file watcher (debounced, 2 s) on managed paths compares hashes against the manifest. A changed managed file shows a notice: **Share with group** (commit it), **Keep local** (stop managing that path on this device), or **Undo** (restore the group's version). A new local skill can be shared from the app. The watcher also covers `~/.claude-sync/marketplaces/`: an edited plugin file, or a new file inside a marketplace folder a group placed, gets the same notice, and Share commits it under `plugins/<marketplace>/`. Undo of a new file removes it (a copy goes to the backups).
+- **Local edits.** A file watcher (debounced, 2 s) on managed paths compares hashes against the manifest. A changed managed file shows a notice: **Share with group** (commit it; the host only, §5a), **Keep local** (stop managing that path on this device), or **Undo** (restore the group's version). A new local skill can be shared from the app (host only). The watcher also covers `~/.claude-sync/marketplaces/`: an edited plugin file, or a new file inside a marketplace folder a group placed, gets the same notice, and Share commits it under `plugins/<marketplace>/`. Undo of a new file removes it (a copy goes to the backups).
 - Every write goes through write-to-temp-then-rename. Before the first change to an existing user file (`CLAUDE.md`, `settings.json`) the app copies it to `~/.claude-sync/backups/<UTC time>/`.
 
 ## 7a. Reviewing changes to a group's CLAUDE.md
@@ -250,7 +255,7 @@ v0 used `~/.claude-sync/` as a git clone of the personal repo. The app checks fo
 
 - **Tauri 2**, Rust backend plus a plain TypeScript UI. Tray icon with: status, Sync now, Open, Notifications (N) while N are unread, Pause, Send feedback, Quit. Single instance. Starts at login (autostart plugin, on by default, can be turned off).
 - Closing the window destroys the webview, so the idle app is just the Rust process (target: under 30 MB RAM idle, under 15 MB installer).
-- Screens: Sign in (device code), Groups (list, status, last sync), Group (what the group gives this device, plugins that failed to install (§18), scheduled jobs (§17), members, invite by GitHub login, pending invitations, recent changes as an activity feed parsed from commit messages in `app/ui/src/activity.ts`, conflicts, leave), Notifications, Settings (device name, poll interval, start at login, pause, desktop notifications, personal memory §16), Feedback.
+- Screens: Sign in (device code), Groups (list, status, last sync), Group (what the group gives this device, plugins that failed to install (§18), scheduled jobs (§17), members, invite by GitHub login (host only; members see a line saying only the host can change the group), pending invitations, recent changes as an activity feed parsed from commit messages in `app/ui/src/activity.ts`, conflicts, leave), Notifications, Settings (device name, poll interval, start at login, pause, desktop notifications, personal memory §16), Feedback.
 - **Notifications.** Everything the app tells the user goes through one function, `notify::show(app, kind, group, title, body)` (`app/src-tauri/src/notify.rs`); new features call it rather than the notification plugin. It:
   1. records the notification in `~/.claude-sync/notifications.json` (`crates/core/src/notifications.rs`): id, UTC time, title, body, kind (`update`, `group`, `plugins`, `local-edit`, `job`, `personal`, `other`), the group it is about if any, and read/unread. Newest first, at most 200; read ones older than 30 days are dropped. A missing or corrupt file is an empty history (a corrupt one is kept as `notifications.json.bad`).
   2. shows the desktop notification, unless **Show desktop notifications** is off in Settings. The history is kept either way.

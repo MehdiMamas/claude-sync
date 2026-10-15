@@ -141,9 +141,11 @@ impl Engine {
         let source = self.load_base(from)?.files;
         let target = self.load_base(to)?.files;
         let (gf, read_only) = read_group_file(to, &target)?;
-        let can_push =
-            read_only.is_none() && self.remotes.open(to).can_push().await.unwrap_or(true);
         let status = self.group_status(to);
+        // Only the host's app writes to a group.
+        let can_push = read_only.is_none()
+            && status.is_host
+            && self.remotes.open(to).can_push().await.unwrap_or(true);
         let claude_md = source
             .get(group::CLAUDE_MD)
             .and_then(|b| group_text(&String::from_utf8_lossy(b)))
@@ -395,7 +397,7 @@ mod tests {
 
     const TOKEN: &str = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
 
-    /// `bo` in ana's "Friends" and cy's "Crew"; `dee` is in Crew too.
+    /// `bo` in ana's "Friends" and hosts "Crew" (the repo id keeps cy's name); `dee` is in Crew too.
     async fn two_groups() -> (FakeGitHub, Device, [(GroupId, FakeRepo); 2]) {
         let world = FakeGitHub::new();
         let a = group_repo(&world, &["ana", "bo"]);
@@ -418,6 +420,7 @@ mod tests {
             group::SHARED_SETTINGS,
             "{\"a\": 1, \"permissions\": {\"allow\": [\"Read\"]}}\n",
         );
+        b.1.set_owner("bo");
         let bo = device(&world, "bo", "pc");
         bo.engine.join(&a.0).await.unwrap();
         bo.engine.join(&b.0).await.unwrap();
@@ -430,7 +433,7 @@ mod tests {
         let p = bo.engine.copy_preview(&friends, &crew).await.unwrap();
         assert_eq!(
             (p.to_name.as_str(), p.host.as_str(), p.can_push),
-            ("Crew", "cy", true)
+            ("Crew", "bo", true)
         );
         assert_eq!(
             p.claude_md,
@@ -555,6 +558,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_reader_is_told_plainly_they_cannot_push() {
+        let request = CopyRequest {
+            claude_md: "- Be kind to each other
+"
+            .into(),
+            ..Default::default()
+        };
+
+        // A member is told only the host changes the group.
         let world = FakeGitHub::new();
         let (friends, _) = group_repo(&world, &["ana", "bo"]);
         let (crew, crew_repo) = group_repo(&world, &["cy"]);
@@ -566,19 +577,33 @@ mod tests {
         assert!(!p.can_push);
         let e = bo
             .engine
-            .copy_to_group(
-                &friends,
-                &crew,
-                &CopyRequest {
-                    claude_md: "- Be kind to each other\n".into(),
-                    ..Default::default()
-                },
-            )
+            .copy_to_group(&friends, &crew, &request)
             .await
             .unwrap_err();
         assert_eq!(
             e.to_string(),
-            "You can't push to Friends: your GitHub account can read it but not write to it. Ask its host (cy) for write access."
+            "Only cy can change Friends. Your change stays on this machine; ask cy, or propose it as a pull request."
+        );
+
+        // A host whose GitHub account can only read the repo is told plainly.
+        let world = FakeGitHub::new();
+        let (friends, _) = group_repo(&world, &["ana", "bo"]);
+        let (crew, crew_repo) = group_repo(&world, &["cy"]);
+        crew_repo.set_owner("bo");
+        crew_repo.add_reader("bo");
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&friends).await.unwrap();
+        bo.engine.join(&crew).await.unwrap();
+        let p = bo.engine.copy_preview(&friends, &crew).await.unwrap();
+        assert!(!p.can_push);
+        let e = bo
+            .engine
+            .copy_to_group(&friends, &crew, &request)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "You can't push to Friends: your GitHub account can read it but not write to it. Ask its host (bo) for write access."
         );
     }
 }

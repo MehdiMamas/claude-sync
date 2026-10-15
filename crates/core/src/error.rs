@@ -29,6 +29,9 @@ pub enum Error {
     PublicRepo(String),
     #[error("group file schema {0} is newer than this app; update the app")]
     SchemaTooNew(u32),
+    /// A member tried to change the group; only the host's app writes to it.
+    #[error("Only {host} can change {group}. Your change stays on this machine; ask {host}, or propose it as a pull request.")]
+    HostOnly { group: String, host: String },
     #[error("{0}")]
     Invalid(String),
     #[error(transparent)]

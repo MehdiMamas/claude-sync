@@ -43,6 +43,9 @@ pub enum Collaborator {
     Invited { login: String, invitation_id: u64 },
 }
 
+/// Name of the ruleset that keeps everyone but the host from pushing to a group.
+pub const HOST_LOCK_NAME: &str = "claude-sync: only the host updates the group";
+
 #[async_trait]
 pub trait RemoteRepo: Send + Sync {
     fn id(&self) -> &crate::GroupId;
@@ -75,6 +78,9 @@ pub trait RemoteRepo: Send + Sync {
     async fn owner_login(&self) -> crate::Result<String>;
     async fn collaborators(&self) -> crate::Result<Vec<Collaborator>>;
     async fn invite(&self, login: &str) -> crate::Result<()>;
+    /// Make sure GitHub refuses pushes to the default branch from everyone but repo admins
+    /// (a ruleset named [`HOST_LOCK_NAME`]). Host only; may be refused by the plan.
+    async fn ensure_host_lock(&self) -> crate::Result<()>;
     async fn remove_collaborator(&self, login: &str) -> crate::Result<()>;
     async fn cancel_invitation(&self, invitation_id: u64) -> crate::Result<()>;
     /// Newest first.
@@ -553,8 +559,33 @@ impl RemoteRepo for GitHubRepo {
             .collect())
     }
 
+    async fn ensure_host_lock(&self) -> crate::Result<()> {
+        #[derive(Deserialize)]
+        struct Ruleset {
+            name: String,
+        }
+        let have: Vec<Ruleset> = self.gh.get(&self.path("/rulesets")).await?;
+        if have.iter().any(|r| r.name == HOST_LOCK_NAME) {
+            return Ok(());
+        }
+        let body = json!({
+            "name": HOST_LOCK_NAME,
+            "target": "branch",
+            "enforcement": "active",
+            "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+            "rules": [{"type": "update"}, {"type": "deletion"}, {"type": "non_fast_forward"}],
+            // Repository role 5 is admin.
+            "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}],
+        });
+        self.gh
+            .call(Method::POST, &self.path("/rulesets"), Some(&body))
+            .await
+    }
+
     async fn invite(&self, login: &str) -> crate::Result<()> {
-        let body = json!({ "permission": "push" });
+        // Members read; the ruleset (not this) is what stops personal repos from letting
+        // collaborators push, since GitHub ignores the permission there.
+        let body = json!({ "permission": "pull" });
         self.gh
             .call(
                 Method::PUT,
@@ -1064,7 +1095,7 @@ mod tests {
             .await;
         Mock::given(method("PUT"))
             .and(path("/repos/o/r/collaborators/q"))
-            .and(body_json(json!({"permission": "push"})))
+            .and(body_json(json!({"permission": "pull"})))
             .and(header_exists("authorization"))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": 8})))
             .expect(1)
@@ -1096,6 +1127,47 @@ mod tests {
         repo.invite("q").await.unwrap();
         repo.remove_collaborator("f").await.unwrap();
         repo.cancel_invitation(7).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ensure_host_lock_creates_the_ruleset_once() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/rulesets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/rulesets"))
+            .and(body_partial_json(json!({
+                "name": HOST_LOCK_NAME,
+                "enforcement": "active",
+            })))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": 1})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        repo.ensure_host_lock().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ensure_host_lock_leaves_an_existing_ruleset_alone() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/rulesets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"id": 3, "name": "something else"},
+                {"id": 4, "name": HOST_LOCK_NAME},
+            ])))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/rulesets"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": 1})))
+            .expect(0)
+            .mount(&server)
+            .await;
+        repo.ensure_host_lock().await.unwrap();
     }
 
     #[tokio::test]

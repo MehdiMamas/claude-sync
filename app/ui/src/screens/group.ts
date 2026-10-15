@@ -26,7 +26,6 @@ import { historyCard } from "./history";
 
 function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
   const you = store.auth?.login?.toLowerCase();
-  const hosting = g.host.toLowerCase() === you;
   const login = h("input", { id: "m-login", placeholder: "GitHub login", autocomplete: "off", spellcheck: "false", required: true });
   const add = h("button", { class: "primary", type: "submit" }, "Add member");
   const form = h(
@@ -51,6 +50,7 @@ function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
   const memberRow = (m: string) => {
     const isHost = m.toLowerCase() === g.host.toLowerCase();
     const remove =
+      g.isHost &&
       !isHost &&
       confirmButton("Remove", `Remove ${m}?`, (btn) =>
         busy(btn, "Removing…", async () => {
@@ -84,9 +84,16 @@ function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
       h("h3", null, "Invited, not joined yet"),
       h("ul", { class: "list flat" }, g.invited.map((m) => h("li", { class: "row muted" }, h("div", { class: "grow who" }, avatar(m, 20), m)))),
     ],
-    form,
-    !hosting && h("p", { class: "muted small" }, `${g.host} hosts this group. Members can add and remove people too.`),
+    g.isHost && form,
   );
+}
+
+/** Who may change the group, and what that means for this user. */
+function hostNotice(g: GroupStatus): HTMLElement | false {
+  if (!g.isHost) return h("div", { class: "notice info", role: "note" }, h("div", { class: "notice-text" }, `Only ${g.host} can change this group. Your edits stay on this machine.`));
+  if (g.hostLock === "unavailable")
+    return h("div", { class: "notice info", role: "note" }, h("div", { class: "notice-text" }, "GitHub can't lock this repo on your plan; the app still only sends changes from your machine."));
+  return false;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -691,6 +698,7 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
       replace(
         body,
         g.lastError && h("div", { class: "error", role: "alert" }, g.lastError),
+        hostNotice(g),
         reviewCard(g.id),
         pluginNotice(g.id),
         contentsCard(contents),
@@ -698,8 +706,8 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
         problemsCard(g),
         conflictsCard(g.id),
         membersCard(g, load),
-        shareCard(g.id),
-        claudeMdCard(g.id),
+        g.isHost && shareCard(g.id),
+        g.isHost && claudeMdCard(g.id),
         copyCard(g, groups),
         historyCard(g.id, contents),
       );

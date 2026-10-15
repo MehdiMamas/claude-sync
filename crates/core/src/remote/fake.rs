@@ -42,6 +42,7 @@ struct State {
     /// Collaborators with read access only: commits fail with `403`.
     readers: Vec<String>,
     invitations: Vec<(u64, String)>,
+    rulesets: Vec<String>,
     failures: Vec<Failure>,
     before_commit: Option<Hook>,
     calls: Vec<String>,
@@ -130,6 +131,7 @@ impl FakeRepo {
                 collaborators: Vec::new(),
                 readers: Vec::new(),
                 invitations: Vec::new(),
+                rulesets: Vec::new(),
                 failures: Vec::new(),
                 before_commit: None,
                 calls: Vec::new(),
@@ -240,6 +242,13 @@ impl FakeRepo {
     }
 
     /// Give `login` access directly (as if they had accepted an invitation).
+    /// Make `login` the repo's owner (the host) while the id keeps its name.
+    pub fn set_owner(&self, login: &str) {
+        let mut st = self.lock();
+        st.collaborators.retain(|c| !c.eq_ignore_ascii_case(login));
+        st.owner = login.into();
+    }
+
     pub fn add_collaborator(&self, login: &str) {
         let mut st = self.lock();
         if !st.has_access(login) {
@@ -312,6 +321,11 @@ impl FakeRepo {
     }
 
     /// `RemoteRepo` calls made so far, in order (method names).
+    /// Names of the rulesets created on the repo.
+    pub fn rulesets(&self) -> Vec<String> {
+        self.lock().rulesets.clone()
+    }
+
     pub fn calls(&self) -> Vec<String> {
         self.lock().calls.clone()
     }
@@ -450,6 +464,14 @@ impl RemoteRepo for FakeRepo {
                 invitation_id: *id,
             });
         Ok(members.chain(invited).collect())
+    }
+
+    async fn ensure_host_lock(&self) -> crate::Result<()> {
+        let mut st = self.enter_as_owner("ensure_host_lock")?;
+        if !st.rulesets.iter().any(|n| n == super::HOST_LOCK_NAME) {
+            st.rulesets.push(super::HOST_LOCK_NAME.into());
+        }
+        Ok(())
     }
 
     async fn invite(&self, login: &str) -> crate::Result<()> {
