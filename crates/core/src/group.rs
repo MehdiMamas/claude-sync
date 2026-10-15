@@ -72,6 +72,9 @@ pub struct GroupFile {
     pub members: Vec<String>,
     #[serde(default)]
     pub sync: SyncFlags,
+    /// Other members' `CLAUDE.md` changes apply on every device at once (§7a). Absent: on.
+    #[serde(default = "yes", rename = "autoAcceptClaudeMd")]
+    pub auto_accept_claude_md: bool,
     /// Unknown keys, kept on rewrite.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -85,6 +88,7 @@ impl GroupFile {
             name: name.into(),
             members: vec![host.into()],
             sync: SyncFlags::default(),
+            auto_accept_claude_md: true,
             extra: Map::new(),
         }
     }
@@ -256,6 +260,18 @@ mod tests {
         assert_eq!(g.members, ["MehdiMamas", "friend-login"]);
         assert!(!g.sync.output_styles);
         assert!(g.sync.claude_md);
+    }
+
+    #[test]
+    fn auto_accept_claude_md_defaults_on() {
+        let absent = GroupFile::parse(br#"{"schema":1,"name":"n","members":["a"]}"#).unwrap();
+        assert!(absent.auto_accept_claude_md);
+        assert!(GroupFile::new("n", "a").auto_accept_claude_md);
+        let off = GroupFile::parse(br#"{"schema":1,"autoAcceptClaudeMd":false}"#).unwrap();
+        assert!(!off.auto_accept_claude_md);
+        let back: Value = serde_json::from_slice(&off.to_bytes()).unwrap();
+        assert_eq!(back["autoAcceptClaudeMd"], false);
+        assert!(back.get("auto_accept_claude_md").is_none());
     }
 
     #[test]

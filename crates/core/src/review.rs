@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// `format` of `claude-md-review.json` this app writes and reads.
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 2;
 /// The file next to `status.json` in the group's state folder.
 pub const FILE: &str = "claude-md-review.json";
 /// Declined items remembered per group.
@@ -91,8 +91,9 @@ pub struct Declined {
 #[serde(rename_all = "camelCase", default)]
 pub struct ReviewState {
     pub format: u32,
-    /// "Review changes others make to CLAUDE.md". Off: others' changes apply at once.
-    pub review: bool,
+    /// This device's choice on "Review changes others make to CLAUDE.md". `None` follows
+    /// the group's `autoAcceptClaudeMd`. Off: others' changes apply at once.
+    pub review: Option<bool>,
     /// The group's text as last seen.
     pub group: String,
     /// The text the copy should hold (as the app last wrote it).
@@ -105,7 +106,7 @@ impl Default for ReviewState {
     fn default() -> Self {
         Self {
             format: FORMAT,
-            review: true,
+            review: None,
             group: String::new(),
             accepted: String::new(),
             pending: Vec::new(),
@@ -139,13 +140,19 @@ impl ReviewState {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             r => r?,
         };
-        let state: Self = serde_json::from_slice(&bytes)?;
+        let mut state: Self = serde_json::from_slice(&bytes)?;
         if state.format > FORMAT {
             return Err(crate::Error::Invalid(format!(
                 "{} was written by a newer claude-sync (format {})",
                 file.display(),
                 state.format
             )));
+        }
+        // Format 1 held a per-device bool whose default was on: an explicit choice can't be
+        // told from the default, so the device follows the group.
+        if state.format < 2 {
+            state.review = None;
+            state.format = FORMAT;
         }
         Ok(Some(state))
     }
@@ -184,7 +191,7 @@ impl ReviewState {
                     continue;
                 }
                 let patched = apply(&self.accepted, &item);
-                if step.mine || !self.review {
+                if step.mine || !self.review.unwrap_or(true) {
                     match patched {
                         Some(text) => {
                             self.accepted = text;
@@ -739,7 +746,7 @@ mod tests {
         let mut st = ReviewState::new(BASE);
         st.pull(&[step("# Rules\n- one\n- three\n", "ana", false, "c2")]);
         st.decline(None, 1);
-        st.review = false;
+        st.review = Some(false);
         let got = st.pull(&[step(
             "# Rules\n- one\n- three\n- four\n",
             "ana",
@@ -756,7 +763,7 @@ mod tests {
     #[test]
     fn in_step_copies_take_the_group_text_exactly() {
         let mut st = ReviewState::new("a\na\nb\n");
-        st.review = false;
+        st.review = Some(false);
         let s = step("a\nb\na\na\nb\n", "ana", false, "c2");
         st.pull(std::slice::from_ref(&s));
         assert_eq!(st.accepted, s.text);
@@ -796,13 +803,21 @@ mod tests {
             .collect();
         assert_eq!(names, [FILE]);
         let text = std::fs::read_to_string(&file).unwrap();
-        assert!(text.contains("\"format\": 1"), "{text}");
+        assert!(text.contains("\"format\": 2"), "{text}");
 
-        std::fs::write(&file, r#"{"format": 2}"#).unwrap();
+        std::fs::write(&file, r#"{"format": 3}"#).unwrap();
         assert!(ReviewState::load(&file).is_err());
         std::fs::write(&file, r#"{"format": 1, "group": "x"}"#).unwrap();
         let old = ReviewState::load(&file).unwrap().unwrap();
-        assert!(old.review, "review defaults to on");
+        assert_eq!(old.review, None, "a format 1 file follows the group");
+        assert_eq!(old.format, FORMAT);
+        std::fs::write(&file, r#"{"format": 1, "review": false}"#).unwrap();
+        assert_eq!(ReviewState::load(&file).unwrap().unwrap().review, None);
+        std::fs::write(&file, r#"{"format": 2, "review": false}"#).unwrap();
+        assert_eq!(
+            ReviewState::load(&file).unwrap().unwrap().review,
+            Some(false)
+        );
     }
 
     #[test]
@@ -846,7 +861,7 @@ mod tests {
 - Run tests
 - Be kind
 ";
-        st.review = false;
+        st.review = Some(false);
         st.pull(&[step(next, "cy", false, "c2")]);
         assert_eq!(
             st.accepted,

@@ -130,6 +130,7 @@ fn main() {
             commands::claude_md_review,
             commands::decide_claude_md,
             commands::set_claude_md_review,
+            commands::set_group_auto_accept_claude_md,
             commands::use_group_claude_md,
             commands::conflicts,
             commands::claude_md_check,

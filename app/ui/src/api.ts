@@ -48,7 +48,12 @@ export interface ReviewItem {
   atUnix: number;
 }
 export interface ClaudeMdReview {
+  /** Review is on for this device (its choice, else the group's setting). */
   review: boolean;
+  /** The group's "Auto-accept CLAUDE.md changes". */
+  autoAccept: boolean;
+  /** This device's choice; null follows the group. */
+  reviewOverride: boolean | null;
   /** Oldest first. */
   pending: ReviewItem[];
   /** How many changes the user declined (never asked again). */
@@ -431,7 +436,9 @@ export const api = {
   /** Accept or decline `ids`, or every pending change when `ids` is null. */
   decideClaudeMd: (group: GroupId, ids: string[] | null, accept: boolean) =>
     call<ClaudeMdReview>("decide_claude_md", { group, ids, accept }),
-  setClaudeMdReview: (group: GroupId, on: boolean) => call<ClaudeMdReview>("set_claude_md_review", { group, on }),
+  setClaudeMdReview: (group: GroupId, on: boolean | null) => call<ClaudeMdReview>("set_claude_md_review", { group, on }),
+  setGroupAutoAcceptClaudeMd: (group: GroupId, on: boolean) =>
+    call<ClaudeMdReview>("set_group_auto_accept_claude_md", { group, on }),
   useGroupClaudeMd: (group: GroupId) => call<ClaudeMdReview>("use_group_claude_md", { group }),
   syncNow: () => call<SyncReport>("sync_now"),
   conflicts: () => call<Clash[]>("conflicts"),

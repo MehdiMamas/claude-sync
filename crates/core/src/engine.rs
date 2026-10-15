@@ -59,7 +59,12 @@ pub struct GroupStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeMdReview {
+    /// Review is on for this device (its override, else the group's setting).
     pub review: bool,
+    /// The group's "Auto-accept CLAUDE.md changes".
+    pub auto_accept: bool,
+    /// This device's choice; `None` follows the group.
+    pub review_override: Option<bool>,
     /// Oldest first.
     pub pending: Vec<review::Item>,
     /// Changes the user declined (remembered, never asked again).
@@ -652,8 +657,11 @@ impl Engine {
     /// Changes others made to the group's `CLAUDE.md` that wait for this user (§7a).
     pub fn claude_md_review(&self, id: &GroupId) -> crate::Result<ClaudeMdReview> {
         let st = self.load_review(id)?.unwrap_or_default();
+        let auto_accept = self.group_auto_accept(id);
         Ok(ClaudeMdReview {
-            review: st.review,
+            review: st.review.unwrap_or(!auto_accept),
+            auto_accept,
+            review_override: st.review,
             differs: st.accepted != st.group,
             declined: st.declined.len(),
             pending: st.pending,
@@ -683,21 +691,68 @@ impl Engine {
         self.claude_md_review(id)
     }
 
-    /// Turn "Review changes others make to CLAUDE.md" on or off. Turning it off accepts what
-    /// is pending (the UI asks first) and lets later changes apply at once; past declines stay.
+    /// This device's choice on "Review changes others make to CLAUDE.md": `Some` overrides the
+    /// group's setting, `None` follows it. When review ends up off, what is pending is accepted
+    /// (the UI asks first) and later changes apply at once; past declines stay.
     pub async fn set_claude_md_review(
+        &self,
+        id: &GroupId,
+        on: Option<bool>,
+    ) -> crate::Result<ClaudeMdReview> {
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        let mut st = self.require_review(id)?;
+        st.review = on;
+        self.accept_if_unreviewed(id, &mut st)?;
+        self.claude_md_review(id)
+    }
+
+    /// The group's "Auto-accept CLAUDE.md changes" (§7a): pushes `claude-sync.json`, then
+    /// applies it here (accepting what is pending when review is now off). Needs push access.
+    pub async fn set_group_auto_accept_claude_md(
         &self,
         id: &GroupId,
         on: bool,
     ) -> crate::Result<ClaudeMdReview> {
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
-        let mut st = self.require_review(id)?;
-        st.review = on;
-        let before = st.accepted.clone();
-        let applied = if on { Vec::new() } else { st.accept(None) };
-        self.write_accepted(id, &mut st, &before, &applied, false)?;
+        let remote = self.remotes.open(id);
+        if !remote.can_push().await.unwrap_or(true) {
+            let host = remote
+                .owner_login()
+                .await
+                .unwrap_or_else(|_| id.owner.clone());
+            return Err(no_push(&self.load_status(id).name, &host));
+        }
+        let summary = format!("auto-accept CLAUDE.md {}", if on { "on" } else { "off" });
+        self.edit_group_file(id, &summary, |gf| {
+            let changed = gf.auto_accept_claude_md != on;
+            gf.auto_accept_claude_md = on;
+            Ok(changed)
+        })
+        .await?;
+        // The snapshot is the group file's source here; the sync brings it in.
+        self.sync_group(id, None).await;
+        if let Some(mut st) = self.load_review(id)? {
+            self.accept_if_unreviewed(id, &mut st)?;
+        }
         self.claude_md_review(id)
+    }
+
+    /// Accept what is pending when review is off for this device.
+    fn accept_if_unreviewed(&self, id: &GroupId, st: &mut ReviewState) -> crate::Result<()> {
+        let review = st.review.unwrap_or(!self.group_auto_accept(id));
+        let before = st.accepted.clone();
+        let applied = if review { Vec::new() } else { st.accept(None) };
+        self.write_accepted(id, st, &before, &applied, false)
+    }
+
+    /// The group's `autoAcceptClaudeMd` as last synced; on when it can't be read.
+    fn group_auto_accept(&self, id: &GroupId) -> bool {
+        self.load_base(id)
+            .ok()
+            .and_then(|b| read_group_file(id, &b.files).ok())
+            .is_none_or(|(gf, _)| gf.auto_accept_claude_md)
     }
 
     /// "Use the group's version": the copy becomes the group's `CLAUDE.md` again, pending and
@@ -1258,7 +1313,9 @@ impl Engine {
             collisions: s.collisions.into_iter().map(Into::into).collect(),
             plugins_changed: false,
             review_pending: review.as_ref().map_or(0, |r| r.pending.len()),
-            review_claude_md: review.is_none_or(|r| r.review),
+            review_claude_md: review
+                .and_then(|r| r.review)
+                .unwrap_or(!self.group_auto_accept(id)),
             is_host,
             host_lock: s.host_lock,
         }
@@ -1345,12 +1402,19 @@ impl Engine {
             vec![unknown_step(&new, head)]
         };
         let held = matches!(copy, LocalCopy::Held);
-        let review_on = st.review;
+        let choice = st.review;
+        let auto_accept =
+            read_group_file(id, remote_files).map_or(true, |(gf, _)| gf.auto_accept_claude_md);
+        let review_on = choice.unwrap_or(!auto_accept);
         // A copy kept local is not this device's concern: the group's text is accepted.
-        st.review &= !held;
+        st.review = Some(review_on && !held);
         let before = st.accepted.clone();
-        let pulled = st.pull(&steps);
-        st.review = review_on;
+        let mut pulled = st.pull(&steps);
+        // The group (or this device) went to auto-accept: what waited is accepted now.
+        if !review_on && !held {
+            pulled.applied.extend(st.accept(None));
+        }
+        st.review = choice;
         report.review.extend(pulled.new);
 
         let copy = match copy {
@@ -1919,6 +1983,8 @@ mod tests {
     fn group_json(name: &str, members: &[&str]) -> String {
         let mut gf = GroupFile::new(name, members[0]);
         gf.members = members.iter().map(|m| m.to_string()).collect();
+        // Most tests are about the review (§7a); the auto-accept ones turn it on.
+        gf.auto_accept_claude_md = false;
         String::from_utf8(gf.to_bytes()).unwrap()
     }
 
@@ -2851,7 +2917,11 @@ mod tests {
         let (_, id, repo, bo) = joined().await;
         repo.set_file(group::CLAUDE_MD, "# Friends\nUse tabs.\n");
         bo.engine.sync_all().await.unwrap();
-        let off = bo.engine.set_claude_md_review(&id, false).await.unwrap();
+        let off = bo
+            .engine
+            .set_claude_md_review(&id, Some(false))
+            .await
+            .unwrap();
         assert!(
             !off.review && off.pending.is_empty(),
             "pending ones are accepted"
@@ -2865,6 +2935,175 @@ mod tests {
         assert_eq!(report.groups[0].review.len(), 0);
         assert_eq!(bo.apply.file(&id, group::CLAUDE_MD).unwrap(), "Use tabs.\n");
         assert!(!bo.engine.groups().await.unwrap()[0].review_claude_md);
+    }
+
+    /// Set (or, with `None`, remove) `autoAcceptClaudeMd` in the repo's group file.
+    fn set_auto_accept(repo: &FakeRepo, on: Option<bool>) {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&repo.file(group::FILE).unwrap()).unwrap();
+        match on {
+            Some(b) => v["autoAcceptClaudeMd"] = b.into(),
+            None => {
+                v.as_object_mut().unwrap().remove("autoAcceptClaudeMd");
+            }
+        }
+        repo.set_file(group::FILE, &serde_json::to_string_pretty(&v).unwrap());
+    }
+
+    #[tokio::test]
+    async fn an_absent_auto_accept_key_applies_others_changes_at_once() {
+        let (_, id, repo, bo) = joined().await;
+        set_auto_accept(&repo, None);
+        repo.set_file(
+            group::CLAUDE_MD,
+            "# Friends
+Use tabs.
+",
+        );
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].review.is_empty());
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends
+Use tabs.
+"
+        );
+        let m = md(&bo.engine, &id);
+        assert!(m.auto_accept && !m.review && m.review_override.is_none());
+        assert!(m.pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn auto_accept_off_in_the_group_keeps_changes_pending() {
+        let (_, id, repo, bo) = joined().await;
+        set_auto_accept(&repo, Some(false));
+        repo.set_file(
+            group::CLAUDE_MD,
+            "# Friends
+Use tabs.
+",
+        );
+        bo.engine.sync_all().await.unwrap();
+        let m = md(&bo.engine, &id);
+        assert!(!m.auto_accept && m.review);
+        assert_eq!(m.pending.len(), 1);
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends
+"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_device_override_wins_over_the_group() {
+        let (_, id, repo, bo) = joined().await;
+        set_auto_accept(&repo, Some(true));
+        bo.engine.sync_all().await.unwrap();
+        let m = bo
+            .engine
+            .set_claude_md_review(&id, Some(true))
+            .await
+            .unwrap();
+        assert!(m.review && m.auto_accept && m.review_override == Some(true));
+        repo.set_file(
+            group::CLAUDE_MD,
+            "# Friends
+Use tabs.
+",
+        );
+        bo.engine.sync_all().await.unwrap();
+        assert_eq!(md(&bo.engine, &id).pending.len(), 1);
+        // Following the group again accepts what waited.
+        let m = bo.engine.set_claude_md_review(&id, None).await.unwrap();
+        assert!(!m.review && m.pending.is_empty());
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends
+Use tabs.
+"
+        );
+    }
+
+    #[tokio::test]
+    async fn turning_the_group_on_accepts_what_waits_on_the_next_sync() {
+        let (_, id, repo, bo) = joined().await;
+        repo.set_file(
+            group::CLAUDE_MD,
+            "# Friends
+Use tabs.
+",
+        );
+        bo.engine.sync_all().await.unwrap();
+        assert_eq!(md(&bo.engine, &id).pending.len(), 1);
+        set_auto_accept(&repo, Some(true));
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].review.is_empty());
+        let m = md(&bo.engine, &id);
+        assert!(m.pending.is_empty() && !m.review);
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends
+Use tabs.
+"
+        );
+    }
+
+    #[tokio::test]
+    async fn setting_the_group_auto_accept_commits_the_group_file() {
+        let (_, id, repo, bo) = joined().await;
+        repo.set_file(
+            group::CLAUDE_MD,
+            "# Friends
+Use tabs.
+",
+        );
+        bo.engine.sync_all().await.unwrap();
+        let m = bo
+            .engine
+            .set_group_auto_accept_claude_md(&id, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.commits().last().unwrap().message,
+            "bo@pc: auto-accept CLAUDE.md on"
+        );
+        let gf = GroupFile::parse(repo.file(group::FILE).unwrap().as_bytes()).unwrap();
+        assert!(gf.auto_accept_claude_md);
+        assert!(m.auto_accept && !m.review && m.pending.is_empty());
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends
+Use tabs.
+"
+        );
+        let n = commit_count(&repo);
+        bo.engine
+            .set_group_auto_accept_claude_md(&id, true)
+            .await
+            .unwrap();
+        assert_eq!(commit_count(&repo), n, "nothing changed, nothing pushed");
+        bo.engine
+            .set_group_auto_accept_claude_md(&id, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.commits().last().unwrap().message,
+            "bo@pc: auto-accept CLAUDE.md off"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reader_cannot_change_the_group_auto_accept() {
+        let (_, id, repo, bo) = joined().await;
+        repo.add_reader("bo");
+        let n = commit_count(&repo);
+        let err = bo
+            .engine
+            .set_group_auto_accept_claude_md(&id, true)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("can't push"), "{err}");
+        assert_eq!(commit_count(&repo), n);
     }
 
     #[tokio::test]

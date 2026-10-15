@@ -421,7 +421,10 @@ mod tests {
             group::CLAUDE_MD,
             "# Crew\n\n- always use TABS\n- Never answer in French\n- Keep PRs small\n- Be kind\n",
         );
-        bo.engine.set_claude_md_review(&crew, false).await.unwrap();
+        bo.engine
+            .set_claude_md_review(&crew, Some(false))
+            .await
+            .unwrap();
         bo.engine.sync_all().await.unwrap();
         assert!(!bo
             .apply
