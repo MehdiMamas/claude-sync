@@ -36,5 +36,10 @@ export const env = {
   },
   /** Logins refused with 403 (abuse); everyone else with a valid GitHub token is allowed. */
   blockedUsers: (): Set<string> => new Set(list(process.env.BLOCKED_GITHUB_USERS).map((s) => s.toLowerCase())),
+  /** Install page sign-in (GitHub OAuth App web flow). All three must be set, else the page says it is not configured. */
+  oauthClientId: (): string | undefined => process.env.GITHUB_OAUTH_CLIENT_ID?.trim() || undefined,
+  oauthClientSecret: (): string | undefined => process.env.GITHUB_OAUTH_CLIENT_SECRET?.trim() || undefined,
+  installSessionSecret: (): string | undefined => process.env.INSTALL_SESSION_SECRET?.trim() || undefined,
+  installConfigured: (): boolean => !!(env.oauthClientId() && env.oauthClientSecret() && env.installSessionSecret()),
   publicUrl: (): string | undefined => process.env.RELAY_PUBLIC_URL?.trim().replace(/\/+$/, "") || undefined,
 };
