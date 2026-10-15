@@ -527,7 +527,7 @@ function reviewItem(id: GroupId, item: ReviewItem, done: () => void): HTMLElemen
   );
 }
 
-function reviewBody(id: GroupId, r: ClaudeMdReview): (HTMLElement | false)[] {
+function reviewBody(id: GroupId, r: ClaudeMdReview, isHost: boolean): (HTMLElement | false)[] {
   // Reload the whole screen: the group list, the nav badge and this card.
   const done = () => store.bump();
   const n = r.pending.length;
@@ -591,8 +591,8 @@ function reviewBody(id: GroupId, r: ClaudeMdReview): (HTMLElement | false)[] {
     ask.hidden = false;
   });
 
-  // The group's setting: needs write access to the group; GitHub's refusal is shown as it is.
-  const groupToggle = h("input", { type: "checkbox", id: "auto-accept-md", checked: r.autoAccept });
+  // The group's setting: only the host can change it; members see it but can't.
+  const groupToggle = h("input", { type: "checkbox", id: "auto-accept-md", checked: r.autoAccept, disabled: !isHost });
   groupToggle.addEventListener("change", async () => {
     const on = groupToggle.checked;
     groupToggle.disabled = true;
@@ -604,7 +604,7 @@ function reviewBody(id: GroupId, r: ClaudeMdReview): (HTMLElement | false)[] {
       groupToggle.checked = !on;
       toast(errorText(e), "error");
     } finally {
-      groupToggle.disabled = false;
+      groupToggle.disabled = !isHost;
     }
   });
   const deviceLine =
@@ -643,7 +643,7 @@ function reviewBody(id: GroupId, r: ClaudeMdReview): (HTMLElement | false)[] {
   ];
 }
 
-function reviewCard(id: GroupId): HTMLElement {
+function reviewCard(id: GroupId, isHost: boolean): HTMLElement {
   const title = h("h2", { id: "review-h" }, "CLAUDE.md changes");
   const body = h("div", null, spinner("Loading CLAUDE.md changes"));
   const card = h("section", { class: "card review", "aria-labelledby": "review-h" }, title, body);
@@ -651,7 +651,7 @@ function reviewCard(id: GroupId): HTMLElement {
     (r) => {
       const n = r.pending.length;
       replace(title, n > 0 ? ["Changes to review", h("span", { class: "tag warn" }, String(n))] : "CLAUDE.md changes");
-      replace(body, reviewBody(id, r));
+      replace(body, reviewBody(id, r, isHost));
     },
     // No CLAUDE.md from this group on this device: nothing to review.
     () => card.remove(),
@@ -736,7 +736,7 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
         body,
         g.lastError && h("div", { class: "error", role: "alert" }, g.lastError),
         hostNotice(g),
-        reviewCard(g.id),
+        reviewCard(g.id, g.isHost),
         pluginNotice(g.id),
         contentsCard(contents),
         jobsCard(g.id),

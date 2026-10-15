@@ -716,14 +716,7 @@ impl Engine {
     ) -> crate::Result<ClaudeMdReview> {
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
-        let remote = self.remotes.open(id);
-        if !remote.can_push().await.unwrap_or(true) {
-            let host = remote
-                .owner_login()
-                .await
-                .unwrap_or_else(|_| id.owner.clone());
-            return Err(no_push(&self.load_status(id).name, &host));
-        }
+        self.require_host(id).await?;
         let summary = format!("auto-accept CLAUDE.md {}", if on { "on" } else { "off" });
         self.edit_group_file(id, &summary, |gf| {
             let changed = gf.auto_accept_claude_md != on;
@@ -3050,7 +3043,7 @@ Use tabs.
 
     #[tokio::test]
     async fn setting_the_group_auto_accept_commits_the_group_file() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         repo.set_file(
             group::CLAUDE_MD,
             "# Friends
@@ -3093,16 +3086,15 @@ Use tabs.
     }
 
     #[tokio::test]
-    async fn a_reader_cannot_change_the_group_auto_accept() {
+    async fn a_member_cannot_change_the_group_auto_accept() {
         let (_, id, repo, bo) = joined().await;
-        repo.add_reader("bo");
         let n = commit_count(&repo);
         let err = bo
             .engine
             .set_group_auto_accept_claude_md(&id, true)
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("can't push"), "{err}");
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
         assert_eq!(commit_count(&repo), n);
     }
 
