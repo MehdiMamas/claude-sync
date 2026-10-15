@@ -101,8 +101,7 @@ function Compare-Semver($A, $B) {
 # Every place the app version lives (found with an uncapped grep); scripts/bump-version.mjs
 # has the same list, keep them in step. The app and the core
 # take theirs from [workspace.package] (version.workspace = true), and tauri.conf.json has
-# no "version", so Tauri uses the Cargo one. bin/claude-sync is the v0 shell CLI with its
-# own version and is not part of the app release.
+# no "version", so Tauri uses the Cargo one.
 
 $Utf8 = New-Object System.Text.UTF8Encoding $false
 

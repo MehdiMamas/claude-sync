@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 pub struct Paths {
     /// `~/.claude` (env `CLAUDE_HOME` overrides; tests always set it).
     pub claude_home: PathBuf,
-    /// `~/.claude-sync`, or `~/.claude-sync/app` when `~/.claude-sync/.git` exists (a v0 clone).
+    /// `~/.claude-sync`, or `~/.claude-sync/app` when `~/.claude-sync/.git` exists (a v0 clone
+    /// that `migrate` could not move; the app normally migrates it at start).
     /// Env `CLAUDE_SYNC_HOME` overrides.
     pub state_dir: PathBuf,
 }

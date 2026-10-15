@@ -1,6 +1,6 @@
 # claude-sync app: architecture
 
-This document is the design the sprint issues point to. The bash CLI in `bin/` and `lib/` (described in `SPEC.md`) is v0. The app described here replaces it.
+This document is the design the sprint issues point to. The app described here replaced the v0 bash CLI, which is gone; §10 and §16 say how a v0 setup is moved.
 
 ## 1. What it is
 
@@ -22,7 +22,6 @@ crates/core/        Rust library: GitHub client, group format, sync engine, appl
 app/                Tauri 2 app: tray, autostart, updater, UI (app/ui, plain TypeScript + Vite), feedback capture
 relay/              Vercel project (TypeScript functions): /api/update, /api/download, /api/feedback, /api/health
 scripts/            Local checks, the version bump and the local Windows release script
-bin/ lib/ tests/    v0 bash CLI (SPEC.md), kept for now; the app replaces it
 ```
 
 GitHub Actions run on GitHub-hosted runners only (free for a public repo): `ci.yml` runs the checks of `scripts/check.ps1` on Ubuntu, Windows and macOS for every PR and push to `main`, and `release.yml` builds releases (§13). No self-hosted runners, no AI jobs.
@@ -213,7 +212,7 @@ At most 200 clashes are listed. Each has an id that stays the same while both si
 
 ## 8. Settings merge
 
-`settings.shared.json` is merged into `~/.claude/settings.json`, keeping the v0 CLI's rules (`SPEC.md`, `lib/`) and adding ownership so removals work:
+`settings.shared.json` is merged into `~/.claude/settings.json`, with ownership so removals work (code: `crates/core/src/settings.rs`):
 
 - Objects merge key by key. Arrays get the shared items they lack, appended after local items. For plain values, the shared value wins.
 - `~/.claude-sync/settings-owned.json` records, per group, every value the app set (JSON pointer and value) and every array item it added.
@@ -230,7 +229,7 @@ Plugins and marketplaces:
 
 ## 9. Secret scan
 
-Ported from v0 (`lib/secrets.sh`, `SPEC.md` §7): `github_pat_…`, `sk-ant-…`, `ghp_…`, `gh[orsu]_…` (OAuth, refresh, server and user tokens), `AKIA…`, `xox[abpr]-…`, private key headers, `"access_token"`/`"refresh_token"` fields. A line containing `claude-sync: allow-secret` is skipped. The same redaction patterns clean logs before they are written and before feedback is sent.
+Patterns in `crates/core/src/secrets.rs`: `github_pat_…`, `sk-ant-…`, `ghp_…`, `gh[orsu]_…` (OAuth, refresh, server and user tokens), `AKIA…`, `xox[abpr]-…`, private key headers, `"access_token"`/`"refresh_token"` fields. A line containing `claude-sync: allow-secret` is skipped. The same redaction patterns clean logs before they are written and before feedback is sent.
 
 ## 10. Local state
 
@@ -253,7 +252,14 @@ Ported from v0 (`lib/secrets.sh`, `SPEC.md` §7): `github_pat_…`, `sk-ant-…`
 
 **Group order.** `groups` in `state.json` is the priority list: new groups are added at the end, and when two groups set the same file, settings value or marketplace, the one higher in the list wins (§7, §8). The user changes the order with the up and down buttons on the Groups screen (the `reorder_groups` command, `Engine::reorder_groups`). It refuses a list that is not exactly the joined groups, saves `state.json` (write-then-rename), then syncs every group again in the new order, so the new winner takes over the files, the settings values it was losing (a group's claim on a value it no longer wins is dropped) and the marketplace, and the old winner is reported as a collision. If that sync fails (offline), the order is kept and the next sync finishes it. Personal memory (§16) is not a group and has no place in the list.
 
-v0 used `~/.claude-sync/` as a git clone of the personal repo. The app checks for a `.git` folder there first and, if found, leaves it alone and stores its own state in `~/.claude-sync/app/` until personal sync is migrated.
+v0 used `~/.claude-sync/` as a git clone of the personal repo, with SessionStart/SessionEnd hooks in `~/.claude/settings.json` that ran its bash script. `crates/core/src/migrate.rs` moves that away once, at app start, when `~/.claude-sync/.git` exists:
+
+1. v0's hook entries (commands that run `claude-sync … --hook`) are removed from `~/.claude/settings.json`, after a copy of the file goes into the backup folder. Other hooks and keys stay.
+2. The clone's files go to `~/.claude-sync-v0-backup-<UTC time>/claude-sync/`. Nothing is deleted.
+3. `~/.claude-sync/app/*` moves up to `~/.claude-sync/`, so the normal layout applies.
+4. One notification says where the old setup went and that Personal memory (§16) can be turned on in Settings.
+
+The clone's `.git` moves last and is what marks the migration as unfinished, so a stop half way is finished by the next start; the backup folder holds a `.migrating` file (with the names to move up) until then. `~/.claude` files other than `settings.json` and the v0 personal repo on GitHub are not touched. If the migration fails, the app keeps its state in `~/.claude-sync/app/` and tries again at the next start.
 
 ## 11. App
 
@@ -367,7 +373,7 @@ Never synced, and reported in Settings as "stays on this device": a file over 25
 <state>/personal/off-memory/
 ```
 
-The v0 bash CLI's personal repo (§10) is not migrated.
+A v0 clone of the personal repo is moved aside by the migration in §10; its CLAUDE.md and memories are not imported, the user turns this feature on instead.
 
 ## 17. Scheduled jobs
 
