@@ -527,7 +527,7 @@ function reviewItem(id: GroupId, item: ReviewItem, done: () => void): HTMLElemen
   );
 }
 
-function reviewBody(id: GroupId, r: ClaudeMdReview): (HTMLElement | false)[] {
+function reviewBody(id: GroupId, r: ClaudeMdReview, isHost: boolean): (HTMLElement | false)[] {
   // Reload the whole screen: the group list, the nav badge and this card.
   const done = () => store.bump();
   const n = r.pending.length;
@@ -543,31 +543,43 @@ function reviewBody(id: GroupId, r: ClaudeMdReview): (HTMLElement | false)[] {
     return b;
   };
 
-  const toggle = h("input", { type: "checkbox", id: "review-md", checked: r.review });
   const ask = h("div", { class: "review-ask", hidden: true });
-  const save = async (on: boolean) => {
-    toggle.disabled = true;
+  // This device's choice: null follows the group.
+  const choice = h(
+    "select",
+    { id: "review-device", "aria-label": "On this device" },
+    h("option", { value: "follow" }, "Follow group"),
+    h("option", { value: "review" }, "Review first"),
+    h("option", { value: "auto" }, "Auto-accept"),
+  );
+  const current = r.reviewOverride === null ? "follow" : r.reviewOverride ? "review" : "auto";
+  choice.value = current;
+  const save = async (value: string) => {
+    choice.disabled = true;
     try {
-      await api.setClaudeMdReview(id, on);
-      toast(on ? "You review changes others make to this CLAUDE.md" : "Changes others make now apply at once");
+      const on = value === "follow" ? null : value === "review";
+      const after = await api.setClaudeMdReview(id, on);
+      toast(after.review ? "You review changes others make to this CLAUDE.md" : "Changes others make now apply at once");
       done();
     } catch (e) {
-      toggle.checked = !on;
+      choice.value = current;
       toast(errorText(e), "error");
     } finally {
-      toggle.disabled = false;
+      choice.disabled = false;
     }
   };
-  toggle.addEventListener("change", () => {
-    if (toggle.checked || n === 0) {
-      save(toggle.checked);
+  choice.addEventListener("change", () => {
+    const value = choice.value;
+    const reviewAfter = value === "follow" ? !r.autoAccept : value === "review";
+    if (reviewAfter || n === 0) {
+      save(value);
       return;
     }
-    // Turning review off accepts what waits: ask first.
-    toggle.checked = true;
+    // Review ends up off, which accepts what waits: ask first.
+    choice.value = current;
     const yes = h("button", { class: "primary" }, `Accept ${plural(n, "change")} and turn off`);
     const no = h("button", null, "Keep reviewing");
-    yes.addEventListener("click", () => busy(yes, "Accepting…", () => save(false)));
+    yes.addEventListener("click", () => busy(yes, "Accepting…", () => save(value)));
     no.addEventListener("click", () => {
       ask.hidden = true;
     });
@@ -578,6 +590,29 @@ function reviewBody(id: GroupId, r: ClaudeMdReview): (HTMLElement | false)[] {
     );
     ask.hidden = false;
   });
+
+  // The group's setting: only the host can change it; members see it but can't.
+  const groupToggle = h("input", { type: "checkbox", id: "auto-accept-md", checked: r.autoAccept, disabled: !isHost });
+  groupToggle.addEventListener("change", async () => {
+    const on = groupToggle.checked;
+    groupToggle.disabled = true;
+    try {
+      await api.setGroupAutoAcceptClaudeMd(id, on);
+      toast(on ? "Changes members make to this CLAUDE.md now apply at once" : "Members now review each other's CLAUDE.md changes");
+      done();
+    } catch (e) {
+      groupToggle.checked = !on;
+      toast(errorText(e), "error");
+    } finally {
+      groupToggle.disabled = !isHost;
+    }
+  });
+  const deviceLine =
+    r.reviewOverride === null
+      ? `On this device: follows the group (${r.autoAccept ? "auto-accept" : "review first"})`
+      : r.reviewOverride
+        ? "On this device: review changes first"
+        : "On this device: auto-accept";
 
   const useGroup = confirmButton("Use the group's version", "Click again: replace your copy", (btn) =>
     busy(btn, "Replacing…", async () => {
@@ -601,12 +636,14 @@ function reviewBody(id: GroupId, r: ClaudeMdReview): (HTMLElement | false)[] {
         h("div", { class: "grow muted small" }, r.declined > 0 ? `Your copy leaves out ${plural(r.declined, "change")} you declined.` : "Your copy differs from the group's."),
         useGroup,
       ),
-    h("div", { class: "check" }, toggle, h("label", { for: "review-md" }, "Review changes others make to CLAUDE.md")),
+    h("div", { class: "check" }, groupToggle, h("label", { for: "auto-accept-md" }, "Auto-accept CLAUDE.md changes")),
+    h("p", { class: "muted small" }, "Changes members make to this group's CLAUDE.md apply on everyone's device right away. Off: each member reviews them first."),
+    h("div", { class: "row flat-row" }, h("label", { class: "grow small", for: "review-device" }, deviceLine), choice),
     ask,
   ];
 }
 
-function reviewCard(id: GroupId): HTMLElement {
+function reviewCard(id: GroupId, isHost: boolean): HTMLElement {
   const title = h("h2", { id: "review-h" }, "CLAUDE.md changes");
   const body = h("div", null, spinner("Loading CLAUDE.md changes"));
   const card = h("section", { class: "card review", "aria-labelledby": "review-h" }, title, body);
@@ -614,7 +651,7 @@ function reviewCard(id: GroupId): HTMLElement {
     (r) => {
       const n = r.pending.length;
       replace(title, n > 0 ? ["Changes to review", h("span", { class: "tag warn" }, String(n))] : "CLAUDE.md changes");
-      replace(body, reviewBody(id, r));
+      replace(body, reviewBody(id, r, isHost));
     },
     // No CLAUDE.md from this group on this device: nothing to review.
     () => card.remove(),
@@ -699,7 +736,7 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
         body,
         g.lastError && h("div", { class: "error", role: "alert" }, g.lastError),
         hostNotice(g),
-        reviewCard(g.id),
+        reviewCard(g.id, g.isHost),
         pluginNotice(g.id),
         contentsCard(contents),
         jobsCard(g.id),

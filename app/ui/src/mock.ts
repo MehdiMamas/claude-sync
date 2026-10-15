@@ -308,7 +308,12 @@ let pending: ReviewItem[] = q.has("noReview")
         atUnix: now - 5400,
       },
     ];
-const review: ClaudeMdReview = { review: true, pending, declined: 1, differs: true };
+const review: ClaudeMdReview = { review: true, autoAccept: false, reviewOverride: null, pending, declined: 1, differs: true };
+const effectiveReview = () => review.reviewOverride ?? !review.autoAccept;
+const acceptWhenUnreviewed = () => {
+  review.review = effectiveReview();
+  if (!review.review) pending = [];
+};
 const syncReview = () => {
   review.pending = pending;
   if (groups[0]) groups[0].reviewPending = pending.length;
@@ -330,8 +335,13 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     return syncReview();
   },
   set_claude_md_review: (a) => {
-    review.review = a.on as boolean;
-    if (!review.review) pending = [];
+    review.reviewOverride = a.on as boolean | null;
+    acceptWhenUnreviewed();
+    return syncReview();
+  },
+  set_group_auto_accept_claude_md: (a) => {
+    review.autoAccept = a.on as boolean;
+    acceptWhenUnreviewed();
     return syncReview();
   },
   use_group_claude_md: () => {

@@ -365,9 +365,26 @@ pub async fn decide_claude_md(
     Ok(r)
 }
 
-/// The group setting "Review changes others make to CLAUDE.md".
+/// This device's choice on "Review changes others make to CLAUDE.md" (`None`: follow the group).
 #[tauri::command]
 pub async fn set_claude_md_review(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    group: GroupId,
+    on: Option<bool>,
+) -> Res<ClaudeMdReview> {
+    let e = ctx.engine()?;
+    let r = e
+        .set_claude_md_review(&group, on)
+        .await
+        .map_err(guard::logged("CLAUDE.md review"))?;
+    background::refresh_status(&app);
+    Ok(r)
+}
+
+/// The group setting "Auto-accept CLAUDE.md changes" (needs push access).
+#[tauri::command]
+pub async fn set_group_auto_accept_claude_md(
     app: AppHandle,
     ctx: CtxState<'_>,
     group: GroupId,
@@ -375,7 +392,7 @@ pub async fn set_claude_md_review(
 ) -> Res<ClaudeMdReview> {
     let e = ctx.engine()?;
     let r = e
-        .set_claude_md_review(&group, on)
+        .set_group_auto_accept_claude_md(&group, on)
         .await
         .map_err(guard::logged("CLAUDE.md review"))?;
     background::refresh_status(&app);

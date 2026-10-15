@@ -62,11 +62,13 @@ schedules.json          scheduled Claude Code jobs (§17); repo only, never plac
   "schema": 1,
   "name": "Mehdi & friends",
   "members": ["MehdiMamas", "friend-login"],
-  "sync": { "settings": true, "claudeMd": true, "skills": true, "agents": true, "commands": true, "outputStyles": true, "plugins": true }
+  "sync": { "settings": true, "claudeMd": true, "skills": true, "agents": true, "commands": true, "outputStyles": true, "plugins": true },
+  "autoAcceptClaudeMd": true
 }
 ```
 
 - The host is whoever owns the repo. It is not stored in the file, so a repo transfer moves the host role without edits.
+- `autoAcceptClaudeMd` (default `true`; absent means true) is the group's "Auto-accept CLAUDE.md changes" (§7a). Only the host changes it.
 - `members` is the list of GitHub logins that should have access. Logins compare case-insensitively.
 - Unknown keys are kept on rewrite. A `schema` newer than the app knows means read-only until the app updates.
 
@@ -160,7 +162,7 @@ Moves the merged group state into `~/.claude` without touching anything it does 
 
 ## 7a. Reviewing changes to a group's CLAUDE.md
 
-A person can be in several groups, and a line from one group's `CLAUDE.md` may be copied into another. What other people do to a group's `CLAUDE.md` must never silently change what this user's Claude reads. So by default every line someone else adds or removes waits until the user accepts or declines it.
+A person can be in several groups, and a line from one group's `CLAUDE.md` may be copied into another. What other people do to a group's `CLAUDE.md` must never silently change what this user's Claude reads. The group decides how that goes (the switch below). Where review is on, every line someone else adds or removes waits until the user accepts or declines it; the default, auto-accept, applies other members' changes at once, so a group of people who trust each other does not click through every line.
 
 **Items.** When a sync finds that the group's `CLAUDE.md` changed, the change is split into items: one block of added lines, or one block of removed lines, from one commit. Each item records its author (the GitHub login of the commit), the commit, its message and time, and up to two lines of context on each side. Items are applied by content, not by line number: a removal finds its lines, an addition goes next to the lines it followed. An item that has nothing left to do (someone else already made the same change) is dropped.
 
@@ -170,7 +172,7 @@ A person can be in several groups, and a line from one group's `CLAUDE.md` may b
 - A mix: the app reads `CLAUDE.md` at each commit (at most 20) and splits the change per commit, so the user's own steps apply and the others' wait. Past 20 commits, or when one of them cannot be read, the whole change is attributed to the last other member and waits.
 - The history cannot be read at all: the change waits as "Someone"'s. Nothing applies unasked.
 
-**State.** Per group in `~/.claude-sync/groups/<owner>__<repo>/claude-md-review.json` (`format: 1`, written atomically): `group` (the group's text as last seen), `accepted` (the group's text with this user's decisions applied), the pending items, the declined items (at most 500 kept), and the `review` switch. The copy that Claude Code imports holds `accepted`. The file watcher ignores the review file, and local edits (§7) are measured against `accepted`, so a declined line never shows as a local edit.
+**State.** Per group in `~/.claude-sync/groups/<owner>__<repo>/claude-md-review.json` (`format: 2`, written atomically): `group` (the group's text as last seen), `accepted` (the group's text with this user's decisions applied), the pending items, the declined items (at most 500 kept), and this device's `review` choice (`null`: follow the group; format 1 files, which could not tell a choice from the old default, load as `null`). The copy that Claude Code imports holds `accepted`. The file watcher ignores the review file, and local edits (§7) are measured against `accepted`, so a declined line never shows as a local edit.
 
 **Accept and decline.** Accept patches the item into `accepted` and the copy. Decline leaves both alone and remembers the item: the app never asks about it again, and the next change in the same place is a new item. A deleted line the user declined stays in their copy. A line the user declined to add stays out.
 
@@ -178,7 +180,7 @@ A person can be in several groups, and a line from one group's `CLAUDE.md` may b
 
 **The user's own edits.** An unshared edit of the copy stays; an accepted item is patched into it. Undo (§7) returns the copy to `accepted`, not to the group's text. **Use the group's version** (group page, shown when the copy differs from the group's text and nothing is pending) sets `accepted` and the copy to the group's text and forgets the declined items. **Keep local** stops managing the copy, so nothing is reviewed for it; the group's text is still recorded as seen.
 
-**The switch.** "Review changes others make to CLAUDE.md" on the group page, on by default. Off, everyone's changes apply at once, as before. Turning it off with items pending accepts them, after the app asks.
+**The switch.** "Auto-accept CLAUDE.md changes" on the group page is the group's setting, `autoAcceptClaudeMd` in `claude-sync.json`, on by default (an absent key counts as on, so existing groups get it as members update). Only the host can change it (`Error::HostOnly` for a member); it is committed as `<login>@<device>: auto-accept CLAUDE.md on` or `off` (fetch and try again on a concurrent push, §6). On: every device applies other members' changes to its copy at once. Off: each member reviews them first, as above. Each device can override this on the group page ("On this device": follow the group, review first, or auto-accept); the choice is kept only on that device. A device reviews when its choice says so, else when the group's setting is off; if the group file cannot be read, auto-accept applies. When review turns off for a device, by its own choice or because the group turned on auto-accept, the items pending are accepted in that sync (the app asks first when the user changes their own choice). Past declines stay declined.
 
 **Telling the user.** A sync that finds new items sends one notification per group ("ana changed Friends's CLAUDE.md: 1 addition, 1 removal to review"). The tray tooltip and the nav show the number waiting, the Groups list tags the group, and the group page lists each item with its author, time, commit message and lines, with Accept and Decline (and Accept all / Decline all).
 
