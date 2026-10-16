@@ -4,7 +4,7 @@ import { pickSprint } from "../lib/milestone.ts";
 import { keepTail, redact } from "../lib/redact.ts";
 
 describe("redact", () => {
-  // Same cases as lib/secrets.sh, plus Bearer.
+  // Same cases as crates/core/src/secrets.rs, plus Bearer.
   const cases: Array<[string, string]> = [
     ["github_pat", "github_pat_" + "A1_".repeat(20)],
     ["sk-ant", "sk-ant-api03-" + "x".repeat(30)],

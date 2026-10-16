@@ -13,6 +13,7 @@ pub mod jobs;
 pub mod logging;
 pub mod members;
 pub mod merge;
+pub mod migrate;
 pub mod notifications;
 pub mod paths;
 pub mod personal;

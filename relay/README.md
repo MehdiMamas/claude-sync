@@ -73,7 +73,7 @@ Body (JSON, at most 4.5 MB, the Vercel limit):
 
 The screenshot type is checked by its magic bytes. The app should send at most the last ~500 KB of logs so the whole body stays under 4.5 MB.
 
-1. Title, description and logs are redacted again (the patterns of `lib/secrets.sh` plus `Bearer <token>`), then the logs are cut to their last 200 KB.
+1. Title, description and logs are redacted again (the patterns of `crates/core/src/secrets.rs` plus `Bearer <token>`), then the logs are cut to their last 200 KB.
 2. A screenshot is committed to branch `feedback-assets` at `feedback/<yyyy-mm>/<uuid>.png` (or `.jpg`). The branch is created from the default branch head when missing.
 3. GitHub refuses issue bodies over 65,536 characters, so logs that do not fit are also committed next to the screenshot as `feedback/<yyyy-mm>/<uuid>.log`, and the issue shows their end plus a link to the file.
 4. The issue goes to `FEEDBACK_REPO`, opened with the caller's token, so GitHub shows the user as its author. Its body has the description, kind, app version, OS, the screenshot (`https://github.com/<repo>/blob/feedback-assets/<path>?raw=true`) and the logs in a collapsed `<details>` block.

@@ -15,6 +15,7 @@ mod tray;
 mod updates;
 mod window;
 
+use claude_sync_core::notifications::Kind;
 use claude_sync_core::Paths;
 use ctx::Ctx;
 use std::sync::Arc;
@@ -70,8 +71,28 @@ fn first_run_autostart(app: &tauri::AppHandle, ctx: &Ctx) {
     }
 }
 
+/// Move a v0 clone out of `~/.claude-sync` (§10) before the app reads its state.
+/// Skipped when `CLAUDE_SYNC_HOME` points somewhere else. A failure is only logged:
+/// the app then keeps its state in `~/.claude-sync/app`.
+fn migrate_v0() -> Option<claude_sync_core::migrate::Migrated> {
+    let set = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty());
+    if set("CLAUDE_SYNC_HOME").is_some() {
+        return None;
+    }
+    let home = std::env::home_dir()?;
+    let claude_home = set("CLAUDE_HOME").map_or_else(|| home.join(".claude"), Into::into);
+    match claude_sync_core::migrate::migrate_v0(&home, &claude_home) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("claude-sync: could not move the v0 setup: {e}");
+            None
+        }
+    }
+}
+
 fn main() {
     guard::install_panic_hook();
+    let migrated = migrate_v0();
     let paths = match Paths::from_env() {
         Ok(p) => p,
         Err(e) => {
@@ -184,6 +205,9 @@ fn main() {
             }
             tray::build(&handle)?;
             notify::init(&handle);
+            if let Some(m) = &migrated {
+                notify::show(&handle, Kind::Other, None, "Old setup moved", &m.message());
+            }
             background::refresh_status(&handle);
             background::start(&handle);
             jobs::reconcile_soon(&handle, true);

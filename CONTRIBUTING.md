@@ -25,7 +25,6 @@ pnpm -C relay test
 pnpm -C relay typecheck
 pnpm -C app/ui test     # the UI's unit tests (activity feed parsing)
 pnpm -C app/ui build
-bash tests/run.sh     # the old bash CLI's tests
 ```
 
 ## Pull requests

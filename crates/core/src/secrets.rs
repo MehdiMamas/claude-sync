@@ -1,4 +1,4 @@
-//! Secret scan and redaction (§9). Patterns ported from v0 lib/secrets.sh.
+//! Secret scan and redaction (§9). Patterns come from the v0 CLI, which is retired.
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -127,7 +127,7 @@ pub(crate) mod tests {
         std::iter::repeat_n(c, n).collect()
     }
 
-    /// One sample per v0 pattern (tests/secrets-block.test.sh).
+    /// One sample per v0 pattern.
     pub(crate) fn samples() -> Vec<(String, &'static str)> {
         vec![
             (format!("sk-ant-{}", rep('a', 20)), "sk-ant"),

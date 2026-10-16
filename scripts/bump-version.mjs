@@ -8,7 +8,6 @@
 // The file list and patterns are the same as $VersionFiles in scripts/release.ps1: keep them
 // in step. The app and the core take their version from [workspace.package]
 // (version.workspace = true) and tauri.conf.json has none, so Tauri uses the Cargo one.
-// bin/claude-sync (the v0 shell CLI) has its own version and is not part of the app release.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
