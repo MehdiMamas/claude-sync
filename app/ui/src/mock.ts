@@ -575,6 +575,8 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     notifications = [];
     notificationsChanged();
   },
+  notification_permission: () => "granted",
+  open_notification_settings: () => {},
   test_notification: () => {
     notifications.unshift({ id: nextNotification++, time: Math.floor(Date.now() / 1000), title: "Test notification", body: "Notifications from claude-sync show up like this.", kind: "other", group: null, read: false });
     notificationsChanged();

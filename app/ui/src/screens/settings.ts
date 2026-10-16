@@ -172,6 +172,14 @@ function form(s: Settings): HTMLElement[] {
   const test = h("button", null, "Send a test notification");
   test.addEventListener("click", () => busy(test, "Sending…", () => api.testNotification()));
 
+  const blocked = h(
+    "p",
+    { class: "muted small", hidden: true },
+    "macOS is blocking notifications from claude-sync. ",
+    h("button", { type: "button", onclick: () => api.openNotificationSettings() }, "Open notification settings"),
+  );
+  void api.notificationPermission().then((p) => (blocked.hidden = p !== "denied"));
+
   const signOut = h("button", { class: "danger" }, "Sign out");
   signOut.addEventListener("click", () =>
     busy(signOut, "Signing out…", async () => {
@@ -203,6 +211,7 @@ function form(s: Settings): HTMLElement[] {
         h("a", { href: "#/notifications" }, "Notifications"),
         ".",
       ),
+      blocked,
       h("div", { class: "actions" }, test),
     ),
     h(

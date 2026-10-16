@@ -43,11 +43,28 @@ pub fn show(app: &AppHandle, kind: Kind, group: Option<&GroupId>, title: &str, b
         tracing::warn!("notification not saved to the history: {e}");
     }
     if ctx.prefs().desktop_notifications {
-        if let Err(e) = app.notification().builder().title(title).body(body).show() {
-            tracing::warn!("notification failed: {e}");
-        }
+        desktop(app, title, body);
     }
     changed(app);
+}
+
+/// macOS goes through `UNUserNotificationCenter` (the plugin's API never gets permission).
+#[cfg(target_os = "macos")]
+fn desktop(app: &AppHandle, title: &str, body: &str) {
+    if crate::mac_notify::show(title, body).is_err() {
+        plugin(app, title, body);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn desktop(app: &AppHandle, title: &str, body: &str) {
+    plugin(app, title, body);
+}
+
+fn plugin(app: &AppHandle, title: &str, body: &str) {
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        tracing::warn!("notification failed: {e}");
+    }
 }
 
 /// The history changed (new entry, marked read, cleared): update the tray and the window.
@@ -61,6 +78,8 @@ pub fn changed(app: &AppHandle) {
 /// screen when a desktop notification is clicked.
 pub fn init(app: &AppHandle) {
     changed(app);
+    #[cfg(target_os = "macos")]
+    crate::mac_notify::init(app);
     let a = app.clone();
     let registered = app.notification().on_action(move |action| {
         if action.action_id() == "tap" {
