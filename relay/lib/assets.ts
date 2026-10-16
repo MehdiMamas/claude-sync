@@ -34,3 +34,14 @@ export function findBundle(
   }
   return null;
 }
+
+/** The Windows installer and the macOS .dmg of a release, for people (the install page). */
+export function findInstallers(
+  assets: readonly ReleaseAsset[],
+  version: string,
+): { windows: ReleaseAsset | null; macos: ReleaseAsset | null } {
+  return {
+    windows: assets.find((a) => a.name === `claude-sync_${version}_windows_x86_64-setup.exe`) ?? null,
+    macos: assets.find((a) => a.name === `claude-sync_${version}_darwin_universal.dmg`) ?? null,
+  };
+}

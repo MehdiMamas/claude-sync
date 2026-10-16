@@ -18,6 +18,8 @@ pub const SCHEDULES: &str = "schedules.json";
 pub const PLUGINS: &str = "plugins";
 /// The largest plugin file that syncs. Bigger files are reported and skipped.
 pub const MAX_PLUGIN_FILE: usize = 1 << 20;
+/// The relay's install page, linked from the group README.
+pub const INSTALL_URL: &str = "https://claude-sync-relay.vercel.app/install";
 /// A security note shown wherever someone joins a group, and in the group README.
 pub const PLUGINS_WARNING: &str =
     "Plugins in this group run code on every member's machine; only join groups whose members you trust.";
@@ -233,7 +235,7 @@ pub fn readme(name: &str, host: &str) -> String {
          It is managed by the claude-sync app. Do not edit it by hand unless you know what you are doing.\n\n\
          ## Join\n\n\
          1. Accept the GitHub invitation to this repo (the host adds you from the app).\n\
-         2. Install claude-sync and sign in with GitHub.\n\
+         2. Install claude-sync from {INSTALL_URL} (sign in with GitHub there), then sign in with GitHub in the app.\n\
          3. The app finds this group and sets it up on your machine.\n\n\
          ## What is shared\n\n\
          - `CLAUDE.md`: shared instructions, imported into your `~/.claude/CLAUDE.md`. Changes another member makes wait until you accept them in the app.\n\
@@ -414,5 +416,10 @@ mod tests {
         assert!(r.contains("`plugins/`"));
         assert!(r.contains(PLUGINS_WARNING));
         assert!(r.contains("`schedules.json`"));
+    }
+
+    #[test]
+    fn readme_links_the_install_page() {
+        assert!(readme("n", "h").contains(INSTALL_URL));
     }
 }

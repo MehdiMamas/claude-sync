@@ -278,12 +278,15 @@ Plain TypeScript functions, no framework. Env:
 | `RELEASES_REPO` | `MehdiMamas/claude-sync` |
 | `FEEDBACK_REPO` | Where feedback issues go; defaults to `RELEASES_REPO` |
 | `BLOCKED_GITHUB_USERS` | Comma-separated logins refused with 403 (abuse) |
+| `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `INSTALL_SESSION_SECRET` | The install page's GitHub sign-in (web flow of the same OAuth App the app uses; its callback URL is `<relay>/api/install/callback`) and the key that signs its session cookie. Unset: the page says sign-in is not configured |
 
 **Auth.** Every call (except `/api/health`) carries the user's GitHub token: `Authorization: Bearer <token>`. The relay calls `GET /user` to get the login. Any GitHub account may use the relay unless its login is in `BLOCKED_GITHUB_USERS`. The login is cached in memory for 10 minutes. `/api/feedback` also uses the token to open the issue as the user. The user token is never logged or stored. Each login gets 120 calls per hour across all endpoints (`429` with `Retry-After` past that).
 
 **`GET /api/update?target=<windows|darwin>&arch=<x86_64|aarch64>&current_version=<semver>`.** Reads the latest non-draft release of `RELEASES_REPO`. Returns `204` if not newer, else the Tauri updater JSON (`version`, `notes`, `pub_date`, `url`, `signature`). `signature` is the contents of the matching `.sig` asset. `url` is `/api/download/<asset-id>` on the relay.
 
 **`GET /api/download/<asset-id>`.** Asks GitHub for the asset with `Accept: application/octet-stream` and `redirect: manual`, then returns that `302` to the short-lived signed URL. Bytes never pass through Vercel.
+
+**`GET /install`.** A self-contained HTML page. Signed out: **Sign in with GitHub** (`/api/install/login` → GitHub OAuth web flow, scope `read:user`, random `state` in a 10-minute HttpOnly cookie; `/api/install/callback` checks it, exchanges the code, reads the login with `GET /user`, discards the token and sets a 1-day session cookie signed with HMAC-SHA256 and `INSTALL_SESSION_SECRET`). Signed in and not in `BLOCKED_GITHUB_USERS`: the version of the latest release, buttons for its Windows `-setup.exe` and macOS `.dmg` (served by `/api/download/<asset-id>`, which accepts the session cookie as well as a bearer token) and the macOS first-run steps (Done, then Privacy & Security, Open Anyway; fallback `xattr -dr com.apple.quarantine /Applications/claude-sync.app`). A blocked login is told it isn't on the list yet.
 
 **`POST /api/feedback`.** JSON `{ title, description, kind: "bug"|"idea", appVersion, os, logs, screenshot? (base64 PNG or JPEG, ≤ 3 MB) }`.
 1. Redact `logs` again (§9) and cut them to the last 200 KB.
@@ -312,7 +315,7 @@ Rate limit per login: 5 feedback posts per hour (in memory; good enough for a ho
 ## 14. First install for a friend
 
 1. The host adds the friend's login in the app. The friend gets GitHub's invitation email.
-2. The group repo's README (generated) links to the relay's install page. Until that page exists, the host sends the installer directly.
+2. The group repo's README (generated) links to the relay's install page (`<relay>/install`, §12): the friend signs in with GitHub there and downloads the Windows or macOS build.
 3. The friend installs, signs in with GitHub, sees the pending invitation, clicks **Accept**. The app does the rest.
 
 ## 15. Testing

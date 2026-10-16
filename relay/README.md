@@ -97,6 +97,18 @@ If storing the screenshot fails, the issue is still filed and says so. Rate limi
 
 The issue, the screenshot and the logs are public when `FEEDBACK_REPO` is a public repo, and the issue shows the user's GitHub account as its author. The app says so on the feedback form, and logs are only sent when the user ticks the box.
 
+## Install page
+
+`GET /install` is a self-contained page for people: **Sign in with GitHub**, then buttons for the latest release's Windows `-setup.exe` and macOS `.dmg`, the version, and the macOS first-run steps (the build is not notarized). The group README links to it.
+
+- `GET /api/install/login` redirects to GitHub's OAuth web flow (scope `read:user` only) with a random `state` in a 10-minute HttpOnly, Secure, SameSite=Lax cookie.
+- `GET /api/install/callback` checks `state` against the cookie, exchanges the code with the client secret, reads the login with `GET /user`, **discards the token** (never stored or logged) and sets the `cs_install` session cookie: `<login + expiry>.<HMAC-SHA256 with INSTALL_SESSION_SECRET>`, 1 day, HttpOnly, Secure, SameSite=Lax.
+- `GET /api/install/logout` clears it. The download buttons use `/api/download/<asset-id>`, which also accepts that cookie instead of a bearer token.
+- The relay has no allowlist any more (see above), so "allowed" means "not in `BLOCKED_GITHUB_USERS`". A blocked login sees "isn't on the list yet. Ask the person who invited you."
+- If any of the three env vars is missing, the page says install sign-in is not configured.
+
+**Reusing the device-flow OAuth App.** The app's sign-in uses the device flow of a GitHub OAuth App; that App can be reused for the web flow. An OAuth App has one callback URL, and the device flow ignores it, so set **Authorization callback URL** to `https://claude-sync-relay.vercel.app/api/install/callback`. Generate a client secret on the App's page and put it in `GITHUB_OAUTH_CLIENT_SECRET`; `GITHUB_OAUTH_CLIENT_ID` is the App's client ID (the same one the app uses).
+
 ## Release assets
 
 `scripts/release.ps1` and the macOS release workflow must name the assets exactly like this. `<version>` is the release version without the leading `v` (tag `v0.3.0` → `0.3.0`).
@@ -119,6 +131,9 @@ A darwin request first looks for `claude-sync_<version>_darwin_<arch>.app.tar.gz
 | `RELEASES_REPO` | yes | `MehdiMamas/claude-sync` |
 | `FEEDBACK_REPO` | no | Where feedback issues go. Defaults to `RELEASES_REPO` |
 | `BLOCKED_GITHUB_USERS` | no | Comma-separated logins refused with 403. Everyone else with a valid GitHub token may use the relay |
+| `GITHUB_OAUTH_CLIENT_ID` | for `/install` | Client ID of the GitHub OAuth App (see "Install page") |
+| `GITHUB_OAUTH_CLIENT_SECRET` | for `/install` | Its client secret. Used only to exchange the sign-in code |
+| `INSTALL_SESSION_SECRET` | for `/install` | Random string, 32+ bytes (`openssl rand -base64 48`), signs the 1-day session cookie |
 | `RELAY_PUBLIC_URL` | no | Public base URL used in `/api/update` download links, e.g. `https://claude-sync-relay.vercel.app`. Defaults to the request's origin |
 
 ## The relay token (fine-grained PAT)
