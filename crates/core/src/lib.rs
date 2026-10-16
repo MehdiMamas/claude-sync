@@ -9,6 +9,7 @@ pub mod engine;
 pub mod error;
 pub mod github;
 pub mod group;
+pub mod helper;
 pub mod jobs;
 pub mod logging;
 pub mod members;

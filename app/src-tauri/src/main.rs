@@ -196,6 +196,11 @@ fn main() {
             commands::open_job_file,
             commands::plugin_warnings,
             commands::retry_plugins,
+            commands::helper_status,
+            commands::helper_save_key,
+            commands::helper_remove_key,
+            commands::helper_test_key,
+            commands::helper_explain,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

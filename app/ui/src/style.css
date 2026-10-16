@@ -1040,3 +1040,15 @@ li.clash p {
   line-height: 1.2;
   font-size: 0.7rem;
 }
+.helper {
+  margin-top: 0.5rem;
+}
+.helper-out {
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--line);
+  white-space: pre-wrap;
+}
+.helper-out.error {
+  border-left-color: var(--danger, #c0392b);
+}
