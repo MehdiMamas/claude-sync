@@ -386,6 +386,34 @@ impl Engine {
         Ok(out)
     }
 
+    /// Put the joined groups in `order` (first wins collisions, §7) and apply every group again
+    /// in that order, so managed files, settings values and bundled marketplaces move to the new
+    /// winner. `order` must list exactly the joined groups. The new order is saved before the
+    /// apply, so a failed sync (offline) still keeps it; the error is in the report.
+    pub async fn reorder_groups(&self, order: Vec<GroupId>) -> crate::Result<SyncReport> {
+        let _busy = self.busy.lock().await;
+        let mut state = AppState::load(&self.paths)?;
+        let mut a: Vec<String> = state.groups.iter().map(|g| g.to_string()).collect();
+        let mut b: Vec<String> = order.iter().map(|g| g.to_string()).collect();
+        a.sort();
+        b.sort();
+        if a != b {
+            return Err(Error::Invalid(
+                "the new order must list exactly the joined groups".into(),
+            ));
+        }
+        let mut out = SyncReport::default();
+        if state.groups == order {
+            return Ok(out);
+        }
+        state.groups = order.clone();
+        state.save(&self.paths)?;
+        for id in &order {
+            out.groups.push(self.sync_group(id, None).await.0);
+        }
+        Ok(out)
+    }
+
     pub async fn groups(&self) -> crate::Result<Vec<GroupStatus>> {
         let state = AppState::load(&self.paths)?;
         Ok(state
@@ -1782,6 +1810,8 @@ mod tests {
         kept_in: HashMap<GroupId, BTreeSet<String>>,
         collide: BTreeSet<String>,
         removed: Vec<GroupId>,
+        /// The group order each `apply_group` call was given.
+        orders: Vec<Vec<GroupId>>,
     }
 
     impl StubApply {
@@ -1825,10 +1855,11 @@ mod tests {
             &self,
             _: &Paths,
             group: &GroupId,
-            _: &[GroupId],
+            order: &[GroupId],
             files: &FileSet,
         ) -> crate::Result<ApplyReport> {
             let mut st = self.st.lock().unwrap();
+            st.orders.push(order.to_vec());
             let mut report = ApplyReport::default();
             let old = st.local.remove(group).unwrap_or_default();
             let applied = st
@@ -2492,6 +2523,65 @@ mod tests {
         );
         assert!(bo.engine.groups().await.unwrap().is_empty());
         assert!(!bo.engine.paths.group_dir(&id).exists());
+    }
+
+    #[tokio::test]
+    async fn reorder_saves_the_order_and_applies_every_group_in_it() {
+        let (world, a, _, bo) = joined().await;
+        let (b, _) = group_repo(&world, &["cy", "bo"]);
+        bo.engine.join(&b).await.unwrap();
+        assert_eq!(
+            AppState::load(&bo.engine.paths).unwrap().groups,
+            [a.clone(), b.clone()]
+        );
+        bo.apply.st.lock().unwrap().orders.clear();
+
+        let report = bo
+            .engine
+            .reorder_groups(vec![b.clone(), a.clone()])
+            .await
+            .unwrap();
+        assert_eq!(
+            report
+                .groups
+                .iter()
+                .map(|g| g.id.clone())
+                .collect::<Vec<_>>(),
+            [b.clone(), a.clone()]
+        );
+        assert_eq!(
+            AppState::load(&bo.engine.paths).unwrap().groups,
+            [b.clone(), a.clone()]
+        );
+        assert_eq!(
+            bo.engine
+                .groups()
+                .await
+                .unwrap()
+                .iter()
+                .map(|g| g.id.clone())
+                .collect::<Vec<_>>(),
+            [b.clone(), a.clone()]
+        );
+        let orders = bo.apply.st.lock().unwrap().orders.clone();
+        assert!(!orders.is_empty());
+        assert!(orders.iter().all(|o| *o == [b.clone(), a.clone()]));
+
+        // Same order again: nothing to do. A list that is not the joined groups is refused.
+        assert!(bo
+            .engine
+            .reorder_groups(vec![b.clone(), a.clone()])
+            .await
+            .unwrap()
+            .groups
+            .is_empty());
+        assert!(bo.engine.reorder_groups(vec![a.clone()]).await.is_err());
+        assert!(bo
+            .engine
+            .reorder_groups(vec![a.clone(), a.clone()])
+            .await
+            .is_err());
+        assert_eq!(AppState::load(&bo.engine.paths).unwrap().groups, [b, a]);
     }
 
     #[tokio::test]

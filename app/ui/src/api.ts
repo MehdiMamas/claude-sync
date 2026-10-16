@@ -423,6 +423,7 @@ export const api = {
   join: (group: GroupId) => call<GroupStatus>("join", { group }),
   addMember: (group: GroupId, login: string) => call<void>("add_member", { group, login }),
   removeMember: (group: GroupId, login: string) => call<void>("remove_member", { group, login }),
+  reorderGroups: (order: GroupId[]) => call<SyncReport>("reorder_groups", { order }),
   leaveGroup: (group: GroupId) => call<void>("leave_group", { group }),
   localEdits: () => call<LocalEdit[]>("local_edits"),
   resolveEdit: (edit: LocalEdit, action: EditAction) => call<void>("resolve_edit", { edit, action }),

@@ -217,6 +217,23 @@ pub async fn leave_group(app: AppHandle, ctx: CtxState<'_>, group: GroupId) -> R
     Ok(())
 }
 
+/// Put the joined groups in a new order (first wins collisions, §7) and apply them again.
+#[tauri::command]
+pub async fn reorder_groups(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    order: Vec<GroupId>,
+) -> Res<SyncReport> {
+    let e = ctx.engine()?;
+    let _running = ctx.sync_lock.lock().await;
+    let report = guard::call_async("reorder groups", e.reorder_groups(order)).await?;
+    if report.groups.iter().any(|g| g.apply.plugins_changed) {
+        background::plugins_changed(&app, None);
+    }
+    let _ = app.emit("sync-report", &report);
+    Ok(report)
+}
+
 #[tauri::command]
 pub fn local_edits(ctx: CtxState) -> Res<Vec<LocalEdit>> {
     let e = ctx.engine()?;

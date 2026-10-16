@@ -147,8 +147,8 @@ Moves the merged group state into `~/.claude` without touching anything it does 
 
 - **Managed files are copies, not links.** Copies work the same on every OS, need no admin rights, and let the app see local edits. `~/.claude-sync/manifest.json` records every file the app wrote: path, group, SHA-256.
 - Targets: `skills/<name>/**` → `~/.claude/skills/<name>/**`; `agents/*.md`, `commands/*.md`, `output-styles/*.md` → the same folder under `~/.claude`; `plugins/<marketplace>/**` → `~/.claude-sync/marketplaces/<marketplace>/**` (outside `~/.claude`, so Claude Code's own plugin cache is never touched).
-- **Ownership rules.** The app writes or deletes a path only if the manifest says it owns it. A path that exists but is not in the manifest belongs to the user: the group file is skipped and reported as a collision. Two groups that ship the same path: the group joined first wins and the other is reported.
-- **Marketplaces.** The folder under `~/.claude-sync/marketplaces/` is the app's, so a stray file in the way is backed up and replaced, not reported. A marketplace belongs to the first group that placed it: if a second joined group ships the same name, that group gets a collision on `plugins/<marketplace>` and none of its files for it are placed. When the owner leaves, the next sync of the other group takes it over. The manifest records the owner of each marketplace and the `settings.json` entry the app set for it (§8).
+- **Ownership rules.** The app writes or deletes a path only if the manifest says it owns it. A path that exists but is not in the manifest belongs to the user: the group file is skipped and reported as a collision. Two groups that ship the same path: the group higher in the list (§10) wins and the other is reported.
+- **Marketplaces.** The folder under `~/.claude-sync/marketplaces/` is the app's, so a stray file in the way is backed up and replaced, not reported. A marketplace belongs to the group highest in the list that ships it: a lower group gets a collision on `plugins/<marketplace>` and none of its files for it are placed. When the owner leaves, or another group is moved above it (§10), the next sync of the other group takes it over. The manifest records the owner of each marketplace and the `settings.json` entry the app set for it (§8).
 - **Reload.** Claude Code reads plugins when a session starts. When an apply, join or leave changes a plugin file or a marketplace entry, the sync report carries `pluginsChanged` and the app says: "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them."
 - **CLAUDE.md.** Each device keeps its own copy of the group's `CLAUDE.md` at `~/.claude-sync/groups/<owner>__<repo>/CLAUDE.md`. Changes other members make reach it only when the user accepts them (§7a). `~/.claude/CLAUDE.md` gets one managed block at the top, with one import line per group:
   ```
@@ -197,7 +197,7 @@ Claude reads every group's `CLAUDE.md` and the user's own text together, and eve
 - Each `CLAUDE.md` Claude reads here (each group's copy as accepted, §7a, and the user's own text outside the managed block) is cut into rule lines. Headings, code blocks, import lines, HTML comments, table rows and lines of fewer than two words are left out.
 - **Duplicate:** two lines from different sources that are equal once case, list markers, punctuation and spacing are ignored, or equal apart from words that only set strength or direction ("always", "do", "must", "please"), with the same sense ("Never push to main" and "Do not push to main").
 - **Contradiction:** two such lines that are equal apart from those words, where one is negated and the other is not ("Always use tabs" and "Never use tabs").
-- **Setting:** two groups' `settings.shared.json` set the same plain value (JSON pointer) to different values. The group joined first wins on apply (§8), so its side is marked "applies now". Arrays are merged by union and never clash. A value kept local for a group (below) is not applied, so it no longer clashes.
+- **Setting:** two groups' `settings.shared.json` set the same plain value (JSON pointer) to different values. The group higher in the list wins on apply (§8), so its side is marked "applies now". Arrays are merged by union and never clash. A value kept local for a group (below) is not applied, so it no longer clashes.
 
 At most 200 clashes are listed. Each has an id that stays the same while both sides do.
 
@@ -218,7 +218,7 @@ At most 200 clashes are listed. Each has an id that stays the same while both si
 - Objects merge key by key. Arrays get the shared items they lack, appended after local items. For plain values, the shared value wins.
 - `~/.claude-sync/settings-owned.json` records, per group, every value the app set (JSON pointer and value) and every array item it added.
 - A key or array item the group no longer has is removed locally **only if** the local value still equals what the app set. If the user changed it, it stays, and the app offers to share the user's value with the group.
-- Two groups that set the same plain value differently: the group joined first wins and the clash is listed on both group pages (§7b), where the user can pick the other group's value instead.
+- Two groups that set the same plain value differently: the group higher in the list wins (§10) and the clash is listed on both group pages (§7b), where the user can pick the other group's value instead.
 - If either file is not one JSON object, nothing is merged and the app says so. If the result equals the current file, nothing is written.
 - Never shared, even if present in `settings.shared.json`: `apiKeyHelper`, `env` values that the secret scan flags, and `hooks` whose commands contain absolute paths (reported, not applied).
 
@@ -236,7 +236,7 @@ Ported from v0 (`lib/secrets.sh`, `SPEC.md` §7): `github_pat_…`, `sk-ant-…`
 
 ```
 ~/.claude-sync/
-  state.json             signed-in login, device name, groups joined (order matters), poll interval, paused
+  state.json             signed-in login, device name, groups joined (the order is the priority, below), poll interval, paused
   manifest.json          managed files and marketplace owners (§7)
   settings-owned.json    settings ownership (§8)
   groups/<owner>__<repo>/base/   base snapshot (§6)
@@ -251,13 +251,15 @@ Ported from v0 (`lib/secrets.sh`, `SPEC.md` §7): `github_pat_…`, `sk-ant-…`
   conflicts/  backups/  logs/   (logs/jobs/<id>/<UTC stamp>.log: job output, §17)
 ```
 
+**Group order.** `groups` in `state.json` is the priority list: new groups are added at the end, and when two groups set the same file, settings value or marketplace, the one higher in the list wins (§7, §8). The user changes the order with the up and down buttons on the Groups screen (the `reorder_groups` command, `Engine::reorder_groups`). It refuses a list that is not exactly the joined groups, saves `state.json` (write-then-rename), then syncs every group again in the new order, so the new winner takes over the files, the settings values it was losing (a group's claim on a value it no longer wins is dropped) and the marketplace, and the old winner is reported as a collision. If that sync fails (offline), the order is kept and the next sync finishes it. Personal memory (§16) is not a group and has no place in the list.
+
 v0 used `~/.claude-sync/` as a git clone of the personal repo. The app checks for a `.git` folder there first and, if found, leaves it alone and stores its own state in `~/.claude-sync/app/` until personal sync is migrated.
 
 ## 11. App
 
 - **Tauri 2**, Rust backend plus a plain TypeScript UI. Tray icon with: status, Sync now, Open, Notifications (N) while N are unread, Pause, Send feedback, Quit. Single instance. Starts at login (autostart plugin, on by default, can be turned off).
 - Closing the window destroys the webview, so the idle app is just the Rust process (target: under 30 MB RAM idle, under 15 MB installer).
-- Screens: Sign in (device code), Groups (list, status, last sync), Group (what the group gives this device, plugins that failed to install (§18), scheduled jobs (§17), members, invite by GitHub login (host only; members see a line saying only the host can change the group), pending invitations, recent changes as an activity feed parsed from commit messages in `app/ui/src/activity.ts`, conflicts, leave), Notifications, Settings (device name, poll interval, start at login, pause, desktop notifications, personal memory §16), Feedback.
+- Screens: Sign in (device code), Groups (list in priority order with up/down buttons, status, last sync; the note "Groups higher in the list win when two groups set the same thing." shows when there are two or more), Group (what the group gives this device, plugins that failed to install (§18), scheduled jobs (§17), members, invite by GitHub login (host only; members see a line saying only the host can change the group), pending invitations, recent changes as an activity feed parsed from commit messages in `app/ui/src/activity.ts`, conflicts, leave), Notifications, Settings (device name, poll interval, start at login, pause, desktop notifications, personal memory §16), Feedback.
 - **Notifications.** Everything the app tells the user goes through one function, `notify::show(app, kind, group, title, body)` (`app/src-tauri/src/notify.rs`); new features call it rather than the notification plugin. It:
   1. records the notification in `~/.claude-sync/notifications.json` (`crates/core/src/notifications.rs`): id, UTC time, title, body, kind (`update`, `group`, `plugins`, `local-edit`, `job`, `personal`, `other`), the group it is about if any, and read/unread. Newest first, at most 200; read ones older than 30 days are dropped. A missing or corrupt file is an empty history (a corrupt one is kept as `notifications.json.bad`).
   2. shows the desktop notification, unless **Show desktop notifications** is off in Settings. The history is kept either way.

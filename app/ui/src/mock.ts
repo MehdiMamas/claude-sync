@@ -9,7 +9,7 @@
 // `?noConflicts` shows no rules clashing between groups; `?noPush` makes "Copy to another
 // group" find the other group read-only.
 // The first group has one job waiting for consent, one accepted job and a plugin warning.
-import type { Backend, Clash, ClashSide, ClashSource, ClaudeMdReview, ClaudeMdShare, CommitInfo, CopyPreview, CopyRequest, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, Notification, PersonalStatus, ReviewItem } from "./api";
+import { groupKey, type Backend, Clash, ClashSide, ClashSource, ClaudeMdReview, ClaudeMdShare, CommitInfo, CopyPreview, CopyRequest, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, Notification, PersonalStatus, ReviewItem } from "./api";
 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
@@ -430,6 +430,11 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   group_contents: (a) => ((a.group as GroupId).owner === "acme" ? acmeContents : mehdiContents),
   recent_commits: (a) => (q.has("noHistory") ? [] : commits.slice(0, Number(a.limit ?? 20))),
   sync_now: () => ({ groups: [] }),
+  reorder_groups: (a) => {
+    const order = a.order as GroupId[];
+    groups.sort((x, y) => order.findIndex((o) => groupKey(o) === groupKey(x.id)) - order.findIndex((o) => groupKey(o) === groupKey(y.id)));
+    return { groups: [] };
+  },
   jobs: (a) => ((a.group as GroupId).owner === "acme" ? emptyJobs : mehdiJobs),
   accept_job: (a) => {
     Object.assign(job(a), { accepted: true, changed: false, enabled: true, registered: true });

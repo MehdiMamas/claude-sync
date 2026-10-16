@@ -444,6 +444,8 @@ fn apply_settings(
         .collect();
     let rank = |g: &str| order.iter().position(|x| x.to_string() == g);
     let my_rank = rank(&gkey);
+    // Pointers an earlier group owns: this group may have owned them before a reorder.
+    let mut lost: Vec<String> = Vec::new();
     for (g, o) in &owned_all {
         let earlier = match (rank(g), my_rank) {
             (Some(a), Some(b)) => a < b,
@@ -451,6 +453,7 @@ fn apply_settings(
             _ => false,
         };
         if g != &gkey && earlier {
+            lost.extend(o.values.keys().cloned());
             filters.extend(
                 o.values
                     .keys()
@@ -475,7 +478,10 @@ fn apply_settings(
             return Ok(());
         }
     };
-    let merged = settings::merge(&local, &shared, &prev)?;
+    let mut merged = settings::merge(&local, &shared, &prev)?;
+    for p in &lost {
+        merged.owned.values.remove(p);
+    }
     skipped.extend(merged.skipped);
     if merged.changed {
         if let Some(old) = &existing {

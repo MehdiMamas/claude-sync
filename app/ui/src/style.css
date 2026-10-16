@@ -1009,3 +1009,19 @@ li.clash p {
     gap: 0.1rem;
   }
 }
+
+.group-item {
+  display: flex;
+  align-items: center;
+}
+.reorder {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0 0 0 0.6rem;
+}
+.icon-btn {
+  padding: 0 0.4rem;
+  line-height: 1.2;
+  font-size: 0.7rem;
+}

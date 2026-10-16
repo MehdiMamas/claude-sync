@@ -12,16 +12,23 @@ const PLUGINS_WARNING =
 let liveInvites: (() => void) | null = null;
 subscribe(() => liveInvites?.());
 
-function groupRow(g: GroupStatus): HTMLElement {
+function groupRow(g: GroupStatus, pos: number, all: GroupStatus[], move: (from: number, to: number) => void): HTMLElement {
   const you = store.auth?.login?.toLowerCase();
   const hosting = g.host.toLowerCase() === you;
   const problems = g.conflicts.length + g.collisions.length;
+  const arrow = (label: string, text: string, to: number) => {
+    const b = h("button", { class: "icon-btn", type: "button", "aria-label": `${label} ${g.name}`, title: label }, text);
+    if (to < 0 || to >= all.length) b.disabled = true;
+    else b.addEventListener("click", () => move(pos, to));
+    return b;
+  };
   return h(
     "li",
-    null,
+    { class: "group-item" },
+    all.length > 1 && h("div", { class: "reorder" }, arrow("Move up", "▲", pos - 1), arrow("Move down", "▼", pos + 1)),
     h(
       "a",
-      { class: "row link-row", href: `#/group/${encodeURIComponent(g.id.owner)}/${encodeURIComponent(g.id.repo)}` },
+      { class: "row link-row grow", href: `#/group/${encodeURIComponent(g.id.owner)}/${encodeURIComponent(g.id.repo)}` },
       h(
         "div",
         { class: "grow" },
@@ -141,7 +148,25 @@ export function groupsScreen(view: HTMLElement): void {
           ),
         );
       } else {
-        replace(list, h("ul", { class: "list", "aria-label": "Your groups" }, groups.map(groupRow)));
+        const move = async (from: number, to: number) => {
+          const next = groups.slice();
+          next.splice(to, 0, ...next.splice(from, 1));
+          try {
+            await api.reorderGroups(next.map((g) => g.id));
+          } catch (e) {
+            toast(errorText(e), "error");
+          }
+          await loadGroups();
+          // Keep the keyboard on the moved group's button.
+          const moved = list.querySelectorAll<HTMLElement>("li.group-item")[to];
+          const btns = moved?.querySelectorAll<HTMLButtonElement>(".reorder button");
+          (btns?.[to === 0 ? 1 : to > from ? 1 : 0] ?? btns?.[0])?.focus();
+        };
+        replace(
+          list,
+          groups.length > 1 && h("p", { class: "muted small" }, "Groups higher in the list win when two groups set the same thing."),
+          h("ul", { class: "list", "aria-label": "Your groups" }, groups.map((g, i) => groupRow(g, i, groups, move))),
+        );
       }
     } catch (e) {
       replace(list, errorBox(errorText(e), loadGroups));
