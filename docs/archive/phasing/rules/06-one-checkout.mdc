@@ -1,0 +1,25 @@
+---
+description: Do all work in the open project folder. Do not create a git worktree or a sibling checkout.
+alwaysApply: true
+---
+
+# One checkout
+
+The project folder that is open in the IDE is the only checkout. Do not create a git worktree, a sibling clone, or another folder for a branch. The user wants every edit visible in that folder.
+
+## Where to work
+
+1. Run `git status -sb` before the first edit.
+2. Edit in this folder, on the branch that is checked out here.
+3. If the task belongs on another branch, commit the current work first, then `git switch` that branch in this folder. Never `git worktree add`.
+4. If this folder has uncommitted work you did not start, do not discard it and do not switch away from it. Continue on the current branch when the task fits, and say so when it does not.
+
+## Which branch
+
+- Same effort as the open branch: a bugfix, follow-up, or the next step of that feature. Stay on that branch.
+- Nothing feature-specific is open, and the change is small. Use the repository default branch (`main`, or `master` if that is the default).
+- Different product area, or a feature big enough to review on its own. Make a new branch from the default branch, in this folder. Name it after the work. Do not commit unless the user asks.
+
+Example: password autofill is in progress on `rebuild`, and the user asks to fix a fill bug. Stay on `rebuild`. The user then asks for a separate QR-setup feature. Commit or finish the `rebuild` work, then `git switch -c` the new branch in this same folder.
+
+This rule is about where the coding agent edits. It does not change a product feature that isolates an agent session in its own worktree.

@@ -1,0 +1,16 @@
+---
+description: Exhaust searches and match every reader with every writer before an identity, path, or endpoint change is done
+alwaysApply: true
+---
+
+# Complete the search
+
+A named file list is the start of a fix, not the end.
+
+When you change or remove an identity string, folder, protocol, mutex, endpoint, or URL:
+
+1. Search the whole repo for the old string. If the tool caps results, page with an increasing offset until a page is empty. The first page is not the set.
+2. Search the sibling spellings too. A leading dot, a `-dev` suffix, and another product's folder name are different paths (`app-dev` and `.app-dev` are different directories).
+3. For each path, open every writer and every reader. A line in a doc about a reader means the writer still has to be found.
+4. Sort the hits. A package `"name"` is not a data folder; a `path.join` that contains the string is. Do not drop a page because most hits are the first kind.
+5. Record remaining intentional hits in `PROGRESS.md` under **Notes / decisions**, with the reason they stay.

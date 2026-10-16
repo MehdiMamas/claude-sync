@@ -1,0 +1,30 @@
+---
+description: Phase discipline and explicit phase dependencies; prevents working ahead
+globs:
+alwaysApply: true
+---
+
+# Phase discipline
+
+The build is split into numbered phase plans (`.cursor/plans/phase-01-<slug>.plan.md`, `phase-02-<slug>.plan.md`, …). `.cursor/plans/00-roadmap.plan.md` is an index that explains how they fit together. `PROGRESS.md` at the repo root is the source of truth for which phases are active and what blocks the others.
+
+## Before doing anything
+1. Read `PROGRESS.md` and the plan of the phase you were given.
+2. Check its `## Depends on` section. Every **Needs** line must be met (a phase gate recorded with real evidence, a PR merged, an external release shipped). **After** lines are order only and never block.
+3. If a Needs line is not met, stop. Quote that line, say how you checked it and what you found. Never refuse only because another phase is "active": several phases can be in progress at once when they don't need each other.
+
+## While working
+- Work **only** on the todos in the plan of the phase you were given.
+- Never implement, stub, scaffold, or "prepare" anything that belongs to a later phase. That includes placeholder files, empty services, TODO comments for future features, and speculative interfaces.
+- If the current task seems to require later-phase work, do the smallest thing the **current gate** needs. Write the rest under **Deferred** in `PROGRESS.md`, naming the phase it belongs to.
+- The roadmap (`00-roadmap.plan.md`) is for reading only. Never press Build on it and never execute its todos.
+- If the phase plan is wrong or out of date for the actual code, update **that phase's plan file** and note the change in `PROGRESS.md` under **Notes / decisions**. Do not jump ahead.
+
+## Finishing a phase
+Follow `.cursor/skills/phase/SKILL.md`. The user starts a phase with `/phase` (the next ready phase in `PROGRESS.md`) or `/phase <number>`. Proof rules are `07-complete-search.mdc` and `08-gate-proof.mdc`.
+
+1. Run the gate check from the phase plan. `PROGRESS.md` gets the command and its output, not a sentence that says the gate passed.
+2. In `PROGRESS.md`, mark the phase `completed` with that evidence and the date, and update **Active phases** and **Next** (a phase whose Needs are all met is ready; one with an unmet Needs is `blocked: <that line>`).
+3. Commit on a branch named for that phase, push it, and open a pull request to `main`.
+4. Run the skill's review loop: fix Claude's review until it says **Ready to merge**, then merge. Never merge on any other verdict.
+5. **Hand off.** Run `bash .cursor/skills/phase/next-phase.sh`. It starts a new headless Cursor CLI session that runs `/phase`, so the next phase starts with a clean context; its log is in `.git/phase-runs/`. Return the pull request URL and stop. Never start the next phase in the same chat, and never hand off after a review that is not **Ready to merge**.
