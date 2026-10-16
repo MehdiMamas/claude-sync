@@ -8,7 +8,7 @@ use crate::{notify, window};
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{Bool, ProtocolObject};
-use objc2::{define_class, msg_send, AnyThread, DefinedClass};
+use objc2::{define_class, msg_send, AnyThread};
 use objc2_foundation::{NSBundle, NSError, NSObject, NSObjectProtocol, NSString};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent, UNNotification,
@@ -74,7 +74,8 @@ pub fn init(app: &AppHandle) {
     }
     let _ = APP.set(app.clone());
     let center = UNUserNotificationCenter::currentNotificationCenter();
-    let delegate: Retained<Delegate> = unsafe { msg_send![super(Delegate::alloc().set_ivars(())), init] };
+    let delegate: Retained<Delegate> =
+        unsafe { msg_send![super(Delegate::alloc().set_ivars(())), init] };
     center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     // The center keeps only a weak reference.
     std::mem::forget(delegate);
@@ -86,7 +87,9 @@ pub fn init(app: &AppHandle) {
         }
     });
     center.requestAuthorizationWithOptions_completionHandler(
-        UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound | UNAuthorizationOptions::Badge,
+        UNAuthorizationOptions::Alert
+            | UNAuthorizationOptions::Sound
+            | UNAuthorizationOptions::Badge,
         &done,
     );
 }
@@ -118,10 +121,12 @@ pub fn permission() -> &'static str {
         return "unknown";
     }
     let (tx, rx) = mpsc::channel();
-    let done = RcBlock::new(move |settings: NonNull<objc2_user_notifications::UNNotificationSettings>| {
-        let status = unsafe { settings.as_ref() }.authorizationStatus();
-        let _ = tx.send(status);
-    });
+    let done = RcBlock::new(
+        move |settings: NonNull<objc2_user_notifications::UNNotificationSettings>| {
+            let status = unsafe { settings.as_ref() }.authorizationStatus();
+            let _ = tx.send(status);
+        },
+    );
     UNUserNotificationCenter::currentNotificationCenter()
         .getNotificationSettingsWithCompletionHandler(&done);
     match rx.recv_timeout(Duration::from_secs(2)) {
