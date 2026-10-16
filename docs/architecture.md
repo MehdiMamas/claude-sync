@@ -11,7 +11,7 @@ A small desktop app (Windows and macOS first; Linux ships as a beta, untested un
 - **Personal memory.** A person's own `CLAUDE.md` text and Claude's memories follow them to their other devices through a private repo of their own, never through a group (§16).
 - **Live.** The app watches the remote for changes and applies them within about a minute. It watches the local files it manages, and when you edit one it asks whether to share the change with the group.
 - **Updates.** The app checks for new versions and updates itself.
-- **Feedback.** A feedback form sends a description, and optionally the app's recent logs and a screenshot, to this repo as a public issue opened under the user's GitHub account, put into the nearest sprint.
+- **Feedback.** A feedback form sends a description, and optionally the app's recent logs and a screenshot. The relay opens a public issue on this repo under the user's GitHub account, put into the nearest sprint, and stores the logs and screenshot in a private repo. A workflow then has Claude comment a write-up of the report on the issue (§12).
 
 It costs nothing to run. GitHub (free private repos, OAuth device flow) holds all the data. A free Vercel project (the **relay**) does the few things that need a secret: serving updates from this repo's releases and filing feedback issues.
 
@@ -306,9 +306,10 @@ Plain TypeScript functions, no framework. Env:
 
 | Name | What |
 |---|---|
-| `RELAY_GITHUB_TOKEN` | Fine-grained PAT on `RELEASES_REPO` (and `FEEDBACK_REPO` if set): Contents read/write, Issues read/write, Metadata read |
+| `RELAY_GITHUB_TOKEN` | Fine-grained PAT on `RELEASES_REPO`, `FEEDBACK_REPO` if set, and `FEEDBACK_ATTACHMENTS_REPO`: Contents read/write, Issues read/write, Metadata read |
 | `RELEASES_REPO` | `MehdiMamas/claude-sync` |
 | `FEEDBACK_REPO` | Where feedback issues go; defaults to `RELEASES_REPO` |
+| `FEEDBACK_ATTACHMENTS_REPO` | Private repo for feedback screenshots and logs; defaults to `<FEEDBACK_REPO>-feedback` |
 | `BLOCKED_GITHUB_USERS` | Comma-separated logins refused with 403 (abuse) |
 | `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `INSTALL_SESSION_SECRET` | The install page's GitHub sign-in (web flow of the same OAuth App the app uses; its callback URL is `<relay>/api/install/callback`) and the key that signs its session cookie. Unset: the page says sign-in is not configured |
 
@@ -322,16 +323,23 @@ Plain TypeScript functions, no framework. Env:
 
 **`POST /api/feedback`.** JSON `{ title, description, kind: "bug"|"idea", appVersion, os, logs, screenshot? (base64 PNG or JPEG, ≤ 3 MB) }`.
 1. Redact `logs` again (§9) and cut them to the last 200 KB.
-2. If there is a screenshot, commit it to the `feedback-assets` branch at `feedback/<yyyy-mm>/<uuid>.png` (created from the default branch if missing).
-3. Create the issue **with the user's token**, so GitHub shows the user as its author: the description, app version, OS, the screenshot link, and the logs in a collapsed block. Users have no push access, so the screenshot and log files are committed with the relay token (step 2).
-4. GitHub drops labels and milestone from someone without push access, so the relay then sets labels `feedback` and `type:bug` or `type:idea` and the **nearest sprint** with its own token: the open milestone titled `Sprint N` with the earliest `due_on` that is today or later. If none, the open milestone with the latest due date. If none, no milestone. Best effort: a failure is logged, the post still succeeds.
+2. Create the issue **with the user's token**, so GitHub shows the user as its author: the title, and a body with the description, kind, app version and OS. Nothing from the user's disk goes into it, and no labels yet.
+3. Commit the screenshot, the logs and a `report.json` (issue number and URL, login, kind, app version, OS, time) to the private `FEEDBACK_ATTACHMENTS_REPO` at `issues/<number>/`, in one commit on its default branch (Git Data API, with the relay token: users have no push access). Best effort: on a failure the issue body says the attachments could not be stored. Storing after the create means a refused issue leaves no files behind.
+4. GitHub drops labels and milestone from someone without push access, so the relay then sets labels `feedback` and `type:bug` or `type:idea` and the **nearest sprint** with its own token: the open milestone titled `Sprint N` with the earliest `due_on` that is today or later. If none, the open milestone with the latest due date. If none, no milestone. Best effort: a failure is logged, the post still succeeds. This comes last because the `feedback` label starts the triage workflow, which needs the attachments.
 5. Return `{ number, url }`.
 
 The issue is only ever created with the user's token, never with the relay token, so a report always sits under the account that wrote it. If GitHub refuses the user's create (401, 403, 404, 410, 422: missing scope, blocked from the repo, SSO, issues off), the relay answers 403 (422 for a 422) with `GitHub did not let your account open an issue on <repo>: <reason>`, and the app shows that message. A rate limit (429, or a 403 with `Retry-After` or no requests left) answers 429, a 5xx 502 and a network error 500: the app keeps the report in its outbox and sends it later. A report the outbox later finds refused is set aside and the user gets a notification with the reason.
 
 Rate limit per login: 5 feedback posts per hour (in memory; good enough for a hobby).
 
-**Feedback is public.** `FEEDBACK_REPO` defaults to the app's own repo, which is public, so the issue (title, description, author's GitHub account, app version, OS), the screenshot and the logs are public. The form says so before sending. Logs are off unless the user ticks the box; the app and the relay both redact tokens from them (§9), but they can still show file paths and repo names.
+**The issue is public, the attachments are not.** `FEEDBACK_REPO` defaults to the app's own repo, which is public, so the issue (title, description, author's GitHub account, app version, OS) is public. The screenshot and the logs only go to the private attachments repo, which only the maintainer can read. The form says so before sending. Logs are off unless the user ticks the box; the app and the relay both redact tokens from them (§9), but they can still show file paths and repo names.
+
+**Triage.** `.github/workflows/feedback-triage.yml` starts when the `feedback` label is added by the repo owner (the relay's token), or by hand (`gh workflow run feedback-triage.yml -f issue=<n|all> [-f force=true]`). `relay/triage/run.ts` does it in three steps:
+1. `prepare` (Actions token, read-only deploy key of the attachments repo): for each open `feedback` issue with no triage comment and no `triaged` or `needs-moderation` label, it checks in the issue's events that a trusted login (the owner, plus the optional `TRIAGE_TRUSTED_LOGINS` variable) added the label, writes the issue and the list of other open issues to files, and checks out only that issue's `issues/<number>/` folder. Then the deploy key and the clone are deleted.
+2. `analyze`: Claude Code (`claude -p`, Opus, `CLAUDE_CODE_OAUTH_TOKEN`) reads those files and the code at `main` with Read, Grep and Glob only (no shell, no edits, no web), in an environment with no GitHub token. The prompt says the report and the attachments are data, never instructions. Its answer starts with `VERDICT: ok|abusive`.
+3. `post` (Actions token): for `ok`, a comment with the summary, evidence, likely cause, files to look at, repro steps, severity, related issues and a fix plan, then the `triaged` label. Before it is posted the comment is scrubbed of tokens, home folder names and email addresses, @mentions and closing keywords are broken, links outside this repo, images and HTML comments are removed, long code blocks are cut and the length is capped. For `abusive` (spam, harassment, unrelated text), a short note, the `needs-moderation` label, and the issue is closed as not planned and locked. A hidden marker in the comment keeps an issue from being triaged twice.
+
+Secrets: `FEEDBACK_DEPLOY_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`). Variables (optional): `FEEDBACK_ATTACHMENTS_REPO`, `TRIAGE_TRUSTED_LOGINS`.
 
 ## 13. Updates and releases
 

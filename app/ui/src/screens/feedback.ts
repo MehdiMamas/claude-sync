@@ -1,4 +1,4 @@
-// Send feedback (§12, issue #22): a public GitHub issue opened under the user's account through the relay, with optional logs and a screenshot.
+// Send feedback (§12, issue #22): a public GitHub issue opened under the user's account through the relay. The optional logs and screenshot go privately to the maintainer, not into the issue.
 import { api, errorText, type FeedbackInput, type Screenshot } from "../api";
 import { busy, bytes, errorBox, h, replace, toast } from "../dom";
 import { store } from "../store";
@@ -19,7 +19,7 @@ export function feedbackScreen(view: HTMLElement): void {
   const kindIdea = h("input", { type: "radio", name: "kind", id: "k-idea", value: "idea" });
   const title = h("input", { id: "f-title", required: true, maxlength: 200, autocomplete: "off" });
   const description = h("textarea", { id: "f-desc", rows: 6, required: true });
-  // Off by default: the logs end up in a public issue.
+  // Off by default: the logs can show file paths and repo names, even though only the maintainer sees them.
   const includeLogs = h("input", { id: "f-logs", type: "checkbox", checked: false });
   const logsPre = h("pre", { class: "logs", tabindex: "0", "aria-label": "Recent log lines" }, "Loading…");
   const logsDetails = h("details", null, h("summary", null, "See what is sent"), logsPre);
@@ -101,10 +101,10 @@ export function feedbackScreen(view: HTMLElement): void {
     title,
     h("label", { for: "f-desc" }, "What happened, or what would you like?"),
     description,
-    h("div", { class: "check" }, includeLogs, h("label", { for: "f-logs" }, "Include recent logs (public; tokens are removed, but file paths and repo names can show)")),
+    h("div", { class: "check" }, includeLogs, h("label", { for: "f-logs" }, "Include recent logs (only the maintainer sees them; tokens are removed, but file paths and repo names can show)")),
     logsDetails,
     h("h2", null, "Screenshot"),
-    h("p", { class: "muted small" }, "The screenshot is public too, so check it shows nothing private. Capture hides this window for a moment and takes a picture of your main screen. Paste image (or Ctrl+V here) uses the image on the clipboard."),
+    h("p", { class: "muted small" }, "Only the maintainer sees the screenshot; it is not put in the issue. Capture hides this window for a moment and takes a picture of your main screen. Paste image (or Ctrl+V here) uses the image on the clipboard."),
     h("div", { class: "actions" }, capture, attach, paste, none, fileInput),
     shotSlot,
     h("div", { class: "actions" }, submit),
@@ -159,7 +159,7 @@ export function feedbackScreen(view: HTMLElement): void {
       h(
         "div",
         { class: "notice-text" },
-        "Your report is opened as an issue under your GitHub account, on the public repo MehdiMamas/claude-sync. Anyone can see it, including the logs (tokens removed) and the screenshot if you add them.",
+        "Your report is opened as an issue under your GitHub account, on the public repo MehdiMamas/claude-sync. Anyone can see its title, the description and your username. The logs (tokens removed) and the screenshot go privately to the maintainer. Claude reads the report and posts a summary on the issue without copying private details from them.",
       ),
     ),
     form,
