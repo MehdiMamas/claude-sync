@@ -32,7 +32,7 @@ Errors are JSON `{ "error": "<message>" }`:
 
 No auth. `200 {"ok": true}`.
 
-### `GET /api/update?target=<windows|darwin>&arch=<x86_64|aarch64>&current_version=<semver>`
+### `GET /api/update?target=<windows|darwin|linux>&arch=<x86_64|aarch64>&current_version=<semver>`
 
 Reads the latest release of `RELEASES_REPO` (`GET /repos/{repo}/releases/latest`, which skips drafts and prereleases).
 
@@ -120,6 +120,8 @@ The issue, the screenshot and the logs are public when `FEEDBACK_REPO` is a publ
 | `claude-sync_<version>_darwin_universal.app.tar.gz` | macOS update bundle; served to both `aarch64` and `x86_64` |
 | `claude-sync_<version>_darwin_universal.app.tar.gz.sig` | Its updater signature |
 | `claude-sync_<version>_darwin_universal.dmg` | macOS installer for people (not used by the updater) |
+| `claude-sync_<version>_linux_x86_64.AppImage` (+ `.sig`) | Linux update bundle (beta) |
+| `claude-sync_<version>_linux_x86_64.deb` | Linux package for people (not used by the updater) |
 
 A darwin request first looks for `claude-sync_<version>_darwin_<arch>.app.tar.gz`, then the universal one, so per-arch builds can be added later. `windows_aarch64` works the same way if it is ever built. A platform whose bundle or `.sig` is not uploaded yet gets `204`, so the Windows release can go out before the macOS build finishes. The rule lives in `lib/assets.ts`.
 

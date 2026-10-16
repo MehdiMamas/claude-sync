@@ -113,6 +113,8 @@ jobs:
             os: windows-latest
           - platform: macos
             os: macos-latest
+          - platform: linux
+            os: ubuntu-22.04
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     defaults:
@@ -133,6 +135,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+
+      - name: Linux packages
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev             libpipewire-0.3-dev libdbus-1-dev libgbm-dev libxcb1-dev libclang-dev             patchelf libfuse2 xdg-utils file
 
       - name: Rust toolchain
         run: |
@@ -223,6 +231,7 @@ jobs:
           case "${{ matrix.platform }}" in
             windows) pnpm -C app tauri build --bundles nsis --ci ;;
             macos) pnpm -C app tauri build --target universal-apple-darwin --bundles app,dmg --ci ;;
+            linux) pnpm -C app tauri build --bundles deb,appimage --ci ;;
           esac
 
       - name: Check the macOS signature and notarization
@@ -256,6 +265,14 @@ jobs:
               cp "$out/macos/claude-sync.app.tar.gz.sig" "$stage/$base.app.tar.gz.sig"
               cp "$out/dmg/claude-sync_${VERSION}_universal.dmg" "$stage/$base.dmg"
               node scripts/verify-updater-sig.mjs "$stage/$base.app.tar.gz" "$stage/$base.app.tar.gz.sig"
+              ;;
+            linux)
+              out=target/release/bundle
+              base="claude-sync_${VERSION}_linux_x86_64"
+              cp "$out/appimage/claude-sync_${VERSION}_amd64.AppImage" "$stage/$base.AppImage"
+              cp "$out/appimage/claude-sync_${VERSION}_amd64.AppImage.sig" "$stage/$base.AppImage.sig"
+              cp "$out/deb/claude-sync_${VERSION}_amd64.deb" "$stage/$base.deb"
+              node scripts/verify-updater-sig.mjs "$stage/$base.AppImage" "$stage/$base.AppImage.sig"
               ;;
           esac
           ls -l "$stage"

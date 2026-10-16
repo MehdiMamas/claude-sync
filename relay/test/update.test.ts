@@ -29,6 +29,8 @@ const FULL = [
   "claude-sync_0.3.0_darwin_universal.app.tar.gz",
   "claude-sync_0.3.0_darwin_universal.app.tar.gz.sig",
   "claude-sync_0.3.0_darwin_universal.dmg",
+  "claude-sync_0.3.0_linux_x86_64.AppImage",
+  "claude-sync_0.3.0_linux_x86_64.AppImage.sig",
 ];
 
 function updateReq(target: string, arch: string, current: string): Request {
@@ -77,6 +79,14 @@ describe("GET /api/update", () => {
     }
   });
 
+  it("serves the Linux AppImage", async () => {
+    fm.on("GET", `${REPO}/releases/assets/106`, new Response(SIG_MAC));
+    const res = await update(updateReq("linux", "x86_64", "0.2.0"));
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { url: string };
+    assert.equal(body.url, "https://relay.example.test/api/download/105");
+  });
+
   it("uses RELAY_PUBLIC_URL for the download url", async () => {
     setEnv({ RELAY_PUBLIC_URL: "https://claude-sync-relay.vercel.app/" });
     const res = await update(updateReq("windows", "x86_64", "0.1.0"));
@@ -117,7 +127,7 @@ describe("GET /api/update", () => {
 
   it("400 for bad parameters", async () => {
     for (const q of [
-      "target=linux&arch=x86_64&current_version=1.0.0",
+      "target=freebsd&arch=x86_64&current_version=1.0.0",
       "target=windows&arch=arm&current_version=1.0.0",
       "target=windows&arch=x86_64&current_version=latest",
       "target=windows&arch=x86_64",
