@@ -746,7 +746,7 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
         g.isHost && shareCard(g.id),
         g.isHost && claudeMdCard(g.id),
         copyCard(g, groups),
-        historyCard(g.id, contents),
+        historyCard(g.id, contents, g.isHost),
       );
     } catch (e) {
       replace(body, errorBox(errorText(e), load));

@@ -196,6 +196,17 @@ export interface CommitInfo {
   author: string;
   atUnix: number;
 }
+export interface RevertFile {
+  path: string;
+  action: "restore" | "delete" | "recreate";
+  /** Why the file cannot be reverted now (it changed again); null when it can. */
+  blocked: string | null;
+}
+export interface RevertPlan {
+  sha: string;
+  summary: string;
+  files: RevertFile[];
+}
 export interface Invitation {
   id: number;
   repo: GroupId;
@@ -433,6 +444,8 @@ export const api = {
   claudeMdPreview: () => call<string>("claude_md_preview"),
   shareClaudeMd: (group: GroupId, share: ClaudeMdShare) => call<ClaudeMdShared>("share_claude_md", { group, share }),
   recentCommits: (group: GroupId, limit = 20) => call<CommitInfo[]>("recent_commits", { group, limit }),
+  revertPreview: (group: GroupId, sha: string) => call<RevertPlan>("revert_preview", { group, sha }),
+  revertCommit: (group: GroupId, sha: string) => call<RevertPlan>("revert_commit", { group, sha }),
   claudeMdReview: (group: GroupId) => call<ClaudeMdReview>("claude_md_review", { group }),
   /** Accept or decline `ids`, or every pending change when `ids` is null. */
   decideClaudeMd: (group: GroupId, ids: string[] | null, accept: boolean) =>

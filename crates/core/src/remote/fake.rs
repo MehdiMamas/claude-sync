@@ -3,7 +3,7 @@
 //! `FakeGitHub` is a world of repos. `FakeGitHub::account(login)` is what one signed-in user
 //! sees: repo handles that answer `404` once that user has no access, like GitHub does.
 //! A `FakeRepo` made with `FakeRepo::new` has no viewer and can do anything (the test's view).
-use super::{Changes, Collaborator, Head, PathFilter, RemoteFactory, RemoteRepo};
+use super::{Changes, Collaborator, CommitFiles, Head, PathFilter, RemoteFactory, RemoteRepo};
 use crate::engine::CommitInfo;
 use crate::github::Invitation;
 use crate::{Error, FileSet, GroupId};
@@ -555,6 +555,37 @@ impl RemoteRepo for FakeRepo {
             .find(|c| c.sha == commit)
             .ok_or_else(not_found)?;
         Ok(c.files.get(path).cloned())
+    }
+
+    async fn commit_files(&self, commit: &str) -> crate::Result<CommitFiles> {
+        let st = self.enter("commit_files")?;
+        let c = st
+            .commits
+            .iter()
+            .find(|c| c.sha == commit)
+            .ok_or_else(not_found)?;
+        let before = match &c.parent {
+            Some(p) => st
+                .commits
+                .iter()
+                .find(|x| &x.sha == p)
+                .map(|x| x.files.clone())
+                .unwrap_or_default(),
+            None => FileSet::default(),
+        };
+        let paths = c
+            .files
+            .keys()
+            .chain(before.keys())
+            .filter(|p| c.files.get(*p) != before.get(*p))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Ok(CommitFiles {
+            parent: c.parent.clone(),
+            paths,
+        })
     }
 }
 

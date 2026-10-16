@@ -96,6 +96,19 @@ pub trait RemoteRepo: Send + Sync {
     async fn file_at(&self, _commit: &str, _path: &str) -> crate::Result<Option<Vec<u8>>> {
         Err(Error::Invalid("file history is not available".into()))
     }
+    /// The paths a commit touched and its parent (for reverting it, §6).
+    async fn commit_files(&self, _commit: &str) -> crate::Result<CommitFiles> {
+        Err(Error::Invalid("file history is not available".into()))
+    }
+}
+
+/// The files one commit touched, and the commit it was made on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitFiles {
+    /// The only parent; `None` for a root commit.
+    pub parent: Option<String>,
+    /// Every path the commit added, changed, removed or renamed (both names of a rename).
+    pub paths: Vec<String>,
 }
 
 /// Account-level calls and a way to open repos: what the engine needs beyond one repo.
@@ -656,7 +669,50 @@ impl RemoteRepo for GitHubRepo {
             ))),
         }
     }
+
+    async fn commit_files(&self, commit: &str) -> crate::Result<CommitFiles> {
+        let c: CommitDetailFiles = self
+            .gh
+            .get(&self.path(&format!("/commits/{commit}")))
+            .await?;
+        if c.parents.len() > 1 {
+            return Err(Error::Invalid(format!(
+                "{commit} is a merge commit and cannot be reverted here"
+            )));
+        }
+        if c.files.len() >= MAX_COMMIT_FILES {
+            return Err(Error::Invalid(format!(
+                "{commit} changed too many files to revert here"
+            )));
+        }
+        let mut paths = Vec::new();
+        for f in c.files {
+            paths.extend(f.previous_filename);
+            paths.push(f.filename);
+        }
+        Ok(CommitFiles {
+            parent: c.parents.into_iter().next().map(|p| p.sha),
+            paths,
+        })
+    }
 }
+
+/// A commit as `/commits/{sha}` returns it, with the files it touched.
+#[derive(Deserialize)]
+struct CommitDetailFiles {
+    parents: Vec<Sha>,
+    #[serde(default)]
+    files: Vec<ChangedFile>,
+}
+
+#[derive(Deserialize)]
+struct ChangedFile {
+    filename: String,
+    previous_filename: Option<String>,
+}
+
+/// GitHub lists at most this many files of a commit.
+const MAX_COMMIT_FILES: usize = 300;
 
 /// A commit as `/commits` and `/compare` list it.
 #[derive(Deserialize)]

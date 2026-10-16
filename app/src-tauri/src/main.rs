@@ -149,6 +149,8 @@ fn main() {
             commands::claude_md_preview,
             commands::share_claude_md,
             commands::recent_commits,
+            commands::revert_preview,
+            commands::revert_commit,
             commands::claude_md_review,
             commands::decide_claude_md,
             commands::set_claude_md_review,

@@ -429,6 +429,18 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   },
   group_contents: (a) => ((a.group as GroupId).owner === "acme" ? acmeContents : mehdiContents),
   recent_commits: (a) => (q.has("noHistory") ? [] : commits.slice(0, Number(a.limit ?? 20))),
+  revert_preview: (a) => ({
+    sha: a.sha as string,
+    summary: "update CLAUDE.md",
+    files: [
+      { path: "CLAUDE.md", action: "restore", blocked: null },
+      ...(q.has("changedAgain") ? [{ path: "skills/review/SKILL.md", action: "restore", blocked: "skills/review/SKILL.md changed again after this commit, in 3f2a9c1 by sara-dev; revert that first." }] : []),
+    ],
+  }),
+  revert_commit: (a) => {
+    if (q.has("changedAgain")) throw "Nothing was reverted. skills/review/SKILL.md changed again after this commit, in 3f2a9c1 by sara-dev; revert that first.";
+    return { sha: a.sha as string, summary: "update CLAUDE.md", files: [{ path: "CLAUDE.md", action: "restore", blocked: null }] };
+  },
   sync_now: () => ({ groups: [] }),
   reorder_groups: (a) => {
     const order = a.order as GroupId[];
