@@ -25,8 +25,10 @@ use std::sync::Arc;
 mod claude_md;
 mod conflicts;
 mod copy;
+mod revert;
 pub use claude_md::{ClaudeMdShare, ClaudeMdShared};
 pub use copy::{Copied, CopyFile, CopyPreview, CopyRequest, CopySetting, CopySyncs};
+pub use revert::{RevertAction, RevertFile, RevertPlan};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3647,5 +3649,100 @@ Use tabs.
         let report = bo.sync_all().await.unwrap();
         assert!(report.groups[0].lost_access);
         assert!(!agent.exists());
+    }
+
+    fn last_message(repo: &FakeRepo) -> String {
+        repo.commits().last().unwrap().message.clone()
+    }
+
+    #[tokio::test]
+    async fn revert_a_modified_file() {
+        let (_, id, repo, bo) = joined_host().await;
+        let target = repo.set_file_as("ana", "agents/a.md", "v2\n").commit;
+        let before = commit_count(&repo);
+
+        let plan = bo.engine.revert_commit(&id, &target).await.unwrap();
+        assert_eq!(plan.files.len(), 1);
+        assert_eq!(plan.files[0].action, RevertAction::Restore);
+        assert_eq!(commit_count(&repo), before + 1, "a new commit, no rewrite");
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+        assert_eq!(
+            last_message(&repo),
+            format!("bo@pc: revert {target} (update agents/a.md)")
+        );
+        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "base\n");
+    }
+
+    #[tokio::test]
+    async fn revert_an_added_file_deletes_it() {
+        let (_, id, repo, bo) = joined_host().await;
+        let target = repo.set_file_as("ana", "agents/new.md", "hi\n").commit;
+        let plan = bo.engine.revert_commit(&id, &target).await.unwrap();
+        assert_eq!(plan.files[0].action, RevertAction::Delete);
+        assert_eq!(repo.file("agents/new.md"), None);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n", "others stay");
+    }
+
+    #[tokio::test]
+    async fn revert_a_deleted_file_restores_it() {
+        let (_, id, repo, bo) = joined_host().await;
+        let target = repo.remove_file("agents/a.md").commit;
+        let plan = bo.engine.revert_commit(&id, &target).await.unwrap();
+        assert_eq!(plan.files[0].action, RevertAction::Recreate);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+    }
+
+    #[tokio::test]
+    async fn revert_is_host_only() {
+        let (_, id, repo, bo) = joined().await;
+        let target = repo.set_file_as("ana", "agents/a.md", "v2\n").commit;
+        let before = commit_count(&repo);
+        let err = bo.engine.revert_commit(&id, &target).await.unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        let err = bo.engine.revert_preview(&id, &target).await.unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        assert_eq!(commit_count(&repo), before);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "v2\n");
+    }
+
+    #[tokio::test]
+    async fn revert_refuses_a_file_that_changed_again() {
+        let (_, id, repo, bo) = joined_host().await;
+        let target = repo.set_file_as("ana", "agents/a.md", "v2\n").commit;
+        repo.set_file_as("cy", "agents/a.md", "v3\n");
+        let later = repo.current_head().commit;
+        let before = commit_count(&repo);
+
+        let plan = bo.engine.revert_preview(&id, &target).await.unwrap();
+        assert!(plan.files[0].blocked.is_some());
+        let err = bo.engine.revert_commit(&id, &target).await.unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains(&format!(
+                "agents/a.md changed again after this commit, in {later} by cy"
+            )),
+            "{text}"
+        );
+        assert_eq!(commit_count(&repo), before, "nothing committed");
+        assert_eq!(repo.file("agents/a.md").unwrap(), "v3\n");
+
+        // Reverting the later commit first, then this one, works.
+        bo.engine.revert_commit(&id, &later).await.unwrap();
+        assert_eq!(repo.file("agents/a.md").unwrap(), "v2\n");
+    }
+
+    #[tokio::test]
+    async fn revert_retries_after_a_push_race() {
+        let (_, id, repo, bo) = joined_host().await;
+        let target = repo.set_file_as("ana", "agents/a.md", "v2\n").commit;
+        let mut once = true;
+        repo.before_commit(move |r| {
+            if std::mem::take(&mut once) {
+                r.set_file_as("cy", "skills/x/SKILL.md", "x\n");
+            }
+        });
+        bo.engine.revert_commit(&id, &target).await.unwrap();
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+        assert_eq!(repo.file("skills/x/SKILL.md").unwrap(), "x\n");
     }
 }

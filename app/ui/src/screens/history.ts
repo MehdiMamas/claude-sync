@@ -1,5 +1,5 @@
 // The group's "Recent changes" card: commits as an activity feed (see activity.ts).
-import { api, errorText, groupKey, type CommitInfo, type GroupContents, type GroupId } from "../api";
+import { api, errorText, groupKey, type CommitInfo, type GroupContents, type GroupId, type RevertPlan } from "../api";
 import { collapse, groupByDay, parseCommit, timeLabel, type Activity, type FeedContext, type Kind } from "../activity";
 import { avatar } from "../avatar";
 import { errorBox, h, replace, spinner, toast } from "../dom";
@@ -38,7 +38,15 @@ const fullTime = (unix: number) => new Date(unix * 1000).toLocaleString(undefine
 let seq = 0;
 
 /** `expanded` holds the entries whose text is open, so "Show more" keeps them open. */
-function entry(a: Activity, now: Date, commitUrl: (sha: string) => string, expanded: Set<string>): HTMLElement {
+function entry(
+  a: Activity,
+  now: Date,
+  commitUrl: (sha: string) => string,
+  expanded: Set<string>,
+  /** Host only: reverts the commit and reloads the feed. Null for members. */
+  revert: ((sha: string) => Promise<void>) | null,
+  id: GroupId,
+): HTMLElement {
   const who = a.isYou ? "You" : a.login;
   const count = a.shas.length;
   const time = h("time", { datetime: new Date(a.atUnix * 1000).toISOString(), title: fullTime(a.atUnix) }, timeLabel(a.atUnix, now));
@@ -74,6 +82,60 @@ function entry(a: Activity, now: Date, commitUrl: (sha: string) => string, expan
     more = btn;
   }
 
+  // Host only, one commit per entry (a folded entry stands for several).
+  const panel = h("div", { class: "revert-panel", hidden: true });
+  let revertBtn: HTMLButtonElement | false = false;
+  if (revert && a.shas.length === 1) {
+    const btn = h("button", { class: "link act-link", type: "button", "aria-label": `Revert this change: ${a.title}` }, "Revert");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        showPlan(await api.revertPreview(id, a.sha));
+      } catch (e) {
+        toast(errorText(e), "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    const close = () => {
+      panel.hidden = true;
+      replace(panel);
+    };
+    const showPlan = (plan: RevertPlan) => {
+      const blocked = plan.files.filter((f) => f.blocked);
+      const verb = { restore: "restored to the older version", delete: "deleted (this change added it)", recreate: "brought back (this change deleted it)" };
+      const go = h("button", { type: "button", class: "danger" }, "Revert this change");
+      go.disabled = blocked.length > 0 || plan.files.length === 0;
+      go.addEventListener("click", async () => {
+        go.disabled = true;
+        go.textContent = "Reverting…";
+        try {
+          await revert(a.sha);
+        } catch (e) {
+          toast(errorText(e), "error");
+          go.disabled = false;
+          go.textContent = "Revert this change";
+        }
+      });
+      panel.hidden = false;
+      replace(
+        panel,
+        h("p", { class: "small" }, `Reverting makes a new change that undoes this one. These files will be:`),
+        plan.files.length === 0
+          ? h("p", { class: "muted small" }, "Nothing to revert: the files already match what they were before.")
+          : h(
+              "ul",
+              { class: "small" },
+              plan.files.map((f) =>
+                h("li", null, h("code", null, f.path), ` ${verb[f.action]}`, f.blocked && h("div", { class: "error", role: "alert" }, f.blocked)),
+              ),
+            ),
+        h("div", { class: "row" }, go, h("button", { type: "button", class: "link", onclick: close }, "Cancel")),
+      );
+    };
+    revertBtn = btn;
+  }
+
   return h(
     "li",
     { class: "act" },
@@ -106,7 +168,9 @@ function entry(a: Activity, now: Date, commitUrl: (sha: string) => string, expan
         time,
         h("span", { "aria-hidden": "true" }, "·"),
         open,
+        revertBtn && [h("span", { "aria-hidden": "true" }, "·"), revertBtn],
       ),
+      panel,
     ),
   );
 }
@@ -115,7 +179,7 @@ function entry(a: Activity, now: Date, commitUrl: (sha: string) => string, expan
  * `contents` names the group's mods and skills so hand-written messages such as
  * `setup-scout: …` are recognised; the feed works without it.
  */
-export function historyCard(id: GroupId, contents: Promise<GroupContents>): HTMLElement {
+export function historyCard(id: GroupId, contents: Promise<GroupContents>, isHost = false): HTMLElement {
   const body = h("div", { class: "feed-body", "aria-live": "polite", "aria-busy": "true" }, spinner("Loading recent changes"));
   const commitUrl = (sha: string) => `https://github.com/${encodeURIComponent(id.owner)}/${encodeURIComponent(id.repo)}/commit/${sha}`;
   const historyUrl = `https://github.com/${encodeURIComponent(id.owner)}/${encodeURIComponent(id.repo)}/commits`;
@@ -170,7 +234,7 @@ export function historyCard(id: GroupId, contents: Promise<GroupContents>): HTML
           "section",
           { class: "day", "aria-labelledby": hid },
           h("h3", { class: "day-label", id: hid }, day.label),
-          h("ol", { class: "feed", "aria-labelledby": hid }, day.items.map((a) => entry(a, now, commitUrl, expanded))),
+          h("ol", { class: "feed", "aria-labelledby": hid }, day.items.map((a) => entry(a, now, commitUrl, expanded, isHost ? revertAndReload : null, id))),
         );
       }),
       h(
@@ -190,6 +254,12 @@ export function historyCard(id: GroupId, contents: Promise<GroupContents>): HTML
         ),
       ),
     );
+  };
+
+  const revertAndReload = async (sha: string) => {
+    await api.revertCommit(id, sha);
+    toast("Reverted. The group now has the older version.");
+    await load();
   };
 
   const fetchCommits = async (limit: number) => {

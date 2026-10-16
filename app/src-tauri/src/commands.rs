@@ -13,7 +13,7 @@ use claude_sync_core::conflicts::{Conflict, Source};
 use claude_sync_core::contents::{self, GroupContents};
 use claude_sync_core::engine::{
     ClaudeMdReview, ClaudeMdShare, ClaudeMdShared, CommitInfo, Copied, CopyPreview, CopyRequest,
-    GroupStatus, SyncReport,
+    GroupStatus, RevertPlan, SyncReport,
 };
 use claude_sync_core::github::Invitation;
 use claude_sync_core::jobs::JobsOverview;
@@ -830,4 +830,30 @@ mod tests {
         assert!(!group_managed(&m, "tea"));
         assert!(!group_managed(&m, "mine"));
     }
+}
+
+/// The files reverting a commit would change (host only; writes nothing).
+#[tauri::command]
+pub async fn revert_preview(ctx: CtxState<'_>, group: GroupId, sha: String) -> Res<RevertPlan> {
+    let e = ctx.engine()?;
+    e.revert_preview(&group, &sha)
+        .await
+        .map_err(guard::logged("revert preview"))
+}
+
+/// Revert a commit of the group with a new commit (host only), then sync.
+#[tauri::command]
+pub async fn revert_commit(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    group: GroupId,
+    sha: String,
+) -> Res<RevertPlan> {
+    let e = ctx.engine()?;
+    let done = e
+        .revert_commit(&group, &sha)
+        .await
+        .map_err(guard::logged("revert commit"))?;
+    background::sync_soon(&app, true);
+    Ok(done)
 }
