@@ -52,7 +52,7 @@ pub struct GroupStatus {
     pub review_claude_md: bool,
     /// This user hosts the group (owns its repo): only the host's app changes the group.
     pub is_host: bool,
-    /// The group's proposal mode: members' changes go to review as proposals (section 5b).
+    /// The group's proposal mode: members' changes go to review as proposals (section 5c).
     pub proposal_mode: bool,
     /// `"on"`: GitHub enforces host-only pushes. `"unavailable"`: it can't on this plan.
     /// `None`: not known yet, or this user is not the host.
@@ -66,11 +66,11 @@ pub(crate) enum Committed {
     Nothing,
     /// Committed to the group's default branch.
     Pushed,
-    /// Sent as proposal #n, waiting for approval (§5b).
+    /// Sent as proposal #n, waiting for approval (§5c).
     Proposed(u64),
 }
 
-/// An open proposal, for the group screen (§5b).
+/// An open proposal, for the group screen (§5c).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProposalView {
@@ -136,7 +136,7 @@ pub struct GroupSyncReport {
     pub id: GroupId,
     pub pulled: bool,
     pub pushed: bool,
-    /// A change went out as a proposal, not a commit (§5b).
+    /// A change went out as a proposal, not a commit (§5c).
     pub proposed: bool,
     pub apply: crate::apply::ApplyReport,
     pub conflicts: Vec<ConflictInfo>,
@@ -875,7 +875,7 @@ impl Engine {
         self.claude_md_review(id)
     }
 
-    /// The group's "Proposal mode" (§5b): with it on, every change to the group, the host's
+    /// The group's "Proposal mode" (§5c): with it on, every change to the group, the host's
     /// too, is a proposal that another member approves. Host only.
     pub async fn set_group_proposal_mode(&self, id: &GroupId, on: bool) -> crate::Result<()> {
         let _busy = self.busy.lock().await;
@@ -894,7 +894,7 @@ impl Engine {
         }
     }
 
-    /// The group's open proposals, for the group screen (§5b).
+    /// The group's open proposals, for the group screen (§5c).
     pub async fn proposals(&self, id: &GroupId) -> crate::Result<Vec<ProposalView>> {
         self.require_joined(id)?;
         let me = &self.login;
@@ -1025,7 +1025,7 @@ impl Engine {
     }
 
     /// Like `require_host`, but with proposal mode on anyone with push access may write: their
-    /// change goes to a proposal (§5b).
+    /// change goes to a proposal (§5c).
     async fn require_host_or_proposals(&self, id: &GroupId) -> crate::Result<()> {
         if self.group_proposal_mode(id) {
             return Ok(());
@@ -1120,7 +1120,7 @@ impl Engine {
         Ok(self.commit_or_propose(id, summary, change).await? != Committed::Nothing)
     }
 
-    /// `commit_to_group`, saying whether the change landed or became a proposal (§5b).
+    /// `commit_to_group`, saying whether the change landed or became a proposal (§5c).
     pub(crate) async fn commit_or_propose(
         &self,
         id: &GroupId,
@@ -1254,7 +1254,7 @@ impl Engine {
             };
             let (gf, read_only) = read_group_file(id, &remote_files)?;
             // Only the host's app writes to the group; with proposal mode on a member's
-            // edits go out as proposals (§5b). Otherwise they stay local.
+            // edits go out as proposals (§5c). Otherwise they stay local.
             let may = is_host || gf.proposal_mode;
             if !may {
                 status.shared.clear();
@@ -1339,7 +1339,7 @@ impl Engine {
             }
             self.scan(&push)?;
             if gf.proposal_mode {
-                // The edit stays a local edit until its proposal is merged (§5b).
+                // The edit stays a local edit until its proposal is merged (§5c).
                 let title = self.message(&summarize(&push));
                 remote
                     .propose(&head, &push, &self.proposal_branch(), &title)

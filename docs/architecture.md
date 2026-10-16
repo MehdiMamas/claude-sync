@@ -120,9 +120,16 @@ Only the host changes the member list, even though the list lives in `claude-syn
 
 - **The app.** Members are invited with read (pull) access, and only the host's app pushes to a group repo. A member's local edit to a managed file is never pushed: the notice offers **Keep local** and **Undo** but no **Share with group**, the group screen shows "Only <host> can change this group. Your edits stay on this machine.", and the core refuses a member's change with `Error::HostOnly` ("Only <host> can change <group>. Your change stays on this machine; ask <host>, or propose it as a pull request."). A member who wants a change opens a pull request on the group repo; the host reviews and merges it.
 - **GitHub.** The host's app creates a repository ruleset on the default branch that blocks update, deletion and non-fast-forward pushes for everyone except repository admins. If GitHub refuses (for example a private repo on a free plan), the app still only pushes from the host's machine, and the host sees "GitHub can't lock this repo on your plan; the app still only sends changes from your machine." (`GroupStatus.hostLock` is `on`, `unavailable`, or null for members.)
-- **Proposals.** A group can opt into proposal mode, which lets members send changes through the host's review (§5b).
+- **Proposals.** A group can opt into proposal mode, which lets members send changes through the host's review (§5c).
 
-### 5b. Proposals
+### 5b. Transfer and rename
+
+- **Transfer (host only).** The group screen has "Hand over the group": pick a current member and confirm. The app calls `POST /repos/{o}/{r}/transfer {new_owner}` (`Engine::transfer_group`, refused for non-members, for yourself and for non-hosts). GitHub emails the new owner, who must accept; until then nothing changes. Afterwards the new owner is the host and you are a member. Before asking, the app makes sure the former host's login is in `members`, so the new host's reconcile (§5) keeps their read access. GitHub also keeps the former owner as a collaborator of a transferred repo; the member list is what the app relies on.
+- **Following a move.** GitHub redirects a renamed or transferred repo. On every sync pass, before the groups are synced, the engine asks each joined repo for its current `full_name` (`GET /repos/{o}/{r}`, `RemoteRepo::current_id`). If it differs from the stored id (case-insensitive), `rename::migrate` moves every local trace to the new id: `groups/<old>/` and `conflicts/<old>/` (renamed, never deleted), `manifest.json` (groups, files, marketplaces, order, and the `~/.claude/CLAUDE.md` import line), `settings-owned.json`, `jobs.json` (re-registering scheduled tasks on the next job reconcile), `plugins.json`, `notifications.json`, and last `state.json`, where the id is replaced in place so the group order is kept. Writes of the repo (commits, transfer, reconcile) always use the resolved new name, never the stale one.
+- **Resumable.** The steps are idempotent and `state.json` is saved last, so a run interrupted halfway (folder moved, state not yet saved) finishes on the next sync; an id that is already migrated is a no-op. The host role is recomputed on the next sync from the repo owner and the signed-in login, so it flips on its own. Other groups' stored collisions that name this group's owner are recomputed by their next sync.
+- **Notice.** The app shows one notification: "<old> moved to <new>; claude-sync follows it." (`SyncReport.moved`).
+
+### 5c. Proposals
 
 - **Setting.** A group has an optional `proposalMode` flag, stored in `claude-sync.json` in the group repo. Only the host can toggle it. Members, settings and the toggle itself stay direct host changes.
 - **Mode off.** Nothing changes: members get `HostOnly` (§5a).
@@ -134,13 +141,6 @@ Only the host changes the member list, even though the list lives in `claude-syn
 - **Host's own proposals.** These need one approval from another group member, and the host's app merges them on its next sync.
 - **Stale proposals.** If a file in a proposal changed on the default branch since the proposal branched, the proposal is "needs an update" and is never merged.
 - **Local edits.** After proposing, the edit stays a local edit and is not proposed again on each sync. Sharing a skill as a proposal keeps the local folder (no backup move).
-
-### 5b. Transfer and rename
-
-- **Transfer (host only).** The group screen has "Hand over the group": pick a current member and confirm. The app calls `POST /repos/{o}/{r}/transfer {new_owner}` (`Engine::transfer_group`, refused for non-members, for yourself and for non-hosts). GitHub emails the new owner, who must accept; until then nothing changes. Afterwards the new owner is the host and you are a member. Before asking, the app makes sure the former host's login is in `members`, so the new host's reconcile (§5) keeps their read access. GitHub also keeps the former owner as a collaborator of a transferred repo; the member list is what the app relies on.
-- **Following a move.** GitHub redirects a renamed or transferred repo. On every sync pass, before the groups are synced, the engine asks each joined repo for its current `full_name` (`GET /repos/{o}/{r}`, `RemoteRepo::current_id`). If it differs from the stored id (case-insensitive), `rename::migrate` moves every local trace to the new id: `groups/<old>/` and `conflicts/<old>/` (renamed, never deleted), `manifest.json` (groups, files, marketplaces, order, and the `~/.claude/CLAUDE.md` import line), `settings-owned.json`, `jobs.json` (re-registering scheduled tasks on the next job reconcile), `plugins.json`, `notifications.json`, and last `state.json`, where the id is replaced in place so the group order is kept. Writes of the repo (commits, transfer, reconcile) always use the resolved new name, never the stale one.
-- **Resumable.** The steps are idempotent and `state.json` is saved last, so a run interrupted halfway (folder moved, state not yet saved) finishes on the next sync; an id that is already migrated is a no-op. The host role is recomputed on the next sync from the repo owner and the signed-in login, so it flips on its own. Other groups' stored collisions that name this group's owner are recomputed by their next sync.
-- **Notice.** The app shows one notification: "<old> moved to <new>; claude-sync follows it." (`SyncReport.moved`).
 
 ## 6. Sync engine
 

@@ -50,7 +50,7 @@ pub struct ProposalFile {
     pub patch: String,
 }
 
-/// An open proposal: a pull request from a `proposal/<login>-<time>` branch (§5b).
+/// An open proposal: a pull request from a `proposal/<login>-<time>` branch (§5c).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Proposal {
     pub number: u64,

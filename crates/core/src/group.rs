@@ -81,7 +81,7 @@ pub struct GroupFile {
     /// Other members' `CLAUDE.md` changes apply on every device at once (§7a). Absent: on.
     #[serde(default = "yes", rename = "autoAcceptClaudeMd")]
     pub auto_accept_claude_md: bool,
-    /// Changes go to a proposal pull request that another member approves (§5b). Absent: off.
+    /// Changes go to a proposal pull request that another member approves (§5c). Absent: off.
     #[serde(default, rename = "proposalMode", skip_serializing_if = "is_false")]
     pub proposal_mode: bool,
     /// Unknown keys, kept on rewrite.
