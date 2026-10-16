@@ -57,6 +57,8 @@ function downloads(release: Release | null): string {
   return `<p>Latest version: <strong>${esc(version)}</strong></p>
 ${button("Download for Windows", found.windows)}
 ${button("Download for macOS", found.macos)}
+${button("Download for Linux (AppImage, beta)", found.linuxAppImage)}
+${button("Download for Linux (.deb, beta)", found.linuxDeb)}
 <div class="card"><h2>First run on macOS</h2>
 <p class="mut">The app is not signed by Apple yet, so macOS asks before opening it.</p>
 <ol><li>Double-click the downloaded <code>.dmg</code> and drag claude-sync to Applications.</li>

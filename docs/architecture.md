@@ -4,7 +4,7 @@ This document is the design the sprint issues point to. The bash CLI in `bin/` a
 
 ## 1. What it is
 
-A small desktop app (Windows and macOS first, Linux later) that lives in the tray, starts at login and keeps Claude Code setups in sync:
+A small desktop app (Windows and macOS first; Linux ships as a beta, untested until a runtime check) that lives in the tray, starts at login and keeps Claude Code setups in sync:
 
 - **Groups.** A group is a set of friends who share Claude Code settings: `settings.json` keys, skills, subagents, slash commands, output styles and `CLAUDE.md` instructions. One person **hosts** the group: the group repo lives on their GitHub account. Everyone else **joins**. Only the host changes the group: shared settings, skills, `CLAUDE.md` and the member list. A member's edits stay on their machine; they propose a change as a pull request to the group repo, and the host merges it (§5a).
 - **Devices.** Each person can run the app on as many PCs as they like. Every device signs in with the person's own GitHub account and has full access.
@@ -31,7 +31,7 @@ GitHub Actions run on GitHub-hosted runners only (free for a public repo): `ci.y
 
 - The app signs in with the **GitHub OAuth device flow** (no client secret in the app). It needs a GitHub OAuth App with device flow enabled. Its client ID is public and is compiled in (`CLAUDE_SYNC_GITHUB_CLIENT_ID`).
 - Scope: `repo` (needed to read and write private repos and to manage collaborators and invitations) and `read:user`. This is broad. A GitHub App with per-repo access is in the backlog.
-- The tokens are stored in the OS keychain (Windows Credential Manager, macOS Keychain) through the `keyring` crate, under service `claude-sync`, account = GitHub login, as one entry: a JSON object with the access token and, when GitHub sends them, the refresh token (`ghr_…`) and both expiry times. An entry saved by 0.1.1 or earlier is the bare access token and still loads. Tokens are never written to a file or a log.
+- The tokens are stored in the OS keychain (Windows Credential Manager, macOS Keychain, Linux Secret Service such as GNOME Keyring or KWallet; Linux is beta) through the `keyring` crate, under service `claude-sync`, account = GitHub login, as one entry: a JSON object with the access token and, when GitHub sends them, the refresh token (`ghr_…`) and both expiry times. An entry saved by 0.1.1 or earlier is the bare access token and still loads. Tokens are never written to a file or a log.
 - **Token refresh.** When the OAuth App has expiring user tokens on, the access token lasts 8 hours and the refresh token 6 months. The app refreshes 5 minutes before the access token expires, and again after a `401`, with `POST https://github.com/login/oauth/access_token` (`grant_type=refresh_token`, `client_id`, `refresh_token`; no client secret, as in the device flow), then saves the new pair to the keychain and retries the call once. All GitHub calls of a sign-in share one session (`github::Session`), so concurrent calls wait for a single refresh instead of each spending the refresh token (GitHub rotates it on every use).
 - **Expired sign-in.** A `401` that a refresh cannot cure (no refresh token, or GitHub refuses it, e.g. `bad_refresh_token`) and that `GET /user` confirms means GitHub no longer accepts the sign-in. The app then signs out as *expired*: background GitHub calls (sync loop, update check, feedback outbox) stop, the dead tokens are removed from the keychain, `state.json` and the groups stay, one notification says so, and the window shows "Your GitHub sign-in expired" with a **Sign in again** button instead of an error every minute. The tray says "Sign-in expired". Signing in again clears it and syncing resumes where it left off. A network error or a GitHub 5xx during a refresh is not an expiry: the call fails and the next pass tries again.
 - Each device signs in on its own. Signing out on one device does not affect the others.
@@ -284,7 +284,7 @@ Plain TypeScript functions, no framework. Env:
 
 **Auth.** Every call (except `/api/health`) carries the user's GitHub token: `Authorization: Bearer <token>`. The relay calls `GET /user` to get the login. Any GitHub account may use the relay unless its login is in `BLOCKED_GITHUB_USERS`. The login is cached in memory for 10 minutes. `/api/feedback` also uses the token to open the issue as the user. The user token is never logged or stored. Each login gets 120 calls per hour across all endpoints (`429` with `Retry-After` past that).
 
-**`GET /api/update?target=<windows|darwin>&arch=<x86_64|aarch64>&current_version=<semver>`.** Reads the latest non-draft release of `RELEASES_REPO`. Returns `204` if not newer, else the Tauri updater JSON (`version`, `notes`, `pub_date`, `url`, `signature`). `signature` is the contents of the matching `.sig` asset. `url` is `/api/download/<asset-id>` on the relay.
+**`GET /api/update?target=<windows|darwin|linux>&arch=<x86_64|aarch64>&current_version=<semver>`.** Reads the latest non-draft release of `RELEASES_REPO`. Returns `204` if not newer, else the Tauri updater JSON (`version`, `notes`, `pub_date`, `url`, `signature`). `signature` is the contents of the matching `.sig` asset. `url` is `/api/download/<asset-id>` on the relay.
 
 **`GET /api/download/<asset-id>`.** Asks GitHub for the asset with `Accept: application/octet-stream` and `redirect: manual`, then returns that `302` to the short-lived signed URL. Bytes never pass through Vercel.
 
@@ -312,7 +312,7 @@ Rate limit per login: 5 feedback posts per hour (in memory; good enough for a ho
 - A release build needs `CLAUDE_SYNC_RELAY_URL` and `CLAUDE_SYNC_GITHUB_CLIENT_ID` at compile time (Actions variables for the workflow); the workflow and `release.ps1 -Publish` refuse to build without them. The updater key has an empty password (`tauri build --ci`); locally it comes from `TAURI_SIGNING_PRIVATE_KEY` or `~/.claude-sync-keys/updater.key`.
 - The update path is tested without GitHub or Vercel: `relay/dev/harness.ts` runs the relay's handlers on a local HTTP server against a stub GitHub API and asset host (`relay/test/e2e.test.ts`), and `node relay/dev/local.ts dist/release/<version>` runs it against real staged assets.
 - Code signing: `release.yml` signs the macOS app with Developer ID and notarizes it when the `APPLE_*` secrets are set (Tauri imports the certificate into a temporary keychain itself); without them the build is unsigned, macOS needs right-click → Open the first time, and the job summary says so. Windows is not Authenticode-signed: SmartScreen shows once.
-- Linux: `ci.yml` builds, lints and tests on Ubuntu, but no Linux release ships yet. `keyring` in `crates/core` has no Linux backend enabled, so it falls back to its in-memory mock store and a sign-in is lost right away; it needs the `sync-secret-service` (or `linux-native-sync-persistent`) and `crypto-rust` features, a Linux target in `relay/lib/assets.ts` and a runtime test of the tray, webview and screenshot first.
+- Linux (beta): `release.yml` builds `.deb` and `.AppImage` on `ubuntu-22.04` (the AppImage is the update bundle, signed like the others; served as target `linux`, arch `x86_64`), and `/install` offers both. `keyring` uses the Secret Service backend (`sync-secret-service` + `crypto-rust`, Linux only), so a session needs a running Secret Service (GNOME Keyring or KWallet). Nobody has run the Linux build yet: the tray, webview, autostart, keychain and screenshot still need a runtime test on a Linux desktop, so it stays beta until then (issue #38).
 
 ## 14. First install for a friend
 
@@ -402,7 +402,7 @@ Strict validation; a bad job is skipped and listed on the group screen, never ha
 
 - Windows: `schtasks /Create /F /TN "\claude-sync\<id>" /XML <file>`. Weekly calendar triggers, start when available, run on battery, `IgnoreNew` for overlapping runs, execution limit = timeout + 10 minutes, interactive token of the current user, hidden. `schtasks /Delete /F` to remove.
 - macOS: `~/Library/LaunchAgents/dev.claude-sync.job.<id>.plist` with `StartCalendarInterval`, then `launchctl bootout` / `bootstrap gui/<uid>`.
-- Linux: not supported yet; the screen says so and Accept is disabled.
+- Linux: not supported yet (the Linux build is beta); the screen says so and Accept is disabled.
 - Debug builds use `\claude-sync-dev\` and `dev.claude-sync.dev-job.`, so a dev run never touches the installed app's tasks. The ignored integration test uses `\claude-sync-test-<random hex>\`.
 
 **Uninstall.** The NSIS pre-uninstall hook (`app/src-tauri/windows/hooks.nsh`) runs `claude-sync.exe remove-jobs`, which deletes the tasks and keeps the acceptances, so a reinstall registers them again. Updates run no uninstaller, and the hook skips `/UPDATE` anyway. On macOS, deleting the app leaves the LaunchAgents; their runs fail until removed.

@@ -40,7 +40,7 @@ async function signature(repo: string, token: string, asset: ReleaseAsset): Prom
 }
 
 /**
- * GET /api/update?target=<windows|darwin>&arch=<x86_64|aarch64>&current_version=<semver>
+ * GET /api/update?target=<windows|darwin|linux>&arch=<x86_64|aarch64>&current_version=<semver>
  * 200 with the Tauri updater JSON when the latest release is newer, else 204.
  */
 export const GET = handler("update", async (req) => {
