@@ -52,9 +52,40 @@ pub struct GroupStatus {
     pub review_claude_md: bool,
     /// This user hosts the group (owns its repo): only the host's app changes the group.
     pub is_host: bool,
+    /// The group's proposal mode: members' changes go to review as proposals (section 5c).
+    pub proposal_mode: bool,
     /// `"on"`: GitHub enforces host-only pushes. `"unavailable"`: it can't on this plan.
     /// `None`: not known yet, or this user is not the host.
     pub host_lock: Option<String>,
+}
+
+/// What a change to a group came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Committed {
+    /// Nothing to change.
+    Nothing,
+    /// Committed to the group's default branch.
+    Pushed,
+    /// Sent as proposal #n, waiting for approval (§5c).
+    Proposed(u64),
+}
+
+/// An open proposal, for the group screen (§5c).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposalView {
+    pub number: u64,
+    pub branch: String,
+    pub author: String,
+    pub title: String,
+    pub url: String,
+    pub files: Vec<crate::remote::ProposalFile>,
+    pub approvals: Vec<String>,
+    /// This user's approval is on it.
+    pub approved_by_me: bool,
+    /// This user made it.
+    pub mine: bool,
+    pub needs_update: bool,
 }
 
 /// The review of a group's `CLAUDE.md` (§7a), for the group screen.
@@ -105,6 +136,8 @@ pub struct GroupSyncReport {
     pub id: GroupId,
     pub pulled: bool,
     pub pushed: bool,
+    /// A change went out as a proposal, not a commit (§5c).
+    pub proposed: bool,
     pub apply: crate::apply::ApplyReport,
     pub conflicts: Vec<ConflictInfo>,
     pub error: Option<String>,
@@ -641,7 +674,7 @@ impl Engine {
         let whole_file = file == edit.path;
         match action {
             EditAction::Share => {
-                self.require_host(id).await?;
+                self.require_host_or_proposals(id).await?;
                 let local = self.apply.local_files(&self.paths, id)?;
                 if let Some(bytes) = local.get(file).filter(|b| group::too_large(file, b.len())) {
                     return Err(Error::Invalid(format!(
@@ -692,7 +725,7 @@ impl Engine {
         }
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
-        self.require_host(id).await?;
+        self.require_host_or_proposals(id).await?;
         let dir = self.paths.claude_home.join("skills").join(skill);
         if !dir.join("SKILL.md").is_file() {
             return Err(Error::Invalid(format!(
@@ -712,18 +745,23 @@ impl Engine {
             )));
         }
         self.scan(&files)?;
-        self.commit_to_group(id, &format!("share skills/{skill}"), |gf, current| {
-            if !gf.sync.skills {
-                return Err(Error::Invalid(format!("{id} does not sync skills")));
-            }
-            if current.keys().any(|p| p.starts_with(&prefix)) {
-                return Err(Error::Invalid(format!(
-                    "{id} already has a skill named {skill}"
-                )));
-            }
-            Ok(Some(files.clone()))
-        })
-        .await?;
+        let committed = self
+            .commit_or_propose(id, &format!("share skills/{skill}"), |gf, current| {
+                if !gf.sync.skills {
+                    return Err(Error::Invalid(format!("{id} does not sync skills")));
+                }
+                if current.keys().any(|p| p.starts_with(&prefix)) {
+                    return Err(Error::Invalid(format!(
+                        "{id} already has a skill named {skill}"
+                    )));
+                }
+                Ok(Some(files.clone()))
+            })
+            .await?;
+        if matches!(committed, Committed::Proposed(_)) {
+            // Nothing is the group's yet: the folder stays until the proposal is merged.
+            return Ok(());
+        }
         // The group's copy replaces the user's folder, which is kept as a backup.
         let backup = self
             .paths
@@ -837,6 +875,92 @@ impl Engine {
         self.claude_md_review(id)
     }
 
+    /// The group's "Proposal mode" (§5c): with it on, every change to the group, the host's
+    /// too, is a proposal that another member approves. Host only.
+    pub async fn set_group_proposal_mode(&self, id: &GroupId, on: bool) -> crate::Result<()> {
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        self.require_host(id).await?;
+        let summary = format!("proposal mode {}", if on { "on" } else { "off" });
+        self.edit_group_file(id, &summary, |gf| {
+            let changed = gf.proposal_mode != on;
+            gf.proposal_mode = on;
+            Ok(changed)
+        })
+        .await?;
+        match self.sync_group(id, None).await {
+            (_, Some(e)) => Err(e),
+            (_, None) => Ok(()),
+        }
+    }
+
+    /// The group's open proposals, for the group screen (§5c).
+    pub async fn proposals(&self, id: &GroupId) -> crate::Result<Vec<ProposalView>> {
+        self.require_joined(id)?;
+        let me = &self.login;
+        Ok(self
+            .remotes
+            .open(id)
+            .proposals()
+            .await?
+            .into_iter()
+            .map(|p| ProposalView {
+                mine: p.author.eq_ignore_ascii_case(me),
+                approved_by_me: p.approvals.iter().any(|a| a.eq_ignore_ascii_case(me)),
+                number: p.number,
+                branch: p.branch,
+                author: p.author,
+                title: p.title,
+                url: p.url,
+                files: p.files,
+                approvals: p.approvals,
+                needs_update: p.needs_update,
+            })
+            .collect())
+    }
+
+    /// Approve proposal `number`. Never your own. The host's approval of a member's proposal
+    /// merges it; a member's approval of the host's is merged by the host's next sync.
+    pub async fn approve_proposal(&self, id: &GroupId, number: u64) -> crate::Result<()> {
+        let _busy = self.busy.lock().await;
+        let p = self.find_proposal(id, number).await?;
+        if p.mine {
+            return Err(Error::Invalid(
+                "you cannot approve your own proposal; another member has to".into(),
+            ));
+        }
+        let remote = self.remotes.open(id);
+        if self.require_host(id).await.is_ok() {
+            if p.needs_update {
+                return Err(Error::Invalid(format!(
+                    "proposal #{number} needs an update before it can be merged"
+                )));
+            }
+            remote.merge_proposal(number).await?;
+            return match self.sync_group(id, None).await {
+                (_, Some(e)) => Err(e),
+                (_, None) => Ok(()),
+            };
+        }
+        remote.approve_proposal(number).await
+    }
+
+    /// Decline proposal `number`: it is closed with a note and never merged.
+    pub async fn decline_proposal(&self, id: &GroupId, number: u64) -> crate::Result<()> {
+        let _busy = self.busy.lock().await;
+        self.find_proposal(id, number).await?;
+        let note = format!("Declined by {} in claude-sync.", self.login);
+        self.remotes.open(id).decline_proposal(number, &note).await
+    }
+
+    async fn find_proposal(&self, id: &GroupId, number: u64) -> crate::Result<ProposalView> {
+        self.proposals(id)
+            .await?
+            .into_iter()
+            .find(|p| p.number == number)
+            .ok_or_else(|| Error::Invalid(format!("proposal #{number} is not open")))
+    }
+
     /// Accept what is pending when review is off for this device.
     fn accept_if_unreviewed(&self, id: &GroupId, st: &mut ReviewState) -> crate::Result<()> {
         let review = st.review.unwrap_or(!self.group_auto_accept(id));
@@ -890,6 +1014,32 @@ impl Engine {
             },
             host,
         })
+    }
+
+    /// The group's `proposalMode` as last synced; off when it can't be read.
+    fn group_proposal_mode(&self, id: &GroupId) -> bool {
+        self.load_base(id)
+            .ok()
+            .and_then(|b| read_group_file(id, &b.files).ok())
+            .is_some_and(|(gf, _)| gf.proposal_mode)
+    }
+
+    /// Like `require_host`, but with proposal mode on anyone with push access may write: their
+    /// change goes to a proposal (§5c).
+    async fn require_host_or_proposals(&self, id: &GroupId) -> crate::Result<()> {
+        if self.group_proposal_mode(id) {
+            return Ok(());
+        }
+        self.require_host(id).await
+    }
+
+    /// `proposal/<login>-<yyyymmddHHMMSS>` (UTC).
+    fn proposal_branch(&self) -> String {
+        let stamp: String = utc_stamp(now_unix())
+            .chars()
+            .filter(char::is_ascii_digit)
+            .collect();
+        format!("{}{}-{stamp}", crate::remote::PROPOSAL_PREFIX, self.login)
     }
 
     fn require_joined(&self, id: &GroupId) -> crate::Result<()> {
@@ -965,9 +1115,19 @@ impl Engine {
         &self,
         id: &GroupId,
         summary: &str,
-        mut change: impl FnMut(&GroupFile, &FileSet) -> crate::Result<Option<Changes>>,
+        change: impl FnMut(&GroupFile, &FileSet) -> crate::Result<Option<Changes>>,
     ) -> crate::Result<bool> {
-        self.require_host(id).await?;
+        Ok(self.commit_or_propose(id, summary, change).await? != Committed::Nothing)
+    }
+
+    /// `commit_to_group`, saying whether the change landed or became a proposal (§5c).
+    pub(crate) async fn commit_or_propose(
+        &self,
+        id: &GroupId,
+        summary: &str,
+        mut change: impl FnMut(&GroupFile, &FileSet) -> crate::Result<Option<Changes>>,
+    ) -> crate::Result<Committed> {
+        self.require_host_or_proposals(id).await?;
         let remote = self.remotes.open(id);
         let message = self.message(summary);
         let mut attempt = 0;
@@ -978,11 +1138,31 @@ impl Engine {
             if let Some(e) = read_only {
                 return Err(e);
             }
+            if !gf.proposal_mode {
+                self.require_host(id).await?;
+            }
             let Some(files) = change(&gf, &current)? else {
-                return Ok(false);
+                return Ok(Committed::Nothing);
             };
+            if gf.proposal_mode {
+                let title = self.message(summary);
+                return match remote
+                    .propose(&head, &files, &self.proposal_branch(), &title)
+                    .await
+                {
+                    Ok(number) => Ok(Committed::Proposed(number)),
+                    Err(e) if is_lost_access(&e) => {
+                        let host = remote
+                            .owner_login()
+                            .await
+                            .unwrap_or_else(|_| id.owner.clone());
+                        Err(no_push(&gf.name, &host))
+                    }
+                    Err(e) => Err(e),
+                };
+            }
             match remote.commit(&head, &files, &message).await {
-                Ok(_) => return Ok(true),
+                Ok(_) => return Ok(Committed::Pushed),
                 Err(Error::PushRace) if attempt < PUSH_RETRIES => attempt += 1,
                 Err(e) if is_lost_access(&e) => {
                     let host = remote
@@ -1007,6 +1187,7 @@ impl Engine {
             id: id.clone(),
             pulled: false,
             pushed: false,
+            proposed: false,
             apply: ApplyReport::default(),
             conflicts: Vec::new(),
             error: None,
@@ -1064,10 +1245,6 @@ impl Engine {
         let mut attempt = 0;
         let host = remote.owner_login().await?;
         let is_host = host.eq_ignore_ascii_case(&self.login);
-        // Only the host's app writes to the group; a member's edits stay local.
-        if !is_host {
-            status.shared.clear();
-        }
         let (gf, read_only) = loop {
             let remote_files = if head == base.head {
                 base.files.clone()
@@ -1076,6 +1253,12 @@ impl Engine {
                 remote.files_at(&head.commit).await?
             };
             let (gf, read_only) = read_group_file(id, &remote_files)?;
+            // Only the host's app writes to the group; with proposal mode on a member's
+            // edits go out as proposals (§5c). Otherwise they stay local.
+            let may = is_host || gf.proposal_mode;
+            if !may {
+                status.shared.clear();
+            }
             let keep = |p: &str| group::is_allowlisted(p) && gf.syncs(p);
             let mut base_v = only(&base.files, keep);
             let mut remote_v = only(&remote_files, keep);
@@ -1086,8 +1269,7 @@ impl Engine {
                 for files in [&mut base_v, &mut remote_v, &mut local] {
                     files.remove(group::CLAUDE_MD);
                 }
-                let shared =
-                    is_host && read_only.is_none() && status.shared.contains(group::CLAUDE_MD);
+                let shared = may && read_only.is_none() && status.shared.contains(group::CLAUDE_MD);
                 let pass = self
                     .review_pull(
                         remote,
@@ -1105,7 +1287,7 @@ impl Engine {
                 remove_file_if_exists(&self.review_file(id))?;
                 None
             };
-            let md_push = md.as_ref().and_then(|m| m.push.clone()).filter(|_| is_host);
+            let md_push = md.as_ref().and_then(|m| m.push.clone()).filter(|_| may);
             let merged = merge::three_way(&base_v, &local, &remote_v);
 
             // Save losing local copies before the apply overwrites them.
@@ -1117,7 +1299,7 @@ impl Engine {
             // A local edit that is not being shared stays a local edit: the apply gets the
             // group's version, so it leaves the edit in place instead of adopting it.
             for p in merged.to_push.keys() {
-                if is_host && read_only.is_none() && status.shared.contains(p) {
+                if may && read_only.is_none() && status.shared.contains(p) {
                     continue;
                 }
                 match remote_v.get(p) {
@@ -1147,7 +1329,7 @@ impl Engine {
             let mut push: Changes = merged
                 .to_push
                 .into_iter()
-                .filter(|(p, _)| is_host && read_only.is_none() && status.shared.contains(p))
+                .filter(|(p, _)| may && read_only.is_none() && status.shared.contains(p))
                 .collect();
             if let Some(content) = md_push {
                 push.insert(group::CLAUDE_MD.into(), content);
@@ -1156,6 +1338,16 @@ impl Engine {
                 break (gf, read_only);
             }
             self.scan(&push)?;
+            if gf.proposal_mode {
+                // The edit stays a local edit until its proposal is merged (§5c).
+                let title = self.message(&summarize(&push));
+                remote
+                    .propose(&head, &push, &self.proposal_branch(), &title)
+                    .await?;
+                status.shared.retain(|p| !push.contains_key(p));
+                report.proposed = true;
+                break (gf, read_only);
+            }
             match remote
                 .commit(&head, &push, &self.message(&summarize(&push)))
                 .await
@@ -1188,6 +1380,9 @@ impl Engine {
             return Err(e);
         }
         if is_host {
+            if gf.proposal_mode {
+                self.merge_approved(remote, &gf).await;
+            }
             self.ensure_lock(remote, id, status).await;
             status.invited = self.reconcile(remote, &gf, &host).await?;
         } else {
@@ -1195,6 +1390,31 @@ impl Engine {
             status.host_lock = None;
         }
         Ok(())
+    }
+
+    /// The host's own proposals only the host's app can merge (§5a): merge each one that
+    /// another member approved and that still applies. Never an error; the next sync picks
+    /// the merged files up.
+    async fn merge_approved(&self, remote: &dyn RemoteRepo, gf: &GroupFile) {
+        let open = match remote.proposals().await {
+            Ok(open) => open,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not list the group's proposals");
+                return;
+            }
+        };
+        for p in open {
+            let mine = p.author.eq_ignore_ascii_case(&self.login);
+            let approved = p.approvals.iter().any(|a| {
+                !a.eq_ignore_ascii_case(&self.login)
+                    && gf.members.iter().any(|m| m.eq_ignore_ascii_case(a))
+            });
+            if mine && approved && !p.needs_update {
+                if let Err(e) = remote.merge_proposal(p.number).await {
+                    tracing::warn!(proposal = p.number, error = %e, "could not merge a proposal");
+                }
+            }
+        }
     }
 
     /// The host's app asks GitHub to refuse everyone else's pushes, once per group per run.
@@ -1415,6 +1635,7 @@ impl Engine {
                 .and_then(|r| r.review)
                 .unwrap_or(!self.group_auto_accept(id)),
             is_host,
+            proposal_mode: self.group_proposal_mode(id),
             host_lock: s.host_lock,
         }
     }
@@ -3196,6 +3417,218 @@ mod tests {
         repo.set_file(group::FILE, &serde_json::to_string_pretty(&v).unwrap());
     }
 
+    /// Turn `proposalMode` on or off in the repo's group file.
+    fn set_proposal_mode(repo: &FakeRepo, on: bool) {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&repo.file(group::FILE).unwrap()).unwrap();
+        v["proposalMode"] = on.into();
+        repo.set_file(group::FILE, &serde_json::to_string_pretty(&v).unwrap());
+    }
+
+    /// `bo` has joined with proposal mode on and edited `agents/a.md`, shared.
+    async fn proposing_member() -> (FakeGitHub, GroupId, FakeRepo, Device) {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        set_proposal_mode(&repo, true);
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&id).await.unwrap();
+        bo.apply.edit(&id, "agents/a.md", "mine\n");
+        mark_shared(&bo, &id, "agents/a.md");
+        (world, id, repo, bo)
+    }
+
+    #[tokio::test]
+    async fn proposal_mode_off_still_host_only() {
+        let (_, id, repo, bo) = joined().await;
+        let err = bo
+            .engine
+            .set_group_proposal_mode(&id, true)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        bo.apply.edit(&id, "agents/a.md", "mine\n");
+        mark_shared(&bo, &id, "agents/a.md");
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(!report.groups[0].pushed && !report.groups[0].proposed);
+        let err = bo.engine.share_skill(&id, "pdf").await.unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        assert!(repo.pulls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn member_edit_becomes_a_proposal() {
+        let (_, id, repo, bo) = proposing_member().await;
+        let before = commit_count(&repo);
+
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].proposed);
+        assert!(!report.groups[0].pushed);
+        assert_eq!(commit_count(&repo), before, "main is untouched");
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+        let pulls = repo.pulls();
+        assert_eq!(pulls.len(), 1);
+        let branch = &pulls[0].branch;
+        let stamp = branch.strip_prefix("proposal/bo-").expect(branch);
+        assert_eq!(stamp.len(), 14, "{branch}");
+        assert!(stamp.bytes().all(|b| b.is_ascii_digit()), "{branch}");
+        assert_eq!(pulls[0].state, "Open");
+        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "mine\n", "kept");
+
+        let again = bo.engine.sync_all().await.unwrap();
+        assert!(!again.groups[0].proposed, "not proposed twice");
+        assert_eq!(repo.pulls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn host_approves_member_proposal_and_it_merges() {
+        let (world, id, repo, bo) = proposing_member().await;
+        bo.engine.sync_all().await.unwrap();
+        let ana = device(&world, "ana", "pc");
+        ana.engine.join(&id).await.unwrap();
+        let before = commit_count(&repo);
+
+        let open = ana.engine.proposals(&id).await.unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].author, "bo");
+        assert!(!open[0].mine);
+        ana.engine
+            .approve_proposal(&id, open[0].number)
+            .await
+            .unwrap();
+        assert_eq!(repo.file("agents/a.md").unwrap(), "mine\n");
+        assert_eq!(commit_count(&repo), before + 1, "squash-merged");
+        assert_eq!(repo.pulls()[0].state, "Merged");
+        assert!(ana.engine.proposals(&id).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn member_approval_lets_host_sync_merge_host_proposal() {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        set_proposal_mode(&repo, true);
+        let ana = device(&world, "ana", "pc");
+        ana.engine.join(&id).await.unwrap();
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&id).await.unwrap();
+        ana.apply.edit(&id, "agents/a.md", "hosts\n");
+        mark_shared(&ana, &id, "agents/a.md");
+        let before = commit_count(&repo);
+
+        let report = ana.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].proposed && !report.groups[0].pushed);
+        assert_eq!(commit_count(&repo), before);
+        let number = repo.pulls()[0].number;
+        let err = ana.engine.approve_proposal(&id, number).await.unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{err}");
+        ana.engine.sync_all().await.unwrap();
+        assert_eq!(repo.pulls()[0].state, "Open", "no approval yet");
+
+        bo.engine.approve_proposal(&id, number).await.unwrap();
+        assert_eq!(
+            repo.file("agents/a.md").unwrap(),
+            "base\n",
+            "not merged by bo"
+        );
+        ana.engine.sync_all().await.unwrap();
+        assert_eq!(repo.pulls()[0].state, "Merged");
+        assert_eq!(repo.file("agents/a.md").unwrap(), "hosts\n");
+        assert_eq!(commit_count(&repo), before + 1);
+    }
+
+    #[tokio::test]
+    async fn decline_closes_the_proposal_with_a_comment() {
+        let (world, id, repo, bo) = proposing_member().await;
+        bo.engine.sync_all().await.unwrap();
+        let ana = device(&world, "ana", "pc");
+        ana.engine.join(&id).await.unwrap();
+        let number = repo.pulls()[0].number;
+
+        ana.engine.decline_proposal(&id, number).await.unwrap();
+        let pull = &repo.pulls()[0];
+        assert_eq!(pull.state, "Closed");
+        assert_eq!(pull.comments.len(), 1, "{:?}", pull.comments);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+        assert!(ana.engine.proposals(&id).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn own_proposal_cannot_be_approved() {
+        let (_, id, repo, bo) = proposing_member().await;
+        bo.engine.sync_all().await.unwrap();
+        let number = repo.pulls()[0].number;
+        let err = bo.engine.approve_proposal(&id, number).await.unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{err}");
+        assert!(repo.pulls()[0].reviews.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_proposal_needs_update_and_is_not_merged() {
+        let (world, id, repo, bo) = proposing_member().await;
+        bo.engine.sync_all().await.unwrap();
+        let number = repo.pulls()[0].number;
+        // The same file changes on main after the proposal was made.
+        repo.set_file("agents/a.md", "newer\n");
+        let ana = device(&world, "ana", "pc");
+        ana.engine.join(&id).await.unwrap();
+
+        let open = ana.engine.proposals(&id).await.unwrap();
+        assert!(open[0].needs_update);
+        let err = ana.engine.approve_proposal(&id, number).await.unwrap_err();
+        assert!(err.to_string().contains("needs an update"), "{err}");
+        assert_eq!(repo.pulls()[0].state, "Open");
+        assert_eq!(repo.file("agents/a.md").unwrap(), "newer\n");
+    }
+
+    #[tokio::test]
+    async fn only_host_can_set_proposal_mode() {
+        let (_, id, _, bo) = joined().await;
+        let err = bo
+            .engine
+            .set_group_proposal_mode(&id, true)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+
+        let (_, id, repo, host) = joined_host().await;
+        let mode = |repo: &FakeRepo| {
+            GroupFile::parse(repo.file(group::FILE).unwrap().as_bytes())
+                .unwrap()
+                .proposal_mode
+        };
+        host.engine
+            .set_group_proposal_mode(&id, true)
+            .await
+            .unwrap();
+        assert!(mode(&repo));
+        host.engine
+            .set_group_proposal_mode(&id, false)
+            .await
+            .unwrap();
+        assert!(!mode(&repo));
+    }
+
+    #[tokio::test]
+    async fn share_skill_in_proposal_mode_keeps_the_folder() {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        set_proposal_mode(&repo, true);
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&id).await.unwrap();
+        let dir = bo.engine.paths.claude_home.join("skills").join("review");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("SKILL.md"), "# Review\n").unwrap();
+        let before = commit_count(&repo);
+
+        bo.engine.share_skill(&id, "review").await.unwrap();
+        assert_eq!(commit_count(&repo), before);
+        assert_eq!(repo.file("skills/review/SKILL.md"), None);
+        assert_eq!(repo.pulls().len(), 1);
+        assert!(dir.join("SKILL.md").is_file(), "kept until merged");
+        let backups = std::fs::read_dir(bo.engine.paths.backups_dir())
+            .map(|d| d.count())
+            .unwrap_or(0);
+        assert_eq!(backups, 0, "no backup move");
+    }
     #[tokio::test]
     async fn an_absent_auto_accept_key_applies_others_changes_at_once() {
         let (_, id, repo, bo) = joined().await;

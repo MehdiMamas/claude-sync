@@ -944,6 +944,12 @@ button.act-more {
   display: block;
   padding: 0 0.6rem;
 }
+.diff-line.add {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.diff-line.remove {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
 .diff.add .diff-line {
   background: color-mix(in srgb, var(--ok) 14%, transparent);
 }

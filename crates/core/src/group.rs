@@ -65,6 +65,10 @@ impl Default for SyncFlags {
     }
 }
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GroupFile {
     pub schema: u32,
@@ -77,6 +81,9 @@ pub struct GroupFile {
     /// Other members' `CLAUDE.md` changes apply on every device at once (§7a). Absent: on.
     #[serde(default = "yes", rename = "autoAcceptClaudeMd")]
     pub auto_accept_claude_md: bool,
+    /// Changes go to a proposal pull request that another member approves (§5c). Absent: off.
+    #[serde(default, rename = "proposalMode", skip_serializing_if = "is_false")]
+    pub proposal_mode: bool,
     /// Unknown keys, kept on rewrite.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -91,6 +98,7 @@ impl GroupFile {
             members: vec![host.into()],
             sync: SyncFlags::default(),
             auto_accept_claude_md: true,
+            proposal_mode: false,
             extra: Map::new(),
         }
     }
@@ -250,6 +258,21 @@ pub fn readme(name: &str, host: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn proposal_mode_defaults_off_round_trips_and_is_omitted_when_off() {
+        let g = GroupFile::parse(br#"{"schema":1,"name":"G","members":["a"]}"#).unwrap();
+        assert!(!g.proposal_mode);
+        let off = String::from_utf8(g.to_bytes()).unwrap();
+        assert!(!off.contains("proposalMode"), "{off}");
+
+        let mut on = g.clone();
+        on.proposal_mode = true;
+        let bytes = on.to_bytes();
+        assert!(String::from_utf8(bytes.clone())
+            .unwrap()
+            .contains("proposalMode"));
+        assert!(GroupFile::parse(&bytes).unwrap().proposal_mode);
+    }
 
     #[test]
     fn parses_the_documented_example() {
