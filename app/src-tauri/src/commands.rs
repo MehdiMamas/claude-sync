@@ -735,6 +735,25 @@ pub fn test_notification(app: AppHandle) {
     );
 }
 
+/// Whether macOS lets the app show notifications: `granted`, `denied`, `not_asked`, or
+/// `unknown` (other systems, or not running from an app bundle).
+#[tauri::command]
+pub async fn notification_permission() -> &'static str {
+    #[cfg(target_os = "macos")]
+    return crate::mac_notify::permission();
+    #[cfg(not(target_os = "macos"))]
+    "unknown"
+}
+
+/// Open System Settings > Notifications (macOS), where the user can allow the app.
+#[tauri::command]
+pub fn open_notification_settings() {
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+        .spawn();
+}
+
 #[tauri::command]
 pub fn feedback_logs(ctx: CtxState) -> Res<String> {
     feedback::logs(&ctx)

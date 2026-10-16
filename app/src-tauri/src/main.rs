@@ -9,6 +9,8 @@ mod ctx;
 mod feedback;
 mod guard;
 mod jobs;
+#[cfg(target_os = "macos")]
+mod mac_notify;
 mod notify;
 mod personal;
 mod tray;
@@ -176,6 +178,8 @@ fn main() {
             commands::mark_all_notifications_read,
             commands::clear_notifications,
             commands::test_notification,
+            commands::notification_permission,
+            commands::open_notification_settings,
             commands::feedback_logs,
             commands::feedback_capture_screen,
             commands::feedback_attach_file,
@@ -243,6 +247,9 @@ fn main() {
             event: WindowEvent::Destroyed,
             ..
         } if label == window::LABEL => window::closed(app),
+        // Dock icon clicked (macOS) while no window is showing.
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen { .. } => window::open(app, None),
         _ => {}
     });
 }
