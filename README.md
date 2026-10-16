@@ -71,3 +71,5 @@ Numbered phases, one PR each:
 - `PROGRESS.md`: phase status, gate evidence, handoff, deferred items and decisions.
 - `.cursor/rules/`: binding rules for every change.
 - `.cursor/skills/phase/`: the `/phase` runbook and the local review script.
+
+Running the tests (`bash tests/run.sh`) needs jq on `PATH` (or `CLAUDE_SYNC_JQ`): the settings tests and the plugin tests read JSON with it. A test that cannot find jq fails with a message saying so. The plugin itself needs jq only for `settings=1`; a missing jq never breaks the SessionStart or SessionEnd hooks (they run only bash and git and exit 0).
