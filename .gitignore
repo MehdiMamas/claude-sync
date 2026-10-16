@@ -2,3 +2,8 @@
 Thumbs.db
 *.log
 .worktrees/
+target/
+node_modules/
+dist/
+.vercel/
+*.key

@@ -1,52 +1,95 @@
 # claude-sync
 
-Keep your Claude Code setup (`CLAUDE.md`, skills, subagents, slash commands, output styles) in a private git repo you own, and have it sync across your Macs, Linux boxes and Windows PCs automatically: pull when a session starts, push when it ends.
+claude-sync is a small desktop app that shares a Claude Code setup with a group of friends. The group shares settings, `CLAUDE.md` instructions, skills, subagents, slash commands, output styles and plugin marketplaces. Everything lives in a private GitHub repo that one member of the group owns.
 
-**Status: the sync engine (`pull` / `push`) is implemented.** Linking, setup, and the plugin come in later phases. The design is in [`SPEC.md`](SPEC.md) and the build order in [`PROGRESS.md`](PROGRESS.md).
+The app sits in the tray and starts when you log in. When someone in the group changes a shared file, the change reaches everyone's machines within about a minute. When you edit a shared file yourself, the app asks whether to share the change with the group or keep it on your machine.
 
-## Planned usage
+It runs on Windows and macOS. Linux is not supported yet.
+
+## Screenshots
+
+No screenshots yet.
+
+## Install
+
+Download the latest version from the [Releases page](https://github.com/MehdiMamas/claude-sync/releases):
+
+- **Windows:** `claude-sync_<version>_windows_x86_64-setup.exe`. The installer is not code-signed, so Windows SmartScreen may say it "protected your PC". Click **More info**, then **Run anyway**.
+- **macOS:** `claude-sync_<version>_darwin_universal.dmg`. The app is not notarized by Apple, so macOS may refuse to open it the first time. Open it from the Applications folder with right-click, **Open**, or allow it in System Settings, Privacy & Security.
+
+The app updates itself after that.
+
+## Use it
+
+1. Open claude-sync and click **Sign in with GitHub**. Your browser opens GitHub; enter the code the app shows.
+2. To start a group, click **Create a group** and give it a name. The app creates a private repo on your GitHub account. You are the group's host. The app offers your own `CLAUDE.md` instructions as the group's starting `CLAUDE.md`: check what it shows, remove anything personal, and it takes them out of your own file so Claude does not read them twice. In a group you host, **Share my CLAUDE.md** adds them later.
+3. To invite friends, open the group and add their GitHub logins. GitHub sends each of them an invitation. Only the host adds or removes members. Members get read-only access; the app sets a rule on the repo so nobody else can change it, and if GitHub can't (a private repo on a free plan) it still only sends changes from the host's machine and tells you.
+4. To join, a friend installs claude-sync and signs in. The invitation shows under **Pending invitations**. They click **Accept** and the app sets up the group on their machine. Only the host can change a group: a member's edits stay on their machine, and they propose changes to the host as a pull request on the group repo.
+5. In several groups? **Copy to another group** on a group's page copies lines of its `CLAUDE.md` (pick whole sections or single lines, and check the preview), its skills, agents and settings to another group you host. Secrets are redacted first, and what the other group already has in another version is refused, never overwritten.
+
+The app tells you when something happens (an invitation, a conflict, an update, plugins to reload). If you miss a notification, click the bell next to the app name: every notification is kept there. You can turn desktop notifications off in **Settings**; they are still kept in the app.
+
+### Reviewing changes to the shared instructions
+
+When another member adds or removes lines in a group's `CLAUDE.md`, nothing changes in yours until you say so. The app tells you, and the group's page shows each change with who made it, so you can **Accept** or **Decline** it. A line you decline stays out (or, for a removal, stays in) and you are not asked about it again. Declining only affects you: it never undoes the change for the rest of the group. Your own changes, from any of your computers, apply at once. Each group is reviewed on its own, so deleting a line in one group never removes it from another. To have everyone's changes apply at once, turn off **Review changes others make to CLAUDE.md** on the group's page.
+
+When two of your groups, or a group and your own `CLAUDE.md`, say the same thing twice or the opposite, or set the same setting differently, the group's page lists them under **Conflicts**, with both sides and the group names. For each one, keep one side (the other is left out on your computer only, never for the rest of the group), or edit the group's line, which the other members then review. Before you share or copy lines, the app warns about the ones that would clash. The check compares words; it does not ask Claude what the rules mean.
+
+### Personal memory
+
+What you tell Claude to remember about you is yours, not the group's. Turn on **Settings → Personal memory** and your own `CLAUDE.md` text and Claude's memories (the memory folder of each project) follow you to your other computers. The app keeps them in a private repo on your account, `<your login>/claude-sync-personal`. Your other computers join it automatically when they sign in with the same GitHub account; you can switch that off, choose what syncs, see and remove your devices, or turn it off on one computer. Turning it off leaves your files and the repo as they are.
+
+Each person can sign in on as many computers as they like. Before the app changes one of your own files for the first time, it saves a copy in `~/.claude-sync/backups/`. When two people change the same file at once, the group's version wins and your version is saved next to it.
+
+## What access it asks for
+
+Sign-in uses GitHub's device flow and asks for two scopes:
+
+- `repo`: to create the group's private repo on your account, invite members to it, accept invitations, and read and write the shared files. GitHub has no smaller scope that covers private repos.
+- `read:user`: to read your GitHub login.
+
+The app finds group repos by their `claude-sync-group` topic. It does not read or change your other repos.
+
+## Only join groups you trust
+
+A group can share Claude Code plugins. A plugin runs code on every member's machine. Settings, hooks and skills from the group also change what Claude Code does on your computer. Only join groups whose members you trust, and only add people you trust to your own group.
+
+## Group scheduled jobs
+
+A group repo can hold a `schedules.json` that asks Claude Code to run a prompt on a schedule, for example a weekly refresh of everyone's setup. The tray app registers a job with Task Scheduler (Windows) or launchd (macOS) only after you accept it on the group's screen, which shows the prompt, its options, the permission mode and the schedule. Any change to the job needs your OK again, and each job has an on/off toggle. If you trust a group, you can let its jobs run without asking (off by default, per device); you then get a notification for each new or changed job instead. Linux is not supported yet. The app also installs the plugins a group turns on (`claude plugin install`) and shows on the group screen any it could not install. Details are in [docs/architecture.md](docs/architecture.md) §17 and §18.
+
+## Privacy
+
+- Your GitHub token is kept in the operating system's keychain (Windows Credential Manager, macOS Keychain). It is never written to files or logs.
+- Your group's files stay in the private repo on GitHub and on the members' computers. There is no claude-sync server that stores them.
+- **Personal memory is only yours.** It goes to a private repo on your own GitHub account, and only your own computers read it. It never goes into a group repo, and group members are never added to it. The app refuses to use the repo if it is made public. The same secret check runs before anything is pushed, and memory files over 256 KB stay on their computer.
+- The app's update checks and the feedback form go through a small web service (the relay, in `relay/`). It uses your GitHub token to check who you are and, for feedback, to open the issue under your account. It does not save the token. If GitHub does not let your account open the issue, the app shows why; the report is never filed under anyone else's name.
+- **Feedback is public.** The feedback form opens a public issue on this repo under your GitHub account. Anyone can read its title, the description and your GitHub username. Logs are off by default; if you include them, tokens are removed but file paths and repo names can still show. A screenshot is public too.
+- Before it shares a file, the app checks it for tokens and keys and refuses to share a file that has one. Tokens are also removed from the app's logs.
+
+## Building from source
+
+You need Rust (stable), Node 22 or later, and pnpm.
+
 ```
-/plugin marketplace add <owner>/claude-sync
-/plugin install claude-sync@claude-sync
-/claude-sync:setup
+pnpm -C app/ui install
+pnpm -C app install
+pnpm -C app tauri dev
 ```
-Run the same three steps on every other machine and point it at the same repo.
 
-## Cursor sync
+The layout:
 
-Cursor sync is off until the config repo has a `claude-sync.conf` file whose `cursor` value is `1`. The file is lines of `key=value`. Blank lines are ignored. `#` starts a comment, on its own line or after a value (`cursor=1 # on`). Spaces around `=` are ignored, and a repeated key uses the last value. Anything other than `cursor=1`, including a missing file or `cursor=0`, does not link `~/.cursor`. `unlink` still removes Cursor links that point into the repo.
+- `crates/core`: the sync engine (Rust library `claude-sync-core`).
+- `app/src-tauri`: the desktop app (Tauri 2): tray, background sync, commands for the window.
+- `app/ui`: the app's window (TypeScript and Vite, no framework).
+- `relay/`: the web service for updates and feedback ([relay/README.md](relay/README.md)).
 
-With `cursor=1`, claude-sync links these directories and no others:
+`pnpm -C app/ui dev` serves the window in a browser with a fake backend (`?signedOut`, `?empty` and `?noHistory` show other states).
 
-- `~/.cursor/skills/<name>/` ↔ `cursor/skills/<name>/`
-- `~/.cursor/rules/` ↔ `cursor/rules/`
-- `~/.cursor/agents/` ↔ `cursor/agents/`
-- `~/.cursor/commands/` ↔ `cursor/commands/`
+Sign-in needs a GitHub OAuth app with device flow turned on: set `CLAUDE_SYNC_GITHUB_CLIENT_ID` when you build. Updates and feedback need `CLAUDE_SYNC_RELAY_URL`. A release build (`pnpm -C app tauri build`) signs its update bundles, so it also needs `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
-Push the conf file, then `claude-sync link` on a machine that does not already have those paths. If a path is already a real directory, `link` leaves it and reports a conflict. `claude-sync join --merge <url>` backs it up, keeps the repo copy when both sides have it, and imports local items the repo does not have yet. A secret inside `cursor/` blocks the push the same way one in `skills/` does.
+The design is in [docs/architecture.md](docs/architecture.md) and releases are described in [docs/releasing.md](docs/releasing.md). To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md). To report a security problem, see [SECURITY.md](SECURITY.md).
 
-## Sharing settings
+## License
 
-`~/.claude/settings.json` and `~/.claude/settings.local.json` never sync. They hold machine paths, local permissions and, often, tokens. To share some settings anyway, turn on the opt-in: put `settings=1` in the config repo's `claude-sync.conf` (same `key=value` rules as `cursor=1`), and put the keys to share in `settings.shared.json` at the root of the config repo. With `settings=1`, `push` commits `settings.shared.json`. Without it, that file is not committed and not merged.
-
-After each successful `pull`, claude-sync merges `settings.shared.json` into that machine's `settings.json`:
-
-- Objects merge key by key, at every level.
-- Arrays get the shared items they do not have yet, after the local items. Nothing is removed and no duplicate is added.
-- When both sides have a plain value (string, number, true/false, null) for the same key, the shared value wins.
-- Keys that only `settings.json` has are always kept. The merge never removes a key.
-- If `settings.shared.json` has a value of another type where `settings.json` has an object or array, nothing is merged and the message names the key.
-- If either file is not one valid JSON object, nothing is merged. `settings.json` is left byte for byte as it was.
-- If `settings.json` is a link (for example from a dotfiles manager), nothing is merged and every `pull` says so. Merge by hand or make it a regular file.
-- A merge rewrites the whole file in jq's layout (two-space indent).
-- When the merge changes something, the old file is copied to `~/.claude/.claude-sync-backup/<UTC time>/settings.json` first. A merge that changes nothing writes nothing. A machine with no `settings.json` gets one with the shared keys.
-
-Keys that make sense to share are the ones that are the same on every machine: `permissions.allow` and `permissions.deny` lists, `env` values that are not secrets, and `model`. Keep machine-specific paths, `apiKeyHelper`, and hooks with local paths in `settings.json`. Values in `settings.shared.json` are committed to your config repo. The secret scan checks it before every push and blocks the push if it finds a token, but do not put secrets there.
-
-The merge needs [jq](https://jqlang.org/). macOS 15 and later ship it as `/usr/bin/jq`. On Linux install the `jq` package. On Windows run `winget install jqlang.jq`, or set `CLAUDE_SYNC_JQ` to the path of a `jq` binary. Without jq, `pull` still pulls and links, prints one line saying jq is needed, exits 2, and does not touch `settings.json`. A session-start hook still exits 0. `settings=1` is the only feature that needs a tool other than bash and git.
-
-## How this repo is built
-- `SPEC.md`: the design, in numbered sections cited as §N.
-- `.cursor/rules/`: binding rules for every change.
-- `.cursor/plans/` and `PROGRESS.md`: the phase roadmap, plans and status, used only by the Phase Autopilot dashboard.
-- `docs/archive/phasing/`: the old `/phase` runbook, review script, phase rules and PR template (archived 2026-10-06).
+MIT. See [LICENSE](LICENSE).
