@@ -1383,11 +1383,10 @@ fn an_entry_the_user_changed_after_the_app_set_it_stays_on_removal() {
 }
 
 #[test]
-fn the_same_marketplace_in_two_groups_first_applied_wins() {
+fn the_same_marketplace_in_two_groups_higher_group_wins() {
     let e = env();
     let (a, b) = (g("a"), g("b"));
-    // b is first in the join order, but a placed the marketplace first.
-    let order = [b.clone(), a.clone()];
+    let order = [a.clone(), b.clone()];
     apply_group(&e.paths, &a, &order, &mp_files()).unwrap();
     let mut fb = mp_files();
     fb.insert("plugins/mods/only-in-b.txt".into(), b"b\n".to_vec());
@@ -1395,10 +1394,16 @@ fn the_same_marketplace_in_two_groups_first_applied_wins() {
     let r = apply_group(&e.paths, &b, &order, &fb).unwrap();
     assert_eq!(
         r.collisions,
-        vec![Collision::OtherGroup {
-            path: "plugins/mods".into(),
-            owner: a.clone()
-        }]
+        vec![
+            Collision::OtherGroup {
+                path: "plugins/mods".into(),
+                owner: a.clone()
+            },
+            Collision::OtherGroup {
+                path: "agents/reviewer.md".into(),
+                owner: a.clone()
+            }
+        ]
     );
     assert!(!r.plugins_changed);
     assert!(!mp_dir(&e).join("only-in-b.txt").exists());
@@ -1621,4 +1626,126 @@ fn a_backup_keeps_the_first_copy_of_a_path() {
     let all = backups(&e);
     assert_eq!(all.len(), 1);
     assert_eq!(read(&all[0]).unwrap(), b"original");
+}
+
+/// Apply every group in `order`, the way a reorder does.
+fn apply_all(e: &Env, order: &[GroupId], files: &[&FileSet]) {
+    for (id, f) in order.iter().zip(files) {
+        apply_group(&e.paths, id, order, f).unwrap();
+    }
+}
+
+#[test]
+fn reorder_moves_a_shared_file_to_the_new_winner() {
+    let e = env();
+    let (a, b) = (g("a"), g("b"));
+    let fa = set(&[(
+        "agents/x.md",
+        b"from a
+",
+    )]);
+    let fb = set(&[(
+        "agents/x.md",
+        b"from b
+",
+    )]);
+    apply_all(&e, &[a.clone(), b.clone()], &[&fa, &fb]);
+    assert_eq!(
+        read(&home(&e, "agents/x.md")).unwrap(),
+        b"from a
+"
+    );
+    assert_eq!(
+        Manifest::load(&e.paths).unwrap().files["agents/x.md"].group,
+        a
+    );
+
+    // b moves above a.
+    apply_all(&e, &[b.clone(), a.clone()], &[&fb, &fa]);
+    assert_eq!(
+        read(&home(&e, "agents/x.md")).unwrap(),
+        b"from b
+"
+    );
+    assert_eq!(
+        Manifest::load(&e.paths).unwrap().files["agents/x.md"].group,
+        b
+    );
+
+    // And back again.
+    apply_all(&e, &[a.clone(), b.clone()], &[&fa, &fb]);
+    assert_eq!(
+        read(&home(&e, "agents/x.md")).unwrap(),
+        b"from a
+"
+    );
+    assert_eq!(
+        Manifest::load(&e.paths).unwrap().files["agents/x.md"].group,
+        a
+    );
+}
+
+#[test]
+fn reorder_changes_the_winner_of_a_setting() {
+    let e = env();
+    let (a, b) = (g("a"), g("b"));
+    let fa = shared(json!({"model": "opus"}));
+    let fb = shared(json!({"model": "haiku", "theme": "light"}));
+    apply_all(&e, &[a.clone(), b.clone()], &[&fa, &fb]);
+    assert_eq!(
+        settings_json(&e),
+        json!({"model": "opus", "theme": "light"})
+    );
+    apply_all(&e, &[b.clone(), a.clone()], &[&fb, &fa]);
+    assert_eq!(
+        settings_json(&e),
+        json!({"model": "haiku", "theme": "light"})
+    );
+    apply_all(&e, &[a.clone(), b.clone()], &[&fa, &fb]);
+    assert_eq!(
+        settings_json(&e),
+        json!({"model": "opus", "theme": "light"})
+    );
+}
+
+#[test]
+fn reorder_moves_a_marketplace_to_the_new_winner() {
+    let e = env();
+    let (a, b) = (g("a"), g("b"));
+    let fa = mp_files();
+    let mut fb = mp_files();
+    fb.insert(
+        "plugins/mods/only-in-b.txt".into(),
+        b"b
+"
+        .to_vec(),
+    );
+    apply_all(&e, &[a.clone(), b.clone()], &[&fa, &fb]);
+    assert_eq!(
+        Manifest::load(&e.paths).unwrap().marketplaces["mods"].group,
+        a
+    );
+    assert!(!mp_dir(&e).join("only-in-b.txt").exists());
+
+    apply_all(&e, &[b.clone(), a.clone()], &[&fb, &fa]);
+    assert_eq!(
+        Manifest::load(&e.paths).unwrap().marketplaces["mods"].group,
+        b
+    );
+    assert_eq!(
+        read(&mp_dir(&e).join("only-in-b.txt")).unwrap(),
+        b"b
+"
+    );
+    assert_eq!(
+        settings_json(&e)["extraKnownMarketplaces"]["mods"],
+        mp_source(&e)
+    );
+
+    apply_all(&e, &[a.clone(), b.clone()], &[&fa, &fb]);
+    assert_eq!(
+        Manifest::load(&e.paths).unwrap().marketplaces["mods"].group,
+        a
+    );
+    assert!(!mp_dir(&e).join("only-in-b.txt").exists());
 }

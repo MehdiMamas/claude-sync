@@ -14,6 +14,7 @@ const ACTIONS: { action: EditAction; label: string; done: string }[] = [
 ];
 
 function editNotice(edit: LocalEdit): HTMLElement {
+  const guest = store.guestOf.includes(groupKey(edit.group));
   const what = edit.deleted ? "was deleted on this device" : "was changed on this device";
   return h(
     "div",
@@ -25,11 +26,12 @@ function editNotice(edit: LocalEdit): HTMLElement {
       ` ${what}. It is shared by `,
       h("strong", null, groupKey(edit.group)),
       ".",
+      guest && " Only the host can change the group, so your edit stays on this device.",
     ),
     h(
       "div",
       { class: "actions" },
-      ACTIONS.map(({ action, label, done }) => {
+      ACTIONS.filter(({ action }) => !(guest && action === "share")).map(({ action, label, done }) => {
         const btn = h("button", { class: action === "share" ? "primary" : "" }, label);
         btn.addEventListener("click", () =>
           busy(btn, "Working…", async () => {

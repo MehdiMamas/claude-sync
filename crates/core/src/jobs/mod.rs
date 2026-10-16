@@ -384,6 +384,22 @@ impl JobsState {
         write_json(&state_file(paths), self)
     }
 
+    /// The group moved to a new `owner/repo`. Tasks registered with the OS name the old id in
+    /// their command; their hash no longer matches, so the next reconcile registers them again.
+    /// `true` when anything changed.
+    pub fn rename_group(&mut self, old: &GroupId, new: &GroupId) -> bool {
+        let mut changed = false;
+        for r in self.jobs.values_mut().filter(|r| r.group == *old) {
+            r.group = new.clone();
+            changed = true;
+        }
+        if self.auto_accept.remove(old) {
+            self.auto_accept.insert(new.clone());
+            changed = true;
+        }
+        changed
+    }
+
     /// The record of `job` when it is the same group's; a record of another group with the
     /// same id says nothing about this job.
     pub fn of(&self, job: &Job) -> Option<&Record> {

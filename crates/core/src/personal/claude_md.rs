@@ -53,3 +53,36 @@ pub fn compose(existing: Option<&[u8]>, synced: Option<&[u8]>) -> Option<Vec<u8>
     }
     (!out.is_empty()).then_some(out)
 }
+
+/// `own` (the user's text, as [`strip`] returns it) without the lines it shares with
+/// `shared`: each non-blank line of `shared` takes out one equal line of `own` (trailing
+/// spaces ignored). Blank lines shrink to one between the lines left. `None` when nothing
+/// but blank lines is left.
+pub fn without_lines(own: &str, shared: &str) -> Option<String> {
+    let mut left: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for l in shared.lines().map(str::trim_end).filter(|l| !l.is_empty()) {
+        *left.entry(l).or_default() += 1;
+    }
+    let mut out = String::new();
+    let mut blank = true;
+    for line in own.lines() {
+        let key = line.trim_end();
+        if key.is_empty() {
+            if !blank {
+                out.push('\n');
+            }
+            blank = true;
+            continue;
+        }
+        match left.get_mut(key) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => {
+                out.push_str(line);
+                out.push('\n');
+                blank = false;
+            }
+        }
+    }
+    let out = out.trim_end_matches('\n');
+    (!out.trim().is_empty()).then(|| format!("{out}\n"))
+}

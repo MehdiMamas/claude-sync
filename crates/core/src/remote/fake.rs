@@ -3,7 +3,10 @@
 //! `FakeGitHub` is a world of repos. `FakeGitHub::account(login)` is what one signed-in user
 //! sees: repo handles that answer `404` once that user has no access, like GitHub does.
 //! A `FakeRepo` made with `FakeRepo::new` has no viewer and can do anything (the test's view).
-use super::{Changes, Collaborator, Head, PathFilter, RemoteFactory, RemoteRepo};
+use super::{
+    Changes, Collaborator, CommitFiles, Head, PathFilter, Proposal, ProposalFile, RemoteFactory,
+    RemoteRepo, PROPOSAL_PREFIX,
+};
 use crate::engine::CommitInfo;
 use crate::github::Invitation;
 use crate::{Error, FileSet, GroupId};
@@ -25,6 +28,23 @@ pub struct FakeCommit {
     pub author: String,
 }
 
+/// A pull request on the fake repo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FakePull {
+    pub number: u64,
+    pub branch: String,
+    pub author: String,
+    pub title: String,
+    /// The default-branch commit the branch was made from.
+    pub base: String,
+    pub changes: Changes,
+    /// `Open`, `Merged` or `Closed`.
+    pub state: &'static str,
+    /// `(login, approved)`, one per reviewer.
+    pub reviews: Vec<(String, bool)>,
+    pub comments: Vec<String>,
+}
+
 type Hook = Box<dyn FnMut(&FakeRepo) + Send>;
 
 struct Failure {
@@ -34,15 +54,23 @@ struct Failure {
 }
 
 struct State {
+    /// The repo's name now; differs from a handle's `id` after `FakeGitHub::rename`.
+    full_name: GroupId,
+    /// Owners a transfer was asked for (GitHub waits for them to accept).
+    transfers: Vec<String>,
     commits: Vec<FakeCommit>,
     owner: String,
     private: bool,
     topics: Vec<String>,
     collaborators: Vec<String>,
+    /// Collaborators with read access only: commits fail with `403`.
+    readers: Vec<String>,
     invitations: Vec<(u64, String)>,
+    rulesets: Vec<String>,
     failures: Vec<Failure>,
     before_commit: Option<Hook>,
     calls: Vec<String>,
+    pulls: Vec<FakePull>,
 }
 
 impl State {
@@ -118,18 +146,24 @@ impl FakeRepo {
     /// An empty private repo owned by `id.owner`, with the group topic.
     pub fn new(id: GroupId) -> Self {
         let owner = id.owner.clone();
+        let full_name = id.clone();
         Self {
             id,
             state: Arc::new(Mutex::new(State {
+                full_name,
+                transfers: Vec::new(),
                 commits: Vec::new(),
                 owner,
                 private: true,
                 topics: vec![crate::group::TOPIC.into()],
                 collaborators: Vec::new(),
+                readers: Vec::new(),
                 invitations: Vec::new(),
+                rulesets: Vec::new(),
                 failures: Vec::new(),
                 before_commit: None,
                 calls: Vec::new(),
+                pulls: Vec::new(),
             })),
             viewer: None,
             seen: Arc::default(),
@@ -164,10 +198,24 @@ impl FakeRepo {
 
     /// Someone else pushes (no checks, no hooks). Returns the new head.
     pub fn push(&self, changes: &Changes, message: &str) -> Head {
+        let owner = self.owner();
+        self.push_as(&owner, changes, message)
+    }
+
+    /// `author` pushes from outside the app (a git clone, the web UI).
+    pub fn push_as(&self, author: &str, changes: &Changes, message: &str) -> Head {
         let mut st = self.lock();
         let files = apply_changes(st.files(), changes).expect("fake push");
-        let owner = st.owner.clone();
-        st.push(files, message, &owner)
+        st.push(files, message, author)
+    }
+
+    /// `author` writes one file from outside the app.
+    pub fn set_file_as(&self, author: &str, path: &str, content: &str) -> Head {
+        self.push_as(
+            author,
+            &BTreeMap::from([(path.to_string(), Some(content.as_bytes().to_vec()))]),
+            &format!("update {path}"),
+        )
     }
 
     /// Someone else writes one file.
@@ -218,16 +266,34 @@ impl FakeRepo {
         self.lock().topics.clone()
     }
 
+    /// Owners `transfer` was asked for, oldest first.
+    pub fn transfer_requests(&self) -> Vec<String> {
+        self.lock().transfers.clone()
+    }
+
     pub fn owner(&self) -> String {
         self.lock().owner.clone()
     }
 
     /// Give `login` access directly (as if they had accepted an invitation).
+    /// Make `login` the repo's owner (the host) while the id keeps its name.
+    pub fn set_owner(&self, login: &str) {
+        let mut st = self.lock();
+        st.collaborators.retain(|c| !c.eq_ignore_ascii_case(login));
+        st.owner = login.into();
+    }
+
     pub fn add_collaborator(&self, login: &str) {
         let mut st = self.lock();
         if !st.has_access(login) {
             st.collaborators.push(login.into());
         }
+    }
+
+    /// Give `login` read access only: they can pull, but commits fail with `403`.
+    pub fn add_reader(&self, login: &str) {
+        self.add_collaborator(login);
+        self.lock().readers.push(login.into());
     }
 
     /// Collaborators other than the owner.
@@ -289,6 +355,24 @@ impl FakeRepo {
     }
 
     /// `RemoteRepo` calls made so far, in order (method names).
+    /// Names of the rulesets created on the repo.
+    pub fn rulesets(&self) -> Vec<String> {
+        self.lock().rulesets.clone()
+    }
+
+    /// Every pull request, oldest first.
+    pub fn pulls(&self) -> Vec<FakePull> {
+        self.lock().pulls.clone()
+    }
+
+    /// `login` reviews pull request `number` from outside the app.
+    pub fn review_as(&self, login: &str, number: u64, approved: bool) {
+        let mut st = self.lock();
+        let pr = st.pulls.iter_mut().find(|p| p.number == number).unwrap();
+        pr.reviews.retain(|(l, _)| !l.eq_ignore_ascii_case(login));
+        pr.reviews.push((login.into(), approved));
+    }
+
     pub fn calls(&self) -> Vec<String> {
         self.lock().calls.clone()
     }
@@ -317,6 +401,13 @@ impl FakeRepo {
             }
         }
         Ok(st)
+    }
+
+    fn pushable(&self) -> bool {
+        let st = self.lock();
+        self.viewer
+            .as_ref()
+            .is_none_or(|v| !st.readers.iter().any(|r| r.eq_ignore_ascii_case(v)))
     }
 
     fn enter_as_owner(&self, op: &str) -> crate::Result<std::sync::MutexGuard<'_, State>> {
@@ -370,6 +461,12 @@ impl RemoteRepo for FakeRepo {
 
     async fn commit(&self, parent: &Head, changes: &Changes, message: &str) -> crate::Result<Head> {
         drop(self.enter("commit")?);
+        if !self.pushable() {
+            return Err(Error::GitHub {
+                status: 403,
+                message: "Permission denied".into(),
+            });
+        }
         let hook = self.lock().before_commit.take();
         if let Some(mut hook) = hook {
             hook(self);
@@ -387,12 +484,165 @@ impl RemoteRepo for FakeRepo {
         Ok(st.push(files, message, &author))
     }
 
+    async fn propose(
+        &self,
+        parent: &Head,
+        changes: &Changes,
+        branch: &str,
+        title: &str,
+    ) -> crate::Result<u64> {
+        drop(self.enter("propose")?);
+        if !self.pushable() || !branch.starts_with(PROPOSAL_PREFIX) {
+            return Err(Error::GitHub {
+                status: 403,
+                message: "Permission denied".into(),
+            });
+        }
+        let mut st = self.lock();
+        if !st.commits.iter().any(|c| c.sha == parent.commit) {
+            return Err(not_found());
+        }
+        let author = self.viewer.clone().unwrap_or_else(|| st.owner.clone());
+        let number = st.pulls.len() as u64 + 1;
+        st.pulls.push(FakePull {
+            number,
+            branch: branch.into(),
+            author,
+            title: title.into(),
+            base: parent.commit.clone(),
+            changes: changes.clone(),
+            state: "Open",
+            reviews: Vec::new(),
+            comments: Vec::new(),
+        });
+        Ok(number)
+    }
+
+    async fn proposals(&self) -> crate::Result<Vec<Proposal>> {
+        let st = self.enter("proposals")?;
+        let now = st.files();
+        Ok(st
+            .pulls
+            .iter()
+            .filter(|p| p.state == "Open")
+            .map(|p| {
+                let old = st
+                    .commits
+                    .iter()
+                    .find(|c| c.sha == p.base)
+                    .map(|c| c.files.clone())
+                    .unwrap_or_default();
+                let text = |b: Option<&Vec<u8>>| {
+                    b.map(|b| String::from_utf8_lossy(b).into_owned())
+                        .unwrap_or_default()
+                };
+                Proposal {
+                    number: p.number,
+                    branch: p.branch.clone(),
+                    author: p.author.clone(),
+                    title: p.title.clone(),
+                    url: format!("https://github.com/{}/pull/{}", self.id, p.number),
+                    files: p
+                        .changes
+                        .iter()
+                        .filter(|(path, _)| crate::group::is_allowlisted(path))
+                        .map(|(path, new)| ProposalFile {
+                            path: path.clone(),
+                            patch: format!("-{}\n+{}", text(old.get(path)), text(new.as_ref())),
+                        })
+                        .collect(),
+                    approvals: p
+                        .reviews
+                        .iter()
+                        .filter(|(l, ok)| *ok && !l.eq_ignore_ascii_case(&p.author))
+                        .map(|(l, _)| l.clone())
+                        .collect(),
+                    needs_update: p.changes.keys().any(|path| now.get(path) != old.get(path)),
+                }
+            })
+            .collect())
+    }
+
+    async fn approve_proposal(&self, number: u64) -> crate::Result<()> {
+        let mut st = self.enter("approve_proposal")?;
+        let me = self.viewer.clone().unwrap_or_else(|| st.owner.clone());
+        let pr = st
+            .pulls
+            .iter_mut()
+            .find(|p| p.number == number && p.state == "Open")
+            .ok_or_else(not_found)?;
+        if pr.author.eq_ignore_ascii_case(&me) {
+            return Err(Error::GitHub {
+                status: 422,
+                message: "Can not approve your own pull request".into(),
+            });
+        }
+        pr.reviews.retain(|(l, _)| !l.eq_ignore_ascii_case(&me));
+        pr.reviews.push((me, true));
+        Ok(())
+    }
+
+    async fn merge_proposal(&self, number: u64) -> crate::Result<()> {
+        // The default branch is locked to the host (§5a), so a merge needs the owner.
+        let mut st = self.enter_as_owner("merge_proposal")?;
+        let i = st
+            .pulls
+            .iter()
+            .position(|p| p.number == number && p.state == "Open")
+            .ok_or_else(not_found)?;
+        let pr = st.pulls[i].clone();
+        let old = st
+            .commits
+            .iter()
+            .find(|c| c.sha == pr.base)
+            .map(|c| c.files.clone())
+            .unwrap_or_default();
+        let now = st.files();
+        if pr.changes.keys().any(|path| now.get(path) != old.get(path)) {
+            return Err(Error::Invalid(format!(
+                "proposal #{number} needs an update before it can be merged"
+            )));
+        }
+        let files = apply_changes(now, &pr.changes)?;
+        st.push(files, &pr.title, &pr.author);
+        st.pulls[i].state = "Merged";
+        Ok(())
+    }
+
+    async fn decline_proposal(&self, number: u64, comment: &str) -> crate::Result<()> {
+        let mut st = self.enter("decline_proposal")?;
+        let pr = st
+            .pulls
+            .iter_mut()
+            .find(|p| p.number == number && p.state == "Open")
+            .ok_or_else(not_found)?;
+        pr.comments.push(comment.into());
+        pr.state = "Closed";
+        Ok(())
+    }
+
     async fn is_private(&self) -> crate::Result<bool> {
         Ok(self.enter("is_private")?.private)
     }
 
+    async fn can_push(&self) -> crate::Result<bool> {
+        drop(self.enter("can_push")?);
+        Ok(self.pushable())
+    }
+
     async fn owner_login(&self) -> crate::Result<String> {
         Ok(self.enter("owner_login")?.owner.clone())
+    }
+
+    async fn current_id(&self) -> crate::Result<GroupId> {
+        Ok(self.enter("current_id")?.full_name.clone())
+    }
+
+    async fn transfer(&self, new_owner: &str) -> crate::Result<()> {
+        self.enter_as_owner("transfer")?
+            .transfers
+            .push(new_owner.into());
+        Ok(())
     }
 
     async fn collaborators(&self) -> crate::Result<Vec<Collaborator>> {
@@ -409,6 +659,14 @@ impl RemoteRepo for FakeRepo {
                 invitation_id: *id,
             });
         Ok(members.chain(invited).collect())
+    }
+
+    async fn ensure_host_lock(&self) -> crate::Result<()> {
+        let mut st = self.enter_as_owner("ensure_host_lock")?;
+        if !st.rulesets.iter().any(|n| n == super::HOST_LOCK_NAME) {
+            st.rulesets.push(super::HOST_LOCK_NAME.into());
+        }
+        Ok(())
     }
 
     async fn invite(&self, login: &str) -> crate::Result<()> {
@@ -459,6 +717,71 @@ impl RemoteRepo for FakeRepo {
             })
             .collect())
     }
+
+    async fn commits_between(&self, from: &str, to: &str) -> crate::Result<Vec<CommitInfo>> {
+        let st = self.enter("commits_between")?;
+        let end = st
+            .commits
+            .iter()
+            .position(|c| c.sha == to)
+            .ok_or_else(not_found)?;
+        let start = st
+            .commits
+            .iter()
+            .position(|c| c.sha == from)
+            .map_or(0, |i| i + 1);
+        Ok(st.commits[start..=end]
+            .iter()
+            .enumerate()
+            .map(|(n, c)| CommitInfo {
+                sha: c.sha.clone(),
+                message: c.message.clone(),
+                author: c.author.clone(),
+                at_unix: (start + n) as u64 + 1,
+            })
+            .collect())
+    }
+
+    async fn file_at(&self, commit: &str, path: &str) -> crate::Result<Option<Vec<u8>>> {
+        let st = self.enter("file_at")?;
+        let c = st
+            .commits
+            .iter()
+            .find(|c| c.sha == commit)
+            .ok_or_else(not_found)?;
+        Ok(c.files.get(path).cloned())
+    }
+
+    async fn commit_files(&self, commit: &str) -> crate::Result<CommitFiles> {
+        let st = self.enter("commit_files")?;
+        let c = st
+            .commits
+            .iter()
+            .find(|c| c.sha == commit)
+            .ok_or_else(not_found)?;
+        let before = match &c.parent {
+            Some(p) => st
+                .commits
+                .iter()
+                .find(|x| &x.sha == p)
+                .map(|x| x.files.clone())
+                .unwrap_or_default(),
+            None => FileSet::default(),
+        };
+        let paths = c
+            .files
+            .keys()
+            .chain(before.keys())
+            .filter(|p| c.files.get(*p) != before.get(*p))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Ok(CommitFiles {
+            parent: c.parent.clone(),
+            paths,
+        })
+    }
 }
 
 /// A world of fake repos shared by several fake accounts.
@@ -479,6 +802,28 @@ impl FakeGitHub {
             ..repo.clone()
         };
         self.repos.lock().unwrap().insert(repo.id.clone(), god);
+    }
+
+    /// The repo is now called `new` (a rename or a finished transfer). The old name keeps
+    /// reaching it, like GitHub's redirect. A new owner takes over as the host; the old one
+    /// stays a collaborator, as GitHub keeps the former owner of a transferred repo.
+    pub fn rename(&self, old: &GroupId, new: &GroupId) {
+        let repo = self.repo(old).expect("no such repo");
+        {
+            let mut st = repo.lock();
+            st.full_name = new.clone();
+            if !st.owner.eq_ignore_ascii_case(&new.owner) {
+                let before = std::mem::replace(&mut st.owner, new.owner.clone());
+                st.collaborators
+                    .retain(|c| !c.eq_ignore_ascii_case(&new.owner));
+                st.collaborators.push(before);
+            }
+        }
+        let alias = FakeRepo {
+            id: new.clone(),
+            ..repo
+        };
+        self.repos.lock().unwrap().insert(new.clone(), alias);
     }
 
     /// The test's (all-powerful) handle on a repo.

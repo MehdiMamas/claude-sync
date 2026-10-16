@@ -13,6 +13,7 @@ use crate::github::{GitHub, Invitation};
 use crate::group::{self, GroupFile};
 use crate::merge;
 use crate::remote::{Changes, Collaborator, GitHubRemotes, Head, RemoteFactory, RemoteRepo};
+use crate::review::{self, ReviewState};
 use crate::state::{now_unix, utc_stamp, write_atomic, write_json, AppState};
 use crate::watch::{EditAction, LocalEdit};
 use crate::{Error, FileSet, GroupId, Paths};
@@ -20,6 +21,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+mod claude_md;
+mod conflicts;
+mod copy;
+mod revert;
+pub use claude_md::{ClaudeMdShare, ClaudeMdShared};
+pub use copy::{Copied, CopyFile, CopyPreview, CopyRequest, CopySetting, CopySyncs};
+pub use revert::{RevertAction, RevertFile, RevertPlan};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +46,64 @@ pub struct GroupStatus {
     /// Joining placed or changed plugin files: open Claude Code sessions need
     /// `/reload-plugins`. Only set on the status a join returns.
     pub plugins_changed: bool,
+    /// Changes other members made to the group's `CLAUDE.md` that wait for this user (§7a).
+    pub review_pending: usize,
+    /// "Review changes others make to CLAUDE.md" is on for this group.
+    pub review_claude_md: bool,
+    /// This user hosts the group (owns its repo): only the host's app changes the group.
+    pub is_host: bool,
+    /// The group's proposal mode: members' changes go to review as proposals (section 5c).
+    pub proposal_mode: bool,
+    /// `"on"`: GitHub enforces host-only pushes. `"unavailable"`: it can't on this plan.
+    /// `None`: not known yet, or this user is not the host.
+    pub host_lock: Option<String>,
+}
+
+/// What a change to a group came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Committed {
+    /// Nothing to change.
+    Nothing,
+    /// Committed to the group's default branch.
+    Pushed,
+    /// Sent as proposal #n, waiting for approval (§5c).
+    Proposed(u64),
+}
+
+/// An open proposal, for the group screen (§5c).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposalView {
+    pub number: u64,
+    pub branch: String,
+    pub author: String,
+    pub title: String,
+    pub url: String,
+    pub files: Vec<crate::remote::ProposalFile>,
+    pub approvals: Vec<String>,
+    /// This user's approval is on it.
+    pub approved_by_me: bool,
+    /// This user made it.
+    pub mine: bool,
+    pub needs_update: bool,
+}
+
+/// The review of a group's `CLAUDE.md` (§7a), for the group screen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeMdReview {
+    /// Review is on for this device (its override, else the group's setting).
+    pub review: bool,
+    /// The group's "Auto-accept CLAUDE.md changes".
+    pub auto_accept: bool,
+    /// This device's choice; `None` follows the group.
+    pub review_override: Option<bool>,
+    /// Oldest first.
+    pub pending: Vec<review::Item>,
+    /// Changes the user declined (remembered, never asked again).
+    pub declined: usize,
+    /// The copy's accepted text differs from the group's (declined or pending changes).
+    pub differs: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,6 +119,15 @@ pub struct ConflictInfo {
 #[serde(rename_all = "camelCase")]
 pub struct SyncReport {
     pub groups: Vec<GroupSyncReport>,
+    /// Groups whose repo was renamed or transferred; everything local follows to the new name.
+    pub moved: Vec<MovedGroup>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MovedGroup {
+    pub from: GroupId,
+    pub to: GroupId,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,11 +136,15 @@ pub struct GroupSyncReport {
     pub id: GroupId,
     pub pulled: bool,
     pub pushed: bool,
+    /// A change went out as a proposal, not a commit (§5c).
+    pub proposed: bool,
     pub apply: crate::apply::ApplyReport,
     pub conflicts: Vec<ConflictInfo>,
     pub error: Option<String>,
     /// Access to the repo is gone; its content was removed from this machine.
     pub lost_access: bool,
+    /// Changes to the group's `CLAUDE.md` that this pass put up for review (§7a).
+    pub review: Vec<review::Item>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,9 +183,23 @@ pub trait ApplyLayer: Send + Sync {
         group_version: Option<&[u8]>,
     ) -> crate::Result<()>;
     fn local_edits(&self, paths: &Paths) -> crate::Result<Vec<LocalEdit>>;
+    /// Write the group's `CLAUDE.md` copy as `copy`, with `accepted` as the version the app
+    /// wrote (§7a). A copy that differs from `accepted` is a local edit.
+    fn write_claude_md(
+        &self,
+        paths: &Paths,
+        group: &GroupId,
+        copy: &[u8],
+        accepted: &[u8],
+    ) -> crate::Result<()>;
     /// Paths the group ships that this device does not manage (kept local, collisions,
     /// unsafe). The engine uses the base version as their local side.
     fn excluded_paths(&self, _paths: &Paths, _group: &GroupId) -> crate::Result<BTreeSet<String>> {
+        Ok(BTreeSet::new())
+    }
+    /// Paths and settings pointers (`settings.shared.json#/model`) this device keeps local
+    /// for the group.
+    fn kept_local(&self, _paths: &Paths, _group: &GroupId) -> crate::Result<BTreeSet<String>> {
         Ok(BTreeSet::new())
     }
 }
@@ -144,8 +238,24 @@ impl ApplyLayer for FsApply {
     fn local_edits(&self, paths: &Paths) -> crate::Result<Vec<LocalEdit>> {
         crate::watch::local_edits(paths)
     }
+    fn write_claude_md(
+        &self,
+        paths: &Paths,
+        group: &GroupId,
+        copy: &[u8],
+        accepted: &[u8],
+    ) -> crate::Result<()> {
+        crate::apply::write_claude_md(paths, group, copy, accepted)
+    }
     fn excluded_paths(&self, paths: &Paths, group: &GroupId) -> crate::Result<BTreeSet<String>> {
         crate::apply::excluded_paths(paths, group)
+    }
+    fn kept_local(&self, paths: &Paths, group: &GroupId) -> crate::Result<BTreeSet<String>> {
+        Ok(crate::apply::Manifest::load(paths)?
+            .groups
+            .remove(&group.to_string())
+            .map(|e| e.keep_local)
+            .unwrap_or_default())
     }
 }
 
@@ -162,6 +272,8 @@ pub struct Engine {
     pub(crate) scanner: Scanner,
     /// One operation at a time: syncs and user actions share the base snapshots.
     pub(crate) busy: tokio::sync::Mutex<()>,
+    /// Groups whose host lock this run already ensured.
+    pub(crate) locked: std::sync::Mutex<BTreeSet<GroupId>>,
     /// The user's home folder: personal memory keys are relative to it (`crate::personal`).
     pub(crate) user_home: Option<PathBuf>,
 }
@@ -196,6 +308,8 @@ struct Status {
     collisions: Vec<StoredCollision>,
     /// Paths whose local edit the user chose to share; pushed by the next sync.
     shared: BTreeSet<String>,
+    /// Host only: `"on"` or `"unavailable"` once the ruleset was ensured.
+    host_lock: Option<String>,
 }
 
 /// `apply::Collision` is not `Deserialize`; this mirrors it on disk.
@@ -255,6 +369,7 @@ impl Engine {
             apply: Arc::new(FsApply),
             scanner: crate::secrets::scan,
             busy: tokio::sync::Mutex::new(()),
+            locked: std::sync::Mutex::new(BTreeSet::new()),
             user_home: std::env::home_dir(),
         }
     }
@@ -279,7 +394,10 @@ impl Engine {
     /// if this user is the host, detect lost access. Errors per group go in the report, not `Err`.
     pub async fn sync_all(&self) -> crate::Result<SyncReport> {
         let _busy = self.busy.lock().await;
-        let mut out = SyncReport::default();
+        let mut out = SyncReport {
+            moved: self.follow_moves().await,
+            ..SyncReport::default()
+        };
         for id in AppState::load(&self.paths)?.groups {
             out.groups.push(self.sync_group(&id, None).await.0);
         }
@@ -290,11 +408,14 @@ impl Engine {
     /// The 60 s loop calls this.
     pub async fn sync_if_changed(&self) -> crate::Result<SyncReport> {
         let _busy = self.busy.lock().await;
-        let state = AppState::load(&self.paths)?;
-        let mut out = SyncReport::default();
-        if state.paused {
-            return Ok(out);
+        if AppState::load(&self.paths)?.paused {
+            return Ok(SyncReport::default());
         }
+        let mut out = SyncReport {
+            moved: self.follow_moves().await,
+            ..SyncReport::default()
+        };
+        let state = AppState::load(&self.paths)?;
         for id in &state.groups {
             let head = match self.remotes.open(id).head_if_changed().await {
                 Ok(Some(head)) => Some(head),
@@ -315,6 +436,94 @@ impl Engine {
         Ok(out)
     }
 
+    /// Ask GitHub for each joined repo's current name; a renamed or transferred repo moves every
+    /// local trace to the new id (`rename::migrate`, resumable). Errors (offline, no access) are
+    /// left to the sync itself to report. The caller holds the busy lock.
+    async fn follow_moves(&self) -> Vec<MovedGroup> {
+        let mut moved = Vec::new();
+        let Ok(state) = AppState::load(&self.paths) else {
+            return moved;
+        };
+        for id in state.groups {
+            let Ok(now) = self.remotes.open(&id).current_id().await else {
+                continue;
+            };
+            if now.to_string().eq_ignore_ascii_case(&id.to_string()) {
+                continue;
+            }
+            match crate::rename::migrate(&self.paths, &id, &now) {
+                Ok(()) => moved.push(MovedGroup { from: id, to: now }),
+                Err(e) => tracing::warn!("following {id} to {now} failed: {e}"),
+            }
+        }
+        moved
+    }
+
+    /// Hand the group repo to another member (host only). GitHub emails the new owner, who must
+    /// accept; until then nothing changes. Afterwards this user is a member, and every app follows
+    /// the new name on its next sync.
+    pub async fn transfer_group(&self, id: &GroupId, new_owner: &str) -> crate::Result<()> {
+        if !valid_login(new_owner) {
+            return Err(Error::Invalid(format!(
+                "{new_owner:?} is not a GitHub login"
+            )));
+        }
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        self.require_host(id).await?;
+        if new_owner.eq_ignore_ascii_case(&self.login) {
+            return Err(Error::Invalid(format!("you already host {id}")));
+        }
+        let remote = self.remotes.open(id);
+        let head = remote.head().await?;
+        let files = remote.files_at(&head.commit).await?;
+        let bytes = files
+            .get(group::FILE)
+            .ok_or_else(|| Error::Invalid(format!("{id} has no {}", group::FILE)))?;
+        let gf = GroupFile::parse(bytes)?;
+        if !gf.has_member(new_owner) {
+            return Err(Error::Invalid(format!(
+                "{new_owner} is not a member of {id}; add them first"
+            )));
+        }
+        // The former host stays in `members`, so the new host's reconcile keeps their access.
+        if !gf.has_member(&self.login) {
+            self.edit_group_file(id, "keep former host as member", |gf| {
+                Ok(gf.add_member(&self.login))
+            })
+            .await?;
+        }
+        remote.transfer(new_owner).await
+    }
+
+    /// Put the joined groups in `order` (first wins collisions, §7) and apply every group again
+    /// in that order, so managed files, settings values and bundled marketplaces move to the new
+    /// winner. `order` must list exactly the joined groups. The new order is saved before the
+    /// apply, so a failed sync (offline) still keeps it; the error is in the report.
+    pub async fn reorder_groups(&self, order: Vec<GroupId>) -> crate::Result<SyncReport> {
+        let _busy = self.busy.lock().await;
+        let mut state = AppState::load(&self.paths)?;
+        let mut a: Vec<String> = state.groups.iter().map(|g| g.to_string()).collect();
+        let mut b: Vec<String> = order.iter().map(|g| g.to_string()).collect();
+        a.sort();
+        b.sort();
+        if a != b {
+            return Err(Error::Invalid(
+                "the new order must list exactly the joined groups".into(),
+            ));
+        }
+        let mut out = SyncReport::default();
+        if state.groups == order {
+            return Ok(out);
+        }
+        state.groups = order.clone();
+        state.save(&self.paths)?;
+        for id in &order {
+            out.groups.push(self.sync_group(id, None).await.0);
+        }
+        Ok(out)
+    }
+
     pub async fn groups(&self) -> crate::Result<Vec<GroupStatus>> {
         let state = AppState::load(&self.paths)?;
         Ok(state
@@ -324,8 +533,15 @@ impl Engine {
             .collect())
     }
 
-    /// Create a private group repo (default name `claude-sync-data`) and join it.
-    pub async fn create_group(&self, name: &str, repo: &str) -> crate::Result<GroupStatus> {
+    /// Create a private group repo (default name `claude-sync-data`) and join it. Its
+    /// `CLAUDE.md` is the creator's shared text (redacted), or a heading when there is none.
+    pub async fn create_group(
+        &self,
+        name: &str,
+        repo: &str,
+        share: Option<&ClaudeMdShare>,
+    ) -> crate::Result<GroupStatus> {
+        let shared = share.and_then(|s| claude_md::group_text(&s.text));
         let _busy = self.busy.lock().await;
         let repo = match repo.trim() {
             "" => group::DEFAULT_REPO,
@@ -352,14 +568,27 @@ impl Engine {
             ),
             (
                 group::CLAUDE_MD.to_string(),
-                Some(format!("# {name}\n").into_bytes()),
+                Some(
+                    shared
+                        .clone()
+                        .unwrap_or_else(|| format!("# {name}\n"))
+                        .into_bytes(),
+                ),
             ),
             (group::SHARED_SETTINGS.to_string(), Some(b"{}\n".to_vec())),
         ]);
+        self.scan(&files)?;
         remote
             .commit(&head, &files, &self.message("create group"))
             .await?;
-        self.join_locked(&id).await
+        let status = self.join_locked(&id).await?;
+        if let (Some(text), Some(true)) = (&shared, share.map(|s| s.remove_own)) {
+            // The group exists either way; a failure here only leaves the text twice.
+            if let Err(e) = self.remove_own_claude_md(&id, text) {
+                tracing::warn!(group = %id, error = %e, "could not take the shared text out of CLAUDE.md");
+            }
+        }
+        Ok(status)
     }
 
     /// Pending invitations to repos with the `claude-sync-group` topic.
@@ -394,6 +623,7 @@ impl Engine {
         }
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
+        self.require_host(id).await?;
         let summary = format!("add member {login}");
         if self
             .edit_group_file(id, &summary, |gf| Ok(gf.add_member(login)))
@@ -407,6 +637,7 @@ impl Engine {
     pub async fn remove_member(&self, id: &GroupId, login: &str) -> crate::Result<()> {
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
+        self.require_host(id).await?;
         let host = self.remotes.open(id).owner_login().await?;
         if host.eq_ignore_ascii_case(login) {
             return Err(Error::Invalid(format!(
@@ -443,6 +674,7 @@ impl Engine {
         let whole_file = file == edit.path;
         match action {
             EditAction::Share => {
+                self.require_host_or_proposals(id).await?;
                 let local = self.apply.local_files(&self.paths, id)?;
                 if let Some(bytes) = local.get(file).filter(|b| group::too_large(file, b.len())) {
                     return Err(Error::Invalid(format!(
@@ -470,8 +702,16 @@ impl Engine {
                     status.shared.remove(file);
                 }
                 self.save_status(id, &status)?;
+                // The group's CLAUDE.md goes back to what this user accepted, not to the
+                // group's text with the changes they declined (§7a).
+                let accepted = match (file == group::CLAUDE_MD, self.load_review(id)?) {
+                    (true, Some(st)) => Some(st.accepted.into_bytes()),
+                    _ => None,
+                };
                 let base = self.load_base(id)?;
-                let version = base.files.get(file).map(Vec::as_slice);
+                let version = accepted
+                    .as_deref()
+                    .or(base.files.get(file).map(Vec::as_slice));
                 self.apply.undo(&self.paths, id, &edit.path, version)
             }
         }
@@ -485,6 +725,7 @@ impl Engine {
         }
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
+        self.require_host_or_proposals(id).await?;
         let dir = self.paths.claude_home.join("skills").join(skill);
         if !dir.join("SKILL.md").is_file() {
             return Err(Error::Invalid(format!(
@@ -504,29 +745,22 @@ impl Engine {
             )));
         }
         self.scan(&files)?;
-        let remote = self.remotes.open(id);
-        let message = self.message(&format!("share skills/{skill}"));
-        let mut attempt = 0;
-        loop {
-            let head = remote.head().await?;
-            let current = remote.files_at(&head.commit).await?;
-            let (gf, read_only) = read_group_file(id, &current)?;
-            if let Some(e) = read_only {
-                return Err(e);
-            }
-            if !gf.sync.skills {
-                return Err(Error::Invalid(format!("{id} does not sync skills")));
-            }
-            if current.keys().any(|p| p.starts_with(&prefix)) {
-                return Err(Error::Invalid(format!(
-                    "{id} already has a skill named {skill}"
-                )));
-            }
-            match remote.commit(&head, &files, &message).await {
-                Ok(_) => break,
-                Err(Error::PushRace) if attempt < PUSH_RETRIES => attempt += 1,
-                Err(e) => return Err(e),
-            }
+        let committed = self
+            .commit_or_propose(id, &format!("share skills/{skill}"), |gf, current| {
+                if !gf.sync.skills {
+                    return Err(Error::Invalid(format!("{id} does not sync skills")));
+                }
+                if current.keys().any(|p| p.starts_with(&prefix)) {
+                    return Err(Error::Invalid(format!(
+                        "{id} already has a skill named {skill}"
+                    )));
+                }
+                Ok(Some(files.clone()))
+            })
+            .await?;
+        if matches!(committed, Committed::Proposed(_)) {
+            // Nothing is the group's yet: the folder stays until the proposal is merged.
+            return Ok(());
         }
         // The group's copy replaces the user's folder, which is kept as a backup.
         let backup = self
@@ -551,10 +785,261 @@ impl Engine {
         self.remotes.open(id).recent_commits(limit).await
     }
 
+    /// Changes to the groups' `CLAUDE.md` waiting for this user, over all groups (§7a).
+    pub fn claude_md_pending(&self) -> usize {
+        AppState::load(&self.paths)
+            .map(|s| {
+                s.groups
+                    .iter()
+                    .map(|id| self.group_status(id).review_pending)
+                    .sum()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Changes others made to the group's `CLAUDE.md` that wait for this user (§7a).
+    pub fn claude_md_review(&self, id: &GroupId) -> crate::Result<ClaudeMdReview> {
+        let st = self.load_review(id)?.unwrap_or_default();
+        let auto_accept = self.group_auto_accept(id);
+        Ok(ClaudeMdReview {
+            review: st.review.unwrap_or(!auto_accept),
+            auto_accept,
+            review_override: st.review,
+            differs: st.accepted != st.group,
+            declined: st.declined.len(),
+            pending: st.pending,
+        })
+    }
+
+    /// Accept (`accept`) or decline pending changes: `ids`, or all of them. Accepted changes
+    /// go into the copy at once; declined ones never do and are not asked again. Nothing is
+    /// pushed either way.
+    pub async fn decide_claude_md(
+        &self,
+        id: &GroupId,
+        ids: Option<&[String]>,
+        accept: bool,
+    ) -> crate::Result<ClaudeMdReview> {
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        let mut st = self.require_review(id)?;
+        let before = st.accepted.clone();
+        if accept {
+            let applied = st.accept(ids);
+            self.write_accepted(id, &mut st, &before, &applied, false)?;
+        } else {
+            st.decline(ids, now_unix());
+            st.save(&self.review_file(id))?;
+        }
+        self.claude_md_review(id)
+    }
+
+    /// This device's choice on "Review changes others make to CLAUDE.md": `Some` overrides the
+    /// group's setting, `None` follows it. When review ends up off, what is pending is accepted
+    /// (the UI asks first) and later changes apply at once; past declines stay.
+    pub async fn set_claude_md_review(
+        &self,
+        id: &GroupId,
+        on: Option<bool>,
+    ) -> crate::Result<ClaudeMdReview> {
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        let mut st = self.require_review(id)?;
+        st.review = on;
+        self.accept_if_unreviewed(id, &mut st)?;
+        self.claude_md_review(id)
+    }
+
+    /// The group's "Auto-accept CLAUDE.md changes" (§7a): pushes `claude-sync.json`, then
+    /// applies it here (accepting what is pending when review is now off). Needs push access.
+    pub async fn set_group_auto_accept_claude_md(
+        &self,
+        id: &GroupId,
+        on: bool,
+    ) -> crate::Result<ClaudeMdReview> {
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        self.require_host(id).await?;
+        let summary = format!("auto-accept CLAUDE.md {}", if on { "on" } else { "off" });
+        self.edit_group_file(id, &summary, |gf| {
+            let changed = gf.auto_accept_claude_md != on;
+            gf.auto_accept_claude_md = on;
+            Ok(changed)
+        })
+        .await?;
+        // The snapshot is the group file's source here; the sync brings it in.
+        self.sync_group(id, None).await;
+        if let Some(mut st) = self.load_review(id)? {
+            self.accept_if_unreviewed(id, &mut st)?;
+        }
+        self.claude_md_review(id)
+    }
+
+    /// The group's "Proposal mode" (§5c): with it on, every change to the group, the host's
+    /// too, is a proposal that another member approves. Host only.
+    pub async fn set_group_proposal_mode(&self, id: &GroupId, on: bool) -> crate::Result<()> {
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        self.require_host(id).await?;
+        let summary = format!("proposal mode {}", if on { "on" } else { "off" });
+        self.edit_group_file(id, &summary, |gf| {
+            let changed = gf.proposal_mode != on;
+            gf.proposal_mode = on;
+            Ok(changed)
+        })
+        .await?;
+        match self.sync_group(id, None).await {
+            (_, Some(e)) => Err(e),
+            (_, None) => Ok(()),
+        }
+    }
+
+    /// The group's open proposals, for the group screen (§5c).
+    pub async fn proposals(&self, id: &GroupId) -> crate::Result<Vec<ProposalView>> {
+        self.require_joined(id)?;
+        let me = &self.login;
+        Ok(self
+            .remotes
+            .open(id)
+            .proposals()
+            .await?
+            .into_iter()
+            .map(|p| ProposalView {
+                mine: p.author.eq_ignore_ascii_case(me),
+                approved_by_me: p.approvals.iter().any(|a| a.eq_ignore_ascii_case(me)),
+                number: p.number,
+                branch: p.branch,
+                author: p.author,
+                title: p.title,
+                url: p.url,
+                files: p.files,
+                approvals: p.approvals,
+                needs_update: p.needs_update,
+            })
+            .collect())
+    }
+
+    /// Approve proposal `number`. Never your own. The host's approval of a member's proposal
+    /// merges it; a member's approval of the host's is merged by the host's next sync.
+    pub async fn approve_proposal(&self, id: &GroupId, number: u64) -> crate::Result<()> {
+        let _busy = self.busy.lock().await;
+        let p = self.find_proposal(id, number).await?;
+        if p.mine {
+            return Err(Error::Invalid(
+                "you cannot approve your own proposal; another member has to".into(),
+            ));
+        }
+        let remote = self.remotes.open(id);
+        if self.require_host(id).await.is_ok() {
+            if p.needs_update {
+                return Err(Error::Invalid(format!(
+                    "proposal #{number} needs an update before it can be merged"
+                )));
+            }
+            remote.merge_proposal(number).await?;
+            return match self.sync_group(id, None).await {
+                (_, Some(e)) => Err(e),
+                (_, None) => Ok(()),
+            };
+        }
+        remote.approve_proposal(number).await
+    }
+
+    /// Decline proposal `number`: it is closed with a note and never merged.
+    pub async fn decline_proposal(&self, id: &GroupId, number: u64) -> crate::Result<()> {
+        let _busy = self.busy.lock().await;
+        self.find_proposal(id, number).await?;
+        let note = format!("Declined by {} in claude-sync.", self.login);
+        self.remotes.open(id).decline_proposal(number, &note).await
+    }
+
+    async fn find_proposal(&self, id: &GroupId, number: u64) -> crate::Result<ProposalView> {
+        self.proposals(id)
+            .await?
+            .into_iter()
+            .find(|p| p.number == number)
+            .ok_or_else(|| Error::Invalid(format!("proposal #{number} is not open")))
+    }
+
+    /// Accept what is pending when review is off for this device.
+    fn accept_if_unreviewed(&self, id: &GroupId, st: &mut ReviewState) -> crate::Result<()> {
+        let review = st.review.unwrap_or(!self.group_auto_accept(id));
+        let before = st.accepted.clone();
+        let applied = if review { Vec::new() } else { st.accept(None) };
+        self.write_accepted(id, st, &before, &applied, false)
+    }
+
+    /// The group's `autoAcceptClaudeMd` as last synced; on when it can't be read.
+    fn group_auto_accept(&self, id: &GroupId) -> bool {
+        self.load_base(id)
+            .ok()
+            .and_then(|b| read_group_file(id, &b.files).ok())
+            .is_none_or(|(gf, _)| gf.auto_accept_claude_md)
+    }
+
+    /// "Use the group's version": the copy becomes the group's `CLAUDE.md` again, pending and
+    /// declined changes are forgotten. An edit of the copy is replaced (and backed up).
+    pub async fn use_group_claude_md(&self, id: &GroupId) -> crate::Result<ClaudeMdReview> {
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        let mut st = self.require_review(id)?;
+        let before = st.accepted.clone();
+        st.reset();
+        self.write_accepted(id, &mut st, &before, &[], true)?;
+        let mut status = self.load_status(id);
+        if status.shared.remove(group::CLAUDE_MD) {
+            self.save_status(id, &status)?;
+        }
+        self.claude_md_review(id)
+    }
+
     // ---- internals ----
 
     fn message(&self, summary: &str) -> String {
         format!("{}@{}: {summary}", self.login, self.device)
+    }
+
+    /// Only the host (the owner of the group repo) changes a group. Checked before any write.
+    async fn require_host(&self, id: &GroupId) -> crate::Result<()> {
+        let host = self.remotes.open(id).owner_login().await?;
+        if host.eq_ignore_ascii_case(&self.login) {
+            return Ok(());
+        }
+        let name = self.load_status(id).name;
+        Err(Error::HostOnly {
+            group: if name.is_empty() {
+                id.repo.clone()
+            } else {
+                name
+            },
+            host,
+        })
+    }
+
+    /// The group's `proposalMode` as last synced; off when it can't be read.
+    fn group_proposal_mode(&self, id: &GroupId) -> bool {
+        self.load_base(id)
+            .ok()
+            .and_then(|b| read_group_file(id, &b.files).ok())
+            .is_some_and(|(gf, _)| gf.proposal_mode)
+    }
+
+    /// Like `require_host`, but with proposal mode on anyone with push access may write: their
+    /// change goes to a proposal (§5c).
+    async fn require_host_or_proposals(&self, id: &GroupId) -> crate::Result<()> {
+        if self.group_proposal_mode(id) {
+            return Ok(());
+        }
+        self.require_host(id).await
+    }
+
+    /// `proposal/<login>-<yyyymmddHHMMSS>` (UTC).
+    fn proposal_branch(&self) -> String {
+        let stamp: String = utc_stamp(now_unix())
+            .chars()
+            .filter(char::is_ascii_digit)
+            .collect();
+        format!("{}{}-{stamp}", crate::remote::PROPOSAL_PREFIX, self.login)
     }
 
     fn require_joined(&self, id: &GroupId) -> crate::Result<()> {
@@ -599,6 +1084,7 @@ impl Engine {
         summary: &str,
         edit: impl Fn(&mut GroupFile) -> crate::Result<bool>,
     ) -> crate::Result<bool> {
+        self.require_host(id).await?;
         let remote = self.remotes.open(id);
         let message = self.message(summary);
         let mut attempt = 0;
@@ -621,6 +1107,75 @@ impl Engine {
         }
     }
 
+    /// Commit what `change` makes of the group's files at its head, retrying when someone
+    /// else pushed first. `change` gets the group file and those files; `None` commits
+    /// nothing (`false`). Callers scan what they add. A push GitHub refuses (read access
+    /// only) is said plainly.
+    pub(crate) async fn commit_to_group(
+        &self,
+        id: &GroupId,
+        summary: &str,
+        change: impl FnMut(&GroupFile, &FileSet) -> crate::Result<Option<Changes>>,
+    ) -> crate::Result<bool> {
+        Ok(self.commit_or_propose(id, summary, change).await? != Committed::Nothing)
+    }
+
+    /// `commit_to_group`, saying whether the change landed or became a proposal (§5c).
+    pub(crate) async fn commit_or_propose(
+        &self,
+        id: &GroupId,
+        summary: &str,
+        mut change: impl FnMut(&GroupFile, &FileSet) -> crate::Result<Option<Changes>>,
+    ) -> crate::Result<Committed> {
+        self.require_host_or_proposals(id).await?;
+        let remote = self.remotes.open(id);
+        let message = self.message(summary);
+        let mut attempt = 0;
+        loop {
+            let head = remote.head().await?;
+            let current = remote.files_at(&head.commit).await?;
+            let (gf, read_only) = read_group_file(id, &current)?;
+            if let Some(e) = read_only {
+                return Err(e);
+            }
+            if !gf.proposal_mode {
+                self.require_host(id).await?;
+            }
+            let Some(files) = change(&gf, &current)? else {
+                return Ok(Committed::Nothing);
+            };
+            if gf.proposal_mode {
+                let title = self.message(summary);
+                return match remote
+                    .propose(&head, &files, &self.proposal_branch(), &title)
+                    .await
+                {
+                    Ok(number) => Ok(Committed::Proposed(number)),
+                    Err(e) if is_lost_access(&e) => {
+                        let host = remote
+                            .owner_login()
+                            .await
+                            .unwrap_or_else(|_| id.owner.clone());
+                        Err(no_push(&gf.name, &host))
+                    }
+                    Err(e) => Err(e),
+                };
+            }
+            match remote.commit(&head, &files, &message).await {
+                Ok(_) => return Ok(Committed::Pushed),
+                Err(Error::PushRace) if attempt < PUSH_RETRIES => attempt += 1,
+                Err(e) if is_lost_access(&e) => {
+                    let host = remote
+                        .owner_login()
+                        .await
+                        .unwrap_or_else(|_| id.owner.clone());
+                    return Err(no_push(&gf.name, &host));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     /// Sync one group and record the outcome in its status. The error is also returned so user
     /// actions can surface it.
     async fn sync_group(
@@ -632,10 +1187,12 @@ impl Engine {
             id: id.clone(),
             pulled: false,
             pushed: false,
+            proposed: false,
             apply: ApplyReport::default(),
             conflicts: Vec::new(),
             error: None,
             lost_access: false,
+            review: Vec::new(),
         };
         let remote = self.remotes.open(id);
         let head = match head {
@@ -686,6 +1243,8 @@ impl Engine {
         let order = AppState::load(&self.paths)?.groups;
         let mut base = self.load_base(id)?;
         let mut attempt = 0;
+        let host = remote.owner_login().await?;
+        let is_host = host.eq_ignore_ascii_case(&self.login);
         let (gf, read_only) = loop {
             let remote_files = if head == base.head {
                 base.files.clone()
@@ -694,11 +1253,41 @@ impl Engine {
                 remote.files_at(&head.commit).await?
             };
             let (gf, read_only) = read_group_file(id, &remote_files)?;
+            // Only the host's app writes to the group; with proposal mode on a member's
+            // edits go out as proposals (§5c). Otherwise they stay local.
+            let may = is_host || gf.proposal_mode;
+            if !may {
+                status.shared.clear();
+            }
             let keep = |p: &str| group::is_allowlisted(p) && gf.syncs(p);
-            let base_v = only(&base.files, keep);
-            let remote_v = only(&remote_files, keep);
+            let mut base_v = only(&base.files, keep);
+            let mut remote_v = only(&remote_files, keep);
             let mut too_large = Vec::new();
-            let local = self.local_view(id, &base_v, status, keep, &mut too_large)?;
+            let (mut local, copy) = self.local_view(id, &base_v, status, keep, &mut too_large)?;
+            // The group's CLAUDE.md goes through review (§7a), not the three-way merge.
+            let md = if keep(group::CLAUDE_MD) {
+                for files in [&mut base_v, &mut remote_v, &mut local] {
+                    files.remove(group::CLAUDE_MD);
+                }
+                let shared = may && read_only.is_none() && status.shared.contains(group::CLAUDE_MD);
+                let pass = self
+                    .review_pull(
+                        remote,
+                        id,
+                        &base,
+                        &head,
+                        &remote_files,
+                        copy,
+                        shared,
+                        report,
+                    )
+                    .await?;
+                Some(pass)
+            } else {
+                remove_file_if_exists(&self.review_file(id))?;
+                None
+            };
+            let md_push = md.as_ref().and_then(|m| m.push.clone()).filter(|_| may);
             let merged = merge::three_way(&base_v, &local, &remote_v);
 
             // Save losing local copies before the apply overwrites them.
@@ -710,13 +1299,16 @@ impl Engine {
             // A local edit that is not being shared stays a local edit: the apply gets the
             // group's version, so it leaves the edit in place instead of adopting it.
             for p in merged.to_push.keys() {
-                if read_only.is_none() && status.shared.contains(p) {
+                if may && read_only.is_none() && status.shared.contains(p) {
                     continue;
                 }
                 match remote_v.get(p) {
                     Some(bytes) => to_apply.insert(p.clone(), bytes.clone()),
                     None => to_apply.remove(p),
                 };
+            }
+            if let Some(text) = md.as_ref().and_then(|m| m.apply.clone()) {
+                to_apply.insert(group::CLAUDE_MD.into(), text);
             }
             report.apply = self.apply.apply_group(&self.paths, id, &order, &to_apply)?;
             for note in too_large {
@@ -731,16 +1323,31 @@ impl Engine {
             };
             self.save_base(id, &base)?;
 
-            status.shared.retain(|p| merged.to_push.contains_key(p));
-            let push: Changes = merged
+            status.shared.retain(|p| {
+                merged.to_push.contains_key(p) || (p == group::CLAUDE_MD && md_push.is_some())
+            });
+            let mut push: Changes = merged
                 .to_push
                 .into_iter()
-                .filter(|(p, _)| read_only.is_none() && status.shared.contains(p))
+                .filter(|(p, _)| may && read_only.is_none() && status.shared.contains(p))
                 .collect();
+            if let Some(content) = md_push {
+                push.insert(group::CLAUDE_MD.into(), content);
+            }
             if push.is_empty() {
                 break (gf, read_only);
             }
             self.scan(&push)?;
+            if gf.proposal_mode {
+                // The edit stays a local edit until its proposal is merged (§5c).
+                let title = self.message(&summarize(&push));
+                remote
+                    .propose(&head, &push, &self.proposal_branch(), &title)
+                    .await?;
+                status.shared.retain(|p| !push.contains_key(p));
+                report.proposed = true;
+                break (gf, read_only);
+            }
             match remote
                 .commit(&head, &push, &self.message(&summarize(&push)))
                 .await
@@ -753,6 +1360,9 @@ impl Engine {
                     self.save_base(id, &base)?;
                     status.shared.retain(|p| !push.contains_key(p));
                     report.pushed = true;
+                    if let (Some(content), Some(md)) = (push.get(group::CLAUDE_MD), md) {
+                        self.review_pushed(id, content.as_deref(), md.copy)?;
+                    }
                     break (gf, read_only);
                 }
                 Err(Error::PushRace) if attempt < PUSH_RETRIES => {
@@ -763,26 +1373,71 @@ impl Engine {
             }
         };
 
-        let host = remote.owner_login().await?;
         status.name = gf.name.clone();
         status.members = gf.members.clone();
         status.host = host.clone();
         if let Some(e) = read_only {
             return Err(e);
         }
-        if host.eq_ignore_ascii_case(&self.login) {
+        if is_host {
+            if gf.proposal_mode {
+                self.merge_approved(remote, &gf).await;
+            }
+            self.ensure_lock(remote, id, status).await;
             status.invited = self.reconcile(remote, &gf, &host).await?;
         } else {
             status.invited.clear();
+            status.host_lock = None;
         }
         Ok(())
+    }
+
+    /// The host's own proposals only the host's app can merge (§5a): merge each one that
+    /// another member approved and that still applies. Never an error; the next sync picks
+    /// the merged files up.
+    async fn merge_approved(&self, remote: &dyn RemoteRepo, gf: &GroupFile) {
+        let open = match remote.proposals().await {
+            Ok(open) => open,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not list the group's proposals");
+                return;
+            }
+        };
+        for p in open {
+            let mine = p.author.eq_ignore_ascii_case(&self.login);
+            let approved = p.approvals.iter().any(|a| {
+                !a.eq_ignore_ascii_case(&self.login)
+                    && gf.members.iter().any(|m| m.eq_ignore_ascii_case(a))
+            });
+            if mine && approved && !p.needs_update {
+                if let Err(e) = remote.merge_proposal(p.number).await {
+                    tracing::warn!(proposal = p.number, error = %e, "could not merge a proposal");
+                }
+            }
+        }
+    }
+
+    /// The host's app asks GitHub to refuse everyone else's pushes, once per group per run.
+    /// GitHub may say no (a private repo on a free plan): never an error, only `host_lock`.
+    async fn ensure_lock(&self, remote: &dyn RemoteRepo, id: &GroupId, status: &mut Status) {
+        if !self.locked.lock().expect("lock").insert(id.clone()) {
+            return;
+        }
+        status.host_lock = Some(match remote.ensure_host_lock().await {
+            Ok(()) => "on".into(),
+            Err(e) => {
+                tracing::warn!(group = %id, error = %e, "GitHub would not lock the group to its host");
+                "unavailable".into()
+            }
+        });
     }
 
     /// The local side of the merge. The apply layer reads managed files back; the engine
     /// supplies the rest from the base: repo-only files (group file, schedules), paths the apply layer did
     /// not write (collisions), paths missing locally that the user did not choose to delete
     /// (kept local, or not readable back), and plugin files grown over the size cap (noted
-    /// in `too_large`).
+    /// in `too_large`). Also returns the group's `CLAUDE.md` copy as it is on disk, which
+    /// review handles (§7a).
     fn local_view(
         &self,
         id: &GroupId,
@@ -790,7 +1445,7 @@ impl Engine {
         status: &Status,
         keep: impl Fn(&str) -> bool,
         too_large: &mut Vec<String>,
-    ) -> crate::Result<FileSet> {
+    ) -> crate::Result<(FileSet, LocalCopy)> {
         let mut local: FileSet = self
             .apply
             .local_files(&self.paths, id)?
@@ -799,6 +1454,10 @@ impl Engine {
             .collect();
         let mut held = self.apply.excluded_paths(&self.paths, id)?;
         held.extend(status.collisions.iter().map(|c| c.path().to_string()));
+        let copy = match held.contains(group::CLAUDE_MD) {
+            true => LocalCopy::Held,
+            false => LocalCopy::Copy(local.get(group::CLAUDE_MD).cloned()),
+        };
         for (p, bytes) in &local {
             if group::too_large(p, bytes.len()) {
                 too_large.push(group::too_large_note(p));
@@ -815,7 +1474,7 @@ impl Engine {
                 };
             }
         }
-        Ok(local)
+        Ok((local, copy))
     }
 
     fn scan(&self, changes: &Changes) -> crate::Result<()> {
@@ -951,6 +1610,7 @@ impl Engine {
 
     fn group_status(&self, id: &GroupId) -> GroupStatus {
         let s = self.load_status(id);
+        let review = self.load_review(id).ok().flatten();
         let or = |v: String, fallback: &str| {
             if v.is_empty() {
                 fallback.to_string()
@@ -958,6 +1618,7 @@ impl Engine {
                 v
             }
         };
+        let is_host = or(s.host.clone(), &id.owner).eq_ignore_ascii_case(&self.login);
         GroupStatus {
             id: id.clone(),
             name: or(s.name, &id.repo),
@@ -969,6 +1630,13 @@ impl Engine {
             conflicts: s.conflicts,
             collisions: s.collisions.into_iter().map(Into::into).collect(),
             plugins_changed: false,
+            review_pending: review.as_ref().map_or(0, |r| r.pending.len()),
+            review_claude_md: review
+                .and_then(|r| r.review)
+                .unwrap_or(!self.group_auto_accept(id)),
+            is_host,
+            proposal_mode: self.group_proposal_mode(id),
+            host_lock: s.host_lock,
         }
     }
 
@@ -978,6 +1646,260 @@ impl Engine {
 
     fn save_base(&self, id: &GroupId, base: &Base) -> crate::Result<()> {
         save_base_dir(&self.paths.base_dir(id), base)
+    }
+
+    fn review_file(&self, id: &GroupId) -> PathBuf {
+        self.paths.group_dir(id).join(review::FILE)
+    }
+
+    fn load_review(&self, id: &GroupId) -> crate::Result<Option<ReviewState>> {
+        ReviewState::load(&self.review_file(id))
+    }
+
+    fn require_review(&self, id: &GroupId) -> crate::Result<ReviewState> {
+        self.load_review(id)?.ok_or_else(|| {
+            Error::Invalid(format!("{id} has no CLAUDE.md on this device to review"))
+        })
+    }
+
+    /// Save `st` and make the copy follow its accepted text: a copy that was in step takes it
+    /// as it is; an edited copy gets the same `applied` changes and stays an edit (unless
+    /// `replace`).
+    fn write_accepted(
+        &self,
+        id: &GroupId,
+        st: &mut ReviewState,
+        before: &str,
+        applied: &[review::Item],
+        replace: bool,
+    ) -> crate::Result<()> {
+        st.save(&self.review_file(id))?;
+        let copy = self
+            .apply
+            .local_files(&self.paths, id)?
+            .remove(group::CLAUDE_MD)
+            .map(|b| String::from_utf8_lossy(&b).into_owned());
+        let copy = match copy {
+            Some(c) if c != before && !replace => review::apply_all(&c, applied),
+            _ => st.accepted.clone(),
+        };
+        self.apply
+            .write_claude_md(&self.paths, id, copy.as_bytes(), st.accepted.as_bytes())
+    }
+
+    /// The group's `CLAUDE.md` through review (§7a). The changes since the last pass are
+    /// attributed to their authors: this account's apply to the accepted text, others' wait
+    /// for the user (or apply too when review is off). The copy follows the accepted text and
+    /// keeps an unshared edit. A shared edit is rebased onto the group's text, so what the
+    /// user declined is never pushed back.
+    #[allow(clippy::too_many_arguments)]
+    async fn review_pull(
+        &self,
+        remote: &dyn RemoteRepo,
+        id: &GroupId,
+        base: &Base,
+        head: &Head,
+        remote_files: &FileSet,
+        copy: LocalCopy,
+        shared: bool,
+        report: &mut GroupSyncReport,
+    ) -> crate::Result<MdPass> {
+        let old = text_of(base.files.get(group::CLAUDE_MD));
+        let new_bytes = remote_files.get(group::CLAUDE_MD);
+        let new = text_of(new_bytes);
+        let mut st = match self.load_review(id)? {
+            Some(st) => st,
+            // First sight: a join takes the group's text as it is; an upgraded device the
+            // version it already applied.
+            None => ReviewState::new(if base.head.is_empty() { &new } else { &old }),
+        };
+        let steps = if st.group == new {
+            Vec::new()
+        } else if st.group == old {
+            self.claude_md_steps(remote, &base.head, head, &new).await
+        } else {
+            vec![unknown_step(&new, head)]
+        };
+        let held = matches!(copy, LocalCopy::Held);
+        let choice = st.review;
+        let auto_accept =
+            read_group_file(id, remote_files).map_or(true, |(gf, _)| gf.auto_accept_claude_md);
+        let review_on = choice.unwrap_or(!auto_accept);
+        // A copy kept local is not this device's concern: the group's text is accepted.
+        st.review = Some(review_on && !held);
+        let before = st.accepted.clone();
+        let mut pulled = st.pull(&steps);
+        // The group (or this device) went to auto-accept: what waited is accepted now.
+        if !review_on && !held {
+            pulled.applied.extend(st.accept(None));
+        }
+        st.review = choice;
+        report.review.extend(pulled.new);
+
+        let copy = match copy {
+            LocalCopy::Copy(c) => c.map(|b| String::from_utf8_lossy(&b).into_owned()),
+            LocalCopy::Held => None,
+        };
+        let current = match copy {
+            // An unshared edit stays; the changes applied this pass go into it too.
+            Some(c) if c != before => {
+                let patched = review::apply_all(&c, &pulled.applied);
+                if st.accepted != before {
+                    self.apply.write_claude_md(
+                        &self.paths,
+                        id,
+                        patched.as_bytes(),
+                        st.accepted.as_bytes(),
+                    )?;
+                }
+                Some(patched)
+            }
+            Some(_) => Some(st.accepted.clone()),
+            None => None,
+        };
+        let push = match &current {
+            _ if !shared || held => None,
+            // A shared delete.
+            None => new_bytes.map(|_| None),
+            Some(c) => {
+                let text = review::rebase(&st.accepted, c, &new);
+                (text != new).then(|| Some(text.into_bytes()))
+            }
+        };
+        st.save(&self.review_file(id))?;
+        let apply = (new_bytes.is_some() || !st.accepted.is_empty())
+            .then(|| st.accepted.clone().into_bytes());
+        Ok(MdPass {
+            apply,
+            push,
+            copy: current,
+        })
+    }
+
+    /// The user's edit of the copy was pushed as `pushed`: it is the group's text now, and
+    /// the copy is accepted as it is.
+    fn review_pushed(
+        &self,
+        id: &GroupId,
+        pushed: Option<&[u8]>,
+        copy: Option<String>,
+    ) -> crate::Result<()> {
+        let mut st = self.load_review(id)?.unwrap_or_default();
+        st.group = pushed
+            .map(|b| String::from_utf8_lossy(b).into_owned())
+            .unwrap_or_default();
+        st.accepted = copy.unwrap_or_default();
+        st.settle();
+        st.save(&self.review_file(id))?;
+        if pushed.is_some() {
+            let c = st.accepted.as_bytes();
+            self.apply.write_claude_md(&self.paths, id, c, c)?;
+        }
+        Ok(())
+    }
+
+    /// Who changed the group's `CLAUDE.md` between `from` and `to`, step by step. When the
+    /// history cannot be read, every change counts as someone else's: nothing applies unasked.
+    async fn claude_md_steps(
+        &self,
+        remote: &dyn RemoteRepo,
+        from: &Head,
+        to: &Head,
+        new: &str,
+    ) -> Vec<review::Step> {
+        let commits = match remote.commits_between(&from.commit, &to.commit).await {
+            Ok(c) if !c.is_empty() => c,
+            Ok(_) => return vec![unknown_step(new, to)],
+            Err(e) => {
+                tracing::warn!(group = %remote.id(), error = %e, "could not read who changed CLAUDE.md");
+                return vec![unknown_step(new, to)];
+            }
+        };
+        let mine = |c: &CommitInfo| c.author.eq_ignore_ascii_case(&self.login);
+        let step = |c: &CommitInfo, text: &str| review::Step {
+            text: text.into(),
+            mine: mine(c),
+            author: c.author.clone(),
+            commit: c.sha.clone(),
+            message: c.message.clone(),
+            at_unix: c.at_unix,
+        };
+        let authors: BTreeSet<String> = commits.iter().map(|c| c.author.to_lowercase()).collect();
+        let last = commits.last().expect("not empty");
+        if authors.len() == 1 {
+            return vec![step(last, new)];
+        }
+        // Several authors: the last other member's commit takes the whole change.
+        let theirs = || {
+            let c = commits.iter().rev().find(|c| !mine(c)).unwrap_or(last);
+            vec![review::Step {
+                mine: false,
+                ..step(c, new)
+            }]
+        };
+        if commits.len() > MAX_HISTORY_WALK {
+            return theirs();
+        }
+        let mut steps = Vec::new();
+        for c in &commits {
+            match remote.file_at(&c.sha, group::CLAUDE_MD).await {
+                Ok(bytes) => steps.push(step(c, &text_of(bytes.as_ref()))),
+                Err(e) => {
+                    tracing::warn!(group = %remote.id(), error = %e, "could not read CLAUDE.md history");
+                    return theirs();
+                }
+            }
+        }
+        if steps.last().map(|s| s.text.as_str()) != Some(new) {
+            return theirs();
+        }
+        steps
+    }
+}
+
+/// Commits read one by one to attribute `CLAUDE.md` changes when several people pushed.
+const MAX_HISTORY_WALK: usize = 20;
+
+/// The group's `CLAUDE.md` copy as the merge found it.
+enum LocalCopy {
+    /// Not managed on this device ("Keep local").
+    Held,
+    /// `None`: missing.
+    Copy(Option<Vec<u8>>),
+}
+
+/// What review decided for one pass.
+struct MdPass {
+    /// The accepted text the apply gives the copy (`None`: no copy).
+    apply: Option<Vec<u8>>,
+    /// The user's shared edit, rebased onto the group's text (`Some(None)`: delete).
+    push: Option<Option<Vec<u8>>>,
+    /// The copy after this pass.
+    copy: Option<String>,
+}
+
+fn text_of(bytes: Option<&Vec<u8>>) -> String {
+    bytes
+        .map(|b| String::from_utf8_lossy(b).into_owned())
+        .unwrap_or_default()
+}
+
+/// A change whose author is unknown: it waits for review.
+fn unknown_step(text: &str, head: &Head) -> review::Step {
+    review::Step {
+        text: text.into(),
+        mine: false,
+        author: String::new(),
+        commit: head.commit.clone(),
+        message: String::new(),
+        at_unix: now_unix(),
+    }
+}
+
+fn remove_file_if_exists(file: &Path) -> crate::Result<()> {
+    match std::fs::remove_file(file) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
     }
 }
 
@@ -1050,6 +1972,13 @@ fn read_group_file(id: &GroupId, files: &FileSet) -> crate::Result<(GroupFile, O
         }
         Err(e) => Err(e),
     }
+}
+
+/// The error when GitHub refuses a push to a group the user can read.
+pub(crate) fn no_push(group: &str, host: &str) -> Error {
+    Error::Invalid(format!(
+        "You can't push to {group}: your GitHub account can read it but not write to it. Ask its host ({host}) for write access."
+    ))
 }
 
 pub(crate) fn is_lost_access(e: &Error) -> bool {
@@ -1165,7 +2094,7 @@ mod tests {
     /// written; kept paths stop being managed. Like the real apply, a file edited locally is
     /// left alone while the group's version stays the one last applied.
     #[derive(Default)]
-    struct StubApply {
+    pub(super) struct StubApply {
         st: Mutex<StubState>,
     }
 
@@ -1175,12 +2104,16 @@ mod tests {
         /// The group's version of each file as last applied.
         applied: HashMap<GroupId, FileSet>,
         kept: BTreeSet<String>,
+        /// What `keep_local` was called with, per group.
+        kept_in: HashMap<GroupId, BTreeSet<String>>,
         collide: BTreeSet<String>,
         removed: Vec<GroupId>,
+        /// The group order each `apply_group` call was given.
+        orders: Vec<Vec<GroupId>>,
     }
 
     impl StubApply {
-        fn file(&self, id: &GroupId, path: &str) -> Option<String> {
+        pub(super) fn file(&self, id: &GroupId, path: &str) -> Option<String> {
             let st = self.st.lock().unwrap();
             let bytes = st.local.get(id)?.get(path)?;
             Some(String::from_utf8_lossy(bytes).into_owned())
@@ -1220,10 +2153,11 @@ mod tests {
             &self,
             _: &Paths,
             group: &GroupId,
-            _: &[GroupId],
+            order: &[GroupId],
             files: &FileSet,
         ) -> crate::Result<ApplyReport> {
             let mut st = self.st.lock().unwrap();
+            st.orders.push(order.to_vec());
             let mut report = ApplyReport::default();
             let old = st.local.remove(group).unwrap_or_default();
             let applied = st
@@ -1284,8 +2218,37 @@ mod tests {
             };
             Ok(())
         }
-        fn keep_local(&self, _: &Paths, _: &GroupId, path: &str) -> crate::Result<()> {
-            self.st.lock().unwrap().kept.insert(path.into());
+        fn keep_local(&self, _: &Paths, group: &GroupId, path: &str) -> crate::Result<()> {
+            let mut st = self.st.lock().unwrap();
+            st.kept_in
+                .entry(group.clone())
+                .or_default()
+                .insert(path.into());
+            if !path.starts_with(crate::apply::SETTINGS_POINTER_PREFIX) {
+                st.kept.insert(path.into());
+            }
+            Ok(())
+        }
+        fn kept_local(&self, _: &Paths, group: &GroupId) -> crate::Result<BTreeSet<String>> {
+            let st = self.st.lock().unwrap();
+            Ok(st.kept_in.get(group).cloned().unwrap_or_default())
+        }
+        fn write_claude_md(
+            &self,
+            _: &Paths,
+            group: &GroupId,
+            copy: &[u8],
+            accepted: &[u8],
+        ) -> crate::Result<()> {
+            let mut st = self.st.lock().unwrap();
+            if st.kept.contains(group::CLAUDE_MD) {
+                return Ok(());
+            }
+            let path = String::from(group::CLAUDE_MD);
+            let local = st.local.entry(group.clone()).or_default();
+            local.insert(path.clone(), copy.to_vec());
+            let applied = st.applied.entry(group.clone()).or_default();
+            applied.insert(path, accepted.to_vec());
             Ok(())
         }
         fn local_edits(&self, _: &Paths) -> crate::Result<Vec<LocalEdit>> {
@@ -1297,7 +2260,7 @@ mod tests {
         Vec::new()
     }
 
-    fn fake_scanner(text: &str) -> Vec<crate::secrets::Hit> {
+    pub(super) fn fake_scanner(text: &str) -> Vec<crate::secrets::Hit> {
         text.lines()
             .enumerate()
             .filter(|(_, l)| l.contains("ghp_"))
@@ -1308,13 +2271,13 @@ mod tests {
             .collect()
     }
 
-    struct Device {
-        engine: Engine,
-        apply: Arc<StubApply>,
+    pub(super) struct Device {
+        pub(super) engine: Engine,
+        pub(super) apply: Arc<StubApply>,
         _dir: tempfile::TempDir,
     }
 
-    fn device(world: &FakeGitHub, login: &str, device: &str) -> Device {
+    pub(super) fn device(world: &FakeGitHub, login: &str, device: &str) -> Device {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths {
             claude_home: dir.path().join("claude"),
@@ -1342,11 +2305,13 @@ mod tests {
     fn group_json(name: &str, members: &[&str]) -> String {
         let mut gf = GroupFile::new(name, members[0]);
         gf.members = members.iter().map(|m| m.to_string()).collect();
+        // Most tests are about the review (§7a); the auto-accept ones turn it on.
+        gf.auto_accept_claude_md = false;
         String::from_utf8(gf.to_bytes()).unwrap()
     }
 
     /// `ana/claude-sync-data` with `members` as collaborators and a few files.
-    fn group_repo(world: &FakeGitHub, members: &[&str]) -> (GroupId, FakeRepo) {
+    pub(super) fn group_repo(world: &FakeGitHub, members: &[&str]) -> (GroupId, FakeRepo) {
         let id = GroupId::new(members[0], group::DEFAULT_REPO);
         let json = group_json("Friends", members);
         let repo = FakeRepo::with_files(
@@ -1367,9 +2332,19 @@ mod tests {
     }
 
     /// `bo` on `pc`, joined to ana's group with members ana and bo.
-    async fn joined() -> (FakeGitHub, GroupId, FakeRepo, Device) {
+    pub(super) async fn joined() -> (FakeGitHub, GroupId, FakeRepo, Device) {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&id).await.unwrap();
+        (world, id, repo, bo)
+    }
+
+    /// Like [`joined`], but `bo` hosts the group (owns the repo): only a host's app pushes.
+    pub(super) async fn joined_host() -> (FakeGitHub, GroupId, FakeRepo, Device) {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
         let bo = device(&world, "bo", "pc");
         bo.engine.join(&id).await.unwrap();
         (world, id, repo, bo)
@@ -1435,7 +2410,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_edits_are_pushed_only_after_share() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         let before = commit_count(&repo);
         bo.apply.edit(&id, "agents/a.md", "mine\n");
 
@@ -1473,7 +2448,7 @@ mod tests {
 
     #[tokio::test]
     async fn both_sides_change_different_files() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         repo.set_file("agents/a.md", "theirs\n");
         bo.apply.edit(&id, group::CLAUDE_MD, "# Ours\n");
         bo.engine
@@ -1508,9 +2483,96 @@ mod tests {
         assert_eq!(g.conflicts, *conflicts);
     }
 
+    /// Mark `path` as shared in `bo`'s saved status, as the Share button would have.
+    fn mark_shared(bo: &Device, id: &GroupId, path: &str) {
+        let mut status = bo.engine.load_status(id);
+        status.shared.insert(path.into());
+        bo.engine.save_status(id, &status).unwrap();
+    }
+
+    #[tokio::test]
+    async fn member_sync_pushes_nothing_and_keeps_edit_local() {
+        let (_, id, repo, bo) = joined().await;
+        let before = commit_count(&repo);
+        bo.apply.edit(&id, "agents/a.md", "mine\n");
+        mark_shared(&bo, &id, "agents/a.md");
+
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(!report.groups[0].pushed);
+        assert_eq!(commit_count(&repo), before);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "mine\n", "kept");
+        assert!(bo.engine.load_status(&id).shared.is_empty());
+        let g = &bo.engine.groups().await.unwrap()[0];
+        assert!(!g.is_host);
+        assert_eq!(g.host_lock, None);
+    }
+
+    #[tokio::test]
+    async fn member_cannot_change_the_group() {
+        let (_, id, repo, bo) = joined().await;
+        bo.apply.edit(&id, "agents/a.md", "mine\n");
+        let before = commit_count(&repo);
+
+        let err = bo.engine.add_member(&id, "cy").await.unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        let err = bo.engine.share_skill(&id, "pdf").await.unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        let err = bo
+            .engine
+            .resolve_edit(&edit(&id, "agents/a.md"), EditAction::Share)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        assert_eq!(commit_count(&repo), before);
+        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "mine\n");
+    }
+
+    #[tokio::test]
+    async fn host_still_pushes() {
+        let (_, id, repo, bo) = joined_host().await;
+        let before = commit_count(&repo);
+        bo.apply.edit(&id, "agents/a.md", "mine\n");
+        mark_shared(&bo, &id, "agents/a.md");
+
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].pushed);
+        assert_eq!(commit_count(&repo), before + 1);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "mine\n");
+        assert!(bo.engine.groups().await.unwrap()[0].is_host);
+    }
+
+    #[tokio::test]
+    async fn host_lock_is_ensured_once_per_run() {
+        let (_, _, repo, bo) = joined_host().await;
+        bo.engine.sync_all().await.unwrap();
+        bo.engine.sync_all().await.unwrap();
+        assert_eq!(calls(&repo, "ensure_host_lock"), 1);
+        assert_eq!(repo.rulesets(), [crate::remote::HOST_LOCK_NAME]);
+        let g = &bo.engine.groups().await.unwrap()[0];
+        assert_eq!(g.host_lock.as_deref(), Some("on"));
+    }
+
+    #[tokio::test]
+    async fn lock_failure_never_fails_sync() {
+        // The lock is first asked for while joining, so the refusal is set up before that.
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
+        repo.fail("ensure_host_lock", 403);
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&id).await.unwrap();
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(report.groups[0].error, None);
+        let g = &bo.engine.groups().await.unwrap()[0];
+        assert_eq!(g.host_lock.as_deref(), Some("unavailable"));
+        assert_eq!(g.last_error, None);
+        assert!(repo.rulesets().is_empty());
+    }
+
     #[tokio::test]
     async fn shared_settings_merge_by_key() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         bo.apply
             .edit(&id, group::SHARED_SETTINGS, "{\"a\": 1, \"b\": 2}\n");
         repo.set_file(group::SHARED_SETTINGS, "{\"a\": 1, \"c\": 3}\n");
@@ -1529,7 +2591,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_edit_beats_a_shared_local_delete() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         bo.apply.delete(&id, "agents/a.md");
         repo.set_file("agents/a.md", "theirs\n");
         let mut deleted = edit(&id, "agents/a.md");
@@ -1547,7 +2609,7 @@ mod tests {
 
     #[tokio::test]
     async fn shared_delete_is_pushed_and_unshared_delete_is_held() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         bo.apply.delete(&id, "agents/a.md");
         bo.engine.sync_all().await.unwrap();
         assert!(repo.file("agents/a.md").is_some());
@@ -1572,7 +2634,7 @@ mod tests {
 
     #[tokio::test]
     async fn push_races_are_retried() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         let raced = Arc::new(Mutex::new(false));
         let flag = raced.clone();
         repo.before_commit(move |r| {
@@ -1595,7 +2657,7 @@ mod tests {
 
     #[tokio::test]
     async fn push_races_give_up_after_three_retries() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         let n = Arc::new(Mutex::new(0));
         let count = n.clone();
         repo.before_commit(move |r| {
@@ -1630,6 +2692,7 @@ mod tests {
     async fn secrets_block_the_push() {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
         let mut bo = device(&world, "bo", "pc");
         bo.engine = bo.engine.with_scanner(fake_scanner);
         bo.engine.join(&id).await.unwrap();
@@ -1705,8 +2768,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn members_only_edit_the_group_file() {
-        let (_, id, repo, bo) = joined().await;
+    async fn the_host_edits_the_group_file() {
+        let (_, id, repo, bo) = joined_host().await;
         bo.engine.add_member(&id, "cy").await.unwrap();
         let gf = GroupFile::parse(repo.file(group::FILE).unwrap().as_bytes()).unwrap();
         assert_eq!(gf.members, ["ana", "bo", "cy"]);
@@ -1714,8 +2777,16 @@ mod tests {
             repo.commits().pop().unwrap().message,
             "bo@pc: add member cy"
         );
-        assert_eq!(calls(&repo, "invite"), 0, "only the host invites");
-        assert_eq!(calls(&repo, "collaborators"), 0);
+        let pending: Vec<String> = repo
+            .pending_invitations()
+            .into_iter()
+            .map(|(_, l)| l)
+            .collect();
+        assert_eq!(
+            pending,
+            ["ana", "cy"],
+            "the host invites the new member (ana was never accepted)"
+        );
         let g = &bo.engine.groups().await.unwrap()[0];
         assert_eq!(g.members, ["ana", "bo", "cy"]);
         assert_eq!(g.last_error, None);
@@ -1750,6 +2821,151 @@ mod tests {
         );
         assert!(bo.engine.groups().await.unwrap().is_empty());
         assert!(!bo.engine.paths.group_dir(&id).exists());
+    }
+
+    #[tokio::test]
+    async fn reorder_saves_the_order_and_applies_every_group_in_it() {
+        let (world, a, _, bo) = joined().await;
+        let (b, _) = group_repo(&world, &["cy", "bo"]);
+        bo.engine.join(&b).await.unwrap();
+        assert_eq!(
+            AppState::load(&bo.engine.paths).unwrap().groups,
+            [a.clone(), b.clone()]
+        );
+        bo.apply.st.lock().unwrap().orders.clear();
+
+        let report = bo
+            .engine
+            .reorder_groups(vec![b.clone(), a.clone()])
+            .await
+            .unwrap();
+        assert_eq!(
+            report
+                .groups
+                .iter()
+                .map(|g| g.id.clone())
+                .collect::<Vec<_>>(),
+            [b.clone(), a.clone()]
+        );
+        assert_eq!(
+            AppState::load(&bo.engine.paths).unwrap().groups,
+            [b.clone(), a.clone()]
+        );
+        assert_eq!(
+            bo.engine
+                .groups()
+                .await
+                .unwrap()
+                .iter()
+                .map(|g| g.id.clone())
+                .collect::<Vec<_>>(),
+            [b.clone(), a.clone()]
+        );
+        let orders = bo.apply.st.lock().unwrap().orders.clone();
+        assert!(!orders.is_empty());
+        assert!(orders.iter().all(|o| *o == [b.clone(), a.clone()]));
+
+        // Same order again: nothing to do. A list that is not the joined groups is refused.
+        assert!(bo
+            .engine
+            .reorder_groups(vec![b.clone(), a.clone()])
+            .await
+            .unwrap()
+            .groups
+            .is_empty());
+        assert!(bo.engine.reorder_groups(vec![a.clone()]).await.is_err());
+        assert!(bo
+            .engine
+            .reorder_groups(vec![a.clone(), a.clone()])
+            .await
+            .is_err());
+        assert_eq!(AppState::load(&bo.engine.paths).unwrap().groups, [b, a]);
+    }
+
+    #[tokio::test]
+    async fn a_renamed_repo_is_followed_everywhere() {
+        let (world, a, _, bo) = joined().await;
+        let (b, _) = group_repo(&world, &["cy", "bo"]);
+        bo.engine.join(&b).await.unwrap();
+        let new = GroupId::new("ana", "renamed");
+        world.rename(&a, &new);
+
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(report.moved.len(), 1);
+        assert_eq!((&report.moved[0].from, &report.moved[0].to), (&a, &new));
+        // The order is kept: the renamed group stays first.
+        assert_eq!(
+            AppState::load(&bo.engine.paths).unwrap().groups,
+            [new.clone(), b.clone()]
+        );
+        assert!(!bo.engine.paths.group_dir(&a).exists());
+        assert!(bo.engine.paths.group_dir(&new).join("status.json").exists());
+        assert_eq!(
+            report
+                .groups
+                .iter()
+                .map(|g| g.id.clone())
+                .collect::<Vec<_>>(),
+            [new.clone(), b.clone()]
+        );
+
+        // Already moved: nothing to do.
+        assert!(bo.engine.sync_all().await.unwrap().moved.is_empty());
+        assert!(bo.engine.sync_if_changed().await.unwrap().moved.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_move_finishes_on_the_next_run() {
+        let (world, a, _, bo) = joined().await;
+        let new = GroupId::new("ana", "renamed");
+        world.rename(&a, &new);
+        // The folder moved, then the app stopped before saving state.json.
+        std::fs::rename(
+            bo.engine.paths.group_dir(&a),
+            bo.engine.paths.group_dir(&new),
+        )
+        .unwrap();
+
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(report.moved.len(), 1);
+        assert_eq!(
+            AppState::load(&bo.engine.paths).unwrap().groups,
+            std::slice::from_ref(&new)
+        );
+        assert!(bo.engine.paths.group_dir(&new).exists());
+        assert!(bo
+            .engine
+            .group_status(&new)
+            .members
+            .contains(&"bo".to_string()));
+    }
+
+    #[tokio::test]
+    async fn transferring_the_group_flips_the_host() {
+        let (world, id, repo, bo) = joined_host().await;
+        assert!(bo.engine.group_status(&id).is_host);
+
+        // Only members can receive it; a stranger and yourself are refused.
+        assert!(bo.engine.transfer_group(&id, "zed").await.is_err());
+        assert!(bo.engine.transfer_group(&id, "bo").await.is_err());
+        assert!(repo.transfer_requests().is_empty());
+
+        bo.engine.transfer_group(&id, "ana").await.unwrap();
+        assert_eq!(repo.transfer_requests(), ["ana"]);
+        // Nothing changes until ana accepts.
+        assert!(bo.engine.sync_all().await.unwrap().moved.is_empty());
+
+        let new = GroupId::new("ana", "handed-over");
+        world.rename(&id, &new);
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(report.moved.len(), 1);
+        let status = bo.engine.group_status(&new);
+        assert!(!status.is_host);
+        assert_eq!(status.host, "ana");
+        // The former host stays a member, so ana's reconcile keeps them.
+        assert!(status.members.contains(&"bo".to_string()));
+        // A member can't transfer.
+        assert!(bo.engine.transfer_group(&new, "bo").await.is_err());
     }
 
     #[tokio::test]
@@ -1790,7 +3006,7 @@ mod tests {
     async fn create_group_commits_the_skeleton_and_joins() {
         let world = FakeGitHub::new();
         let ana = device(&world, "ana", "mac");
-        let status = ana.engine.create_group("Friends", "").await.unwrap();
+        let status = ana.engine.create_group("Friends", "", None).await.unwrap();
         let id = GroupId::new("ana", group::DEFAULT_REPO);
         assert_eq!(status.id, id);
         assert_eq!(
@@ -1813,9 +3029,13 @@ mod tests {
             "# Friends\n"
         );
 
-        let err = ana.engine.create_group("Again", "").await.unwrap_err();
+        let err = ana
+            .engine
+            .create_group("Again", "", None)
+            .await
+            .unwrap_err();
         assert!(matches!(err, Error::GitHub { status: 422, .. }), "{err}");
-        let named = ana.engine.create_group("", "crew").await.unwrap();
+        let named = ana.engine.create_group("", "crew", None).await.unwrap();
         assert_eq!(named.name, "crew");
     }
 
@@ -1843,6 +3063,7 @@ mod tests {
     async fn collisions_are_reported_and_never_pushed() {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
         let bo = device(&world, "bo", "pc");
         bo.apply.collide("agents/a.md");
         bo.engine.join(&id).await.unwrap();
@@ -1876,6 +3097,7 @@ mod tests {
             ],
         );
         repo.add_collaborator("bo");
+        repo.set_owner("bo");
         world.add(&repo);
         let bo = device(&world, "bo", "pc");
         let status = bo.engine.join(&id).await.unwrap();
@@ -1919,7 +3141,7 @@ mod tests {
 
     #[tokio::test]
     async fn share_skill_moves_the_folder_into_the_group() {
-        let (_, id, repo, bo) = joined().await;
+        let (_, id, repo, bo) = joined_host().await;
         let dir = bo.engine.paths.claude_home.join("skills").join("review");
         std::fs::create_dir_all(dir.join("refs")).unwrap();
         std::fs::write(dir.join("SKILL.md"), "# Review\n").unwrap();
@@ -1973,6 +3195,7 @@ mod tests {
     async fn share_skill_scans_for_secrets() {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
         let mut bo = device(&world, "bo", "pc");
         bo.engine = bo.engine.with_scanner(fake_scanner);
         bo.engine.join(&id).await.unwrap();
@@ -2015,6 +3238,678 @@ mod tests {
         assert_eq!(commit_count(&repo), before + 1, "only the test's commit");
     }
 
+    // The group's CLAUDE.md through review (§7a).
+
+    fn md(e: &Engine, id: &GroupId) -> ClaudeMdReview {
+        e.claude_md_review(id).unwrap()
+    }
+
+    fn lines(items: &[review::Item]) -> Vec<(review::Kind, String, String)> {
+        items
+            .iter()
+            .map(|i| (i.kind, i.lines.join("|"), i.author.clone()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn others_claude_md_changes_wait_for_review() {
+        let (_, id, repo, bo) = joined().await;
+        repo.set_file(group::CLAUDE_MD, "Use tabs.\n");
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(
+            lines(&report.groups[0].review),
+            [
+                (review::Kind::Remove, "# Friends".into(), "ana".into()),
+                (review::Kind::Add, "Use tabs.".into(), "ana".into()),
+            ]
+        );
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\n",
+            "neither the addition nor the removal applies unasked"
+        );
+        let g = &bo.engine.groups().await.unwrap()[0];
+        assert_eq!((g.review_pending, g.review_claude_md), (2, true));
+        assert_eq!(md(&bo.engine, &id).pending.len(), 2);
+        // Asked once: the next sync reports nothing new and pushes nothing.
+        let before = commit_count(&repo);
+        let again = bo.engine.sync_all().await.unwrap();
+        assert!(again.groups[0].review.is_empty());
+        assert_eq!(commit_count(&repo), before);
+    }
+
+    #[tokio::test]
+    async fn own_claude_md_changes_apply_at_once() {
+        let (world, id, repo, bo) = joined_host().await;
+        // From a git clone under the same account.
+        repo.set_file_as("BO", group::CLAUDE_MD, "# Friends\nMine.\n");
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].review.is_empty());
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\nMine.\n"
+        );
+        // From another device of the same account.
+        let mac = device(&world, "bo", "mac");
+        mac.engine.join(&id).await.unwrap();
+        mac.apply.edit(&id, group::CLAUDE_MD, "# Friends\n");
+        mac.engine
+            .resolve_edit(&edit(&id, group::CLAUDE_MD), EditAction::Share)
+            .await
+            .unwrap();
+        assert_eq!(repo.file(group::CLAUDE_MD).unwrap(), "# Friends\n");
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].review.is_empty());
+        assert_eq!(bo.apply.file(&id, group::CLAUDE_MD).unwrap(), "# Friends\n");
+    }
+
+    #[tokio::test]
+    async fn accept_applies_and_decline_keeps_without_asking_again() {
+        let (_, id, repo, bo) = joined().await;
+        repo.set_file(group::CLAUDE_MD, "# Friends\nUse tabs.\nBe brief.\n");
+        bo.engine.sync_all().await.unwrap();
+        let pending = md(&bo.engine, &id).pending;
+        assert_eq!(pending.len(), 1, "one block of two lines");
+        let before = commit_count(&repo);
+        let ids = [pending[0].id.clone()];
+        let after = bo
+            .engine
+            .decide_claude_md(&id, Some(&ids), true)
+            .await
+            .unwrap();
+        assert!(after.pending.is_empty() && !after.differs);
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\nUse tabs.\nBe brief.\n"
+        );
+
+        // Ana removes a line and adds one; bo declines both.
+        repo.set_file(group::CLAUDE_MD, "# Friends\nBe brief.\nNo emoji.\n");
+        bo.engine.sync_all().await.unwrap();
+        assert_eq!(md(&bo.engine, &id).pending.len(), 2);
+        let after = bo.engine.decide_claude_md(&id, None, false).await.unwrap();
+        assert!(after.pending.is_empty() && after.differs);
+        assert_eq!(after.declined, 2);
+        let mine = "# Friends\nUse tabs.\nBe brief.\n";
+        assert_eq!(bo.apply.file(&id, group::CLAUDE_MD).unwrap(), mine);
+        for _ in 0..2 {
+            let report = bo.engine.sync_all().await.unwrap();
+            assert!(report.groups[0].review.is_empty(), "not asked again");
+        }
+        assert_eq!(bo.apply.file(&id, group::CLAUDE_MD).unwrap(), mine);
+        assert_eq!(commit_count(&repo), before + 1, "only ana's commit");
+
+        // A new change is asked about; the declined ones stay declined.
+        repo.set_file(
+            group::CLAUDE_MD,
+            "# Friends\nBe brief.\nNo emoji.\nShort PRs.\n",
+        );
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(
+            lines(&report.groups[0].review),
+            [(review::Kind::Add, "Short PRs.".into(), "ana".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn declined_differences_are_never_pushed() {
+        let (_, id, repo, bo) = joined_host().await;
+        repo.set_file_as("ana", group::CLAUDE_MD, "# Friends\nUse tabs.\n");
+        bo.engine.sync_all().await.unwrap();
+        bo.engine.decide_claude_md(&id, None, false).await.unwrap();
+        // Bo edits their copy (without ana's line) and shares the edit.
+        bo.apply
+            .edit(&id, group::CLAUDE_MD, "# Friends\nBo's rule.\n");
+        bo.engine
+            .resolve_edit(&edit(&id, group::CLAUDE_MD), EditAction::Share)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.file(group::CLAUDE_MD).unwrap(),
+            "# Friends\nBo's rule.\nUse tabs.\n",
+            "only bo's own line is pushed; ana's declined line stays in the group"
+        );
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\nBo's rule.\n"
+        );
+        let before = commit_count(&repo);
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].review.is_empty() && !report.groups[0].pushed);
+        assert_eq!(commit_count(&repo), before);
+    }
+
+    #[tokio::test]
+    async fn review_off_applies_others_changes_again() {
+        let (_, id, repo, bo) = joined().await;
+        repo.set_file(group::CLAUDE_MD, "# Friends\nUse tabs.\n");
+        bo.engine.sync_all().await.unwrap();
+        let off = bo
+            .engine
+            .set_claude_md_review(&id, Some(false))
+            .await
+            .unwrap();
+        assert!(
+            !off.review && off.pending.is_empty(),
+            "pending ones are accepted"
+        );
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\nUse tabs.\n"
+        );
+        repo.set_file(group::CLAUDE_MD, "Use tabs.\n");
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(report.groups[0].review.len(), 0);
+        assert_eq!(bo.apply.file(&id, group::CLAUDE_MD).unwrap(), "Use tabs.\n");
+        assert!(!bo.engine.groups().await.unwrap()[0].review_claude_md);
+    }
+
+    /// Set (or, with `None`, remove) `autoAcceptClaudeMd` in the repo's group file.
+    fn set_auto_accept(repo: &FakeRepo, on: Option<bool>) {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&repo.file(group::FILE).unwrap()).unwrap();
+        match on {
+            Some(b) => v["autoAcceptClaudeMd"] = b.into(),
+            None => {
+                v.as_object_mut().unwrap().remove("autoAcceptClaudeMd");
+            }
+        }
+        repo.set_file(group::FILE, &serde_json::to_string_pretty(&v).unwrap());
+    }
+
+    /// Turn `proposalMode` on or off in the repo's group file.
+    fn set_proposal_mode(repo: &FakeRepo, on: bool) {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&repo.file(group::FILE).unwrap()).unwrap();
+        v["proposalMode"] = on.into();
+        repo.set_file(group::FILE, &serde_json::to_string_pretty(&v).unwrap());
+    }
+
+    /// `bo` has joined with proposal mode on and edited `agents/a.md`, shared.
+    async fn proposing_member() -> (FakeGitHub, GroupId, FakeRepo, Device) {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        set_proposal_mode(&repo, true);
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&id).await.unwrap();
+        bo.apply.edit(&id, "agents/a.md", "mine\n");
+        mark_shared(&bo, &id, "agents/a.md");
+        (world, id, repo, bo)
+    }
+
+    #[tokio::test]
+    async fn proposal_mode_off_still_host_only() {
+        let (_, id, repo, bo) = joined().await;
+        let err = bo
+            .engine
+            .set_group_proposal_mode(&id, true)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        bo.apply.edit(&id, "agents/a.md", "mine\n");
+        mark_shared(&bo, &id, "agents/a.md");
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(!report.groups[0].pushed && !report.groups[0].proposed);
+        let err = bo.engine.share_skill(&id, "pdf").await.unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        assert!(repo.pulls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn member_edit_becomes_a_proposal() {
+        let (_, id, repo, bo) = proposing_member().await;
+        let before = commit_count(&repo);
+
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].proposed);
+        assert!(!report.groups[0].pushed);
+        assert_eq!(commit_count(&repo), before, "main is untouched");
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+        let pulls = repo.pulls();
+        assert_eq!(pulls.len(), 1);
+        let branch = &pulls[0].branch;
+        let stamp = branch.strip_prefix("proposal/bo-").expect(branch);
+        assert_eq!(stamp.len(), 14, "{branch}");
+        assert!(stamp.bytes().all(|b| b.is_ascii_digit()), "{branch}");
+        assert_eq!(pulls[0].state, "Open");
+        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "mine\n", "kept");
+
+        let again = bo.engine.sync_all().await.unwrap();
+        assert!(!again.groups[0].proposed, "not proposed twice");
+        assert_eq!(repo.pulls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn host_approves_member_proposal_and_it_merges() {
+        let (world, id, repo, bo) = proposing_member().await;
+        bo.engine.sync_all().await.unwrap();
+        let ana = device(&world, "ana", "pc");
+        ana.engine.join(&id).await.unwrap();
+        let before = commit_count(&repo);
+
+        let open = ana.engine.proposals(&id).await.unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].author, "bo");
+        assert!(!open[0].mine);
+        ana.engine
+            .approve_proposal(&id, open[0].number)
+            .await
+            .unwrap();
+        assert_eq!(repo.file("agents/a.md").unwrap(), "mine\n");
+        assert_eq!(commit_count(&repo), before + 1, "squash-merged");
+        assert_eq!(repo.pulls()[0].state, "Merged");
+        assert!(ana.engine.proposals(&id).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn member_approval_lets_host_sync_merge_host_proposal() {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        set_proposal_mode(&repo, true);
+        let ana = device(&world, "ana", "pc");
+        ana.engine.join(&id).await.unwrap();
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&id).await.unwrap();
+        ana.apply.edit(&id, "agents/a.md", "hosts\n");
+        mark_shared(&ana, &id, "agents/a.md");
+        let before = commit_count(&repo);
+
+        let report = ana.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].proposed && !report.groups[0].pushed);
+        assert_eq!(commit_count(&repo), before);
+        let number = repo.pulls()[0].number;
+        let err = ana.engine.approve_proposal(&id, number).await.unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{err}");
+        ana.engine.sync_all().await.unwrap();
+        assert_eq!(repo.pulls()[0].state, "Open", "no approval yet");
+
+        bo.engine.approve_proposal(&id, number).await.unwrap();
+        assert_eq!(
+            repo.file("agents/a.md").unwrap(),
+            "base\n",
+            "not merged by bo"
+        );
+        ana.engine.sync_all().await.unwrap();
+        assert_eq!(repo.pulls()[0].state, "Merged");
+        assert_eq!(repo.file("agents/a.md").unwrap(), "hosts\n");
+        assert_eq!(commit_count(&repo), before + 1);
+    }
+
+    #[tokio::test]
+    async fn decline_closes_the_proposal_with_a_comment() {
+        let (world, id, repo, bo) = proposing_member().await;
+        bo.engine.sync_all().await.unwrap();
+        let ana = device(&world, "ana", "pc");
+        ana.engine.join(&id).await.unwrap();
+        let number = repo.pulls()[0].number;
+
+        ana.engine.decline_proposal(&id, number).await.unwrap();
+        let pull = &repo.pulls()[0];
+        assert_eq!(pull.state, "Closed");
+        assert_eq!(pull.comments.len(), 1, "{:?}", pull.comments);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+        assert!(ana.engine.proposals(&id).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn own_proposal_cannot_be_approved() {
+        let (_, id, repo, bo) = proposing_member().await;
+        bo.engine.sync_all().await.unwrap();
+        let number = repo.pulls()[0].number;
+        let err = bo.engine.approve_proposal(&id, number).await.unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{err}");
+        assert!(repo.pulls()[0].reviews.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_proposal_needs_update_and_is_not_merged() {
+        let (world, id, repo, bo) = proposing_member().await;
+        bo.engine.sync_all().await.unwrap();
+        let number = repo.pulls()[0].number;
+        // The same file changes on main after the proposal was made.
+        repo.set_file("agents/a.md", "newer\n");
+        let ana = device(&world, "ana", "pc");
+        ana.engine.join(&id).await.unwrap();
+
+        let open = ana.engine.proposals(&id).await.unwrap();
+        assert!(open[0].needs_update);
+        let err = ana.engine.approve_proposal(&id, number).await.unwrap_err();
+        assert!(err.to_string().contains("needs an update"), "{err}");
+        assert_eq!(repo.pulls()[0].state, "Open");
+        assert_eq!(repo.file("agents/a.md").unwrap(), "newer\n");
+    }
+
+    #[tokio::test]
+    async fn only_host_can_set_proposal_mode() {
+        let (_, id, _, bo) = joined().await;
+        let err = bo
+            .engine
+            .set_group_proposal_mode(&id, true)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+
+        let (_, id, repo, host) = joined_host().await;
+        let mode = |repo: &FakeRepo| {
+            GroupFile::parse(repo.file(group::FILE).unwrap().as_bytes())
+                .unwrap()
+                .proposal_mode
+        };
+        host.engine
+            .set_group_proposal_mode(&id, true)
+            .await
+            .unwrap();
+        assert!(mode(&repo));
+        host.engine
+            .set_group_proposal_mode(&id, false)
+            .await
+            .unwrap();
+        assert!(!mode(&repo));
+    }
+
+    #[tokio::test]
+    async fn share_skill_in_proposal_mode_keeps_the_folder() {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        set_proposal_mode(&repo, true);
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&id).await.unwrap();
+        let dir = bo.engine.paths.claude_home.join("skills").join("review");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("SKILL.md"), "# Review\n").unwrap();
+        let before = commit_count(&repo);
+
+        bo.engine.share_skill(&id, "review").await.unwrap();
+        assert_eq!(commit_count(&repo), before);
+        assert_eq!(repo.file("skills/review/SKILL.md"), None);
+        assert_eq!(repo.pulls().len(), 1);
+        assert!(dir.join("SKILL.md").is_file(), "kept until merged");
+        let backups = std::fs::read_dir(bo.engine.paths.backups_dir())
+            .map(|d| d.count())
+            .unwrap_or(0);
+        assert_eq!(backups, 0, "no backup move");
+    }
+    #[tokio::test]
+    async fn an_absent_auto_accept_key_applies_others_changes_at_once() {
+        let (_, id, repo, bo) = joined().await;
+        set_auto_accept(&repo, None);
+        repo.set_file(
+            group::CLAUDE_MD,
+            "# Friends
+Use tabs.
+",
+        );
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].review.is_empty());
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends
+Use tabs.
+"
+        );
+        let m = md(&bo.engine, &id);
+        assert!(m.auto_accept && !m.review && m.review_override.is_none());
+        assert!(m.pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn auto_accept_off_in_the_group_keeps_changes_pending() {
+        let (_, id, repo, bo) = joined().await;
+        set_auto_accept(&repo, Some(false));
+        repo.set_file(
+            group::CLAUDE_MD,
+            "# Friends
+Use tabs.
+",
+        );
+        bo.engine.sync_all().await.unwrap();
+        let m = md(&bo.engine, &id);
+        assert!(!m.auto_accept && m.review);
+        assert_eq!(m.pending.len(), 1);
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends
+"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_device_override_wins_over_the_group() {
+        let (_, id, repo, bo) = joined().await;
+        set_auto_accept(&repo, Some(true));
+        bo.engine.sync_all().await.unwrap();
+        let m = bo
+            .engine
+            .set_claude_md_review(&id, Some(true))
+            .await
+            .unwrap();
+        assert!(m.review && m.auto_accept && m.review_override == Some(true));
+        repo.set_file(
+            group::CLAUDE_MD,
+            "# Friends
+Use tabs.
+",
+        );
+        bo.engine.sync_all().await.unwrap();
+        assert_eq!(md(&bo.engine, &id).pending.len(), 1);
+        // Following the group again accepts what waited.
+        let m = bo.engine.set_claude_md_review(&id, None).await.unwrap();
+        assert!(!m.review && m.pending.is_empty());
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends
+Use tabs.
+"
+        );
+    }
+
+    #[tokio::test]
+    async fn turning_the_group_on_accepts_what_waits_on_the_next_sync() {
+        let (_, id, repo, bo) = joined().await;
+        repo.set_file(
+            group::CLAUDE_MD,
+            "# Friends
+Use tabs.
+",
+        );
+        bo.engine.sync_all().await.unwrap();
+        assert_eq!(md(&bo.engine, &id).pending.len(), 1);
+        set_auto_accept(&repo, Some(true));
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(report.groups[0].review.is_empty());
+        let m = md(&bo.engine, &id);
+        assert!(m.pending.is_empty() && !m.review);
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends
+Use tabs.
+"
+        );
+    }
+
+    #[tokio::test]
+    async fn setting_the_group_auto_accept_commits_the_group_file() {
+        let (_, id, repo, bo) = joined_host().await;
+        repo.set_file(
+            group::CLAUDE_MD,
+            "# Friends
+Use tabs.
+",
+        );
+        bo.engine.sync_all().await.unwrap();
+        let m = bo
+            .engine
+            .set_group_auto_accept_claude_md(&id, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.commits().last().unwrap().message,
+            "bo@pc: auto-accept CLAUDE.md on"
+        );
+        let gf = GroupFile::parse(repo.file(group::FILE).unwrap().as_bytes()).unwrap();
+        assert!(gf.auto_accept_claude_md);
+        assert!(m.auto_accept && !m.review && m.pending.is_empty());
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends
+Use tabs.
+"
+        );
+        let n = commit_count(&repo);
+        bo.engine
+            .set_group_auto_accept_claude_md(&id, true)
+            .await
+            .unwrap();
+        assert_eq!(commit_count(&repo), n, "nothing changed, nothing pushed");
+        bo.engine
+            .set_group_auto_accept_claude_md(&id, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.commits().last().unwrap().message,
+            "bo@pc: auto-accept CLAUDE.md off"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_member_cannot_change_the_group_auto_accept() {
+        let (_, id, repo, bo) = joined().await;
+        let n = commit_count(&repo);
+        let err = bo
+            .engine
+            .set_group_auto_accept_claude_md(&id, true)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        assert_eq!(commit_count(&repo), n);
+    }
+
+    #[tokio::test]
+    async fn an_unshared_edit_stays_while_accepted_changes_go_into_it() {
+        let (_, id, repo, bo) = joined().await;
+        bo.apply
+            .edit(&id, group::CLAUDE_MD, "# Friends\nMy note.\n");
+        repo.set_file(group::CLAUDE_MD, "Top.\n# Friends\n");
+        bo.engine.sync_all().await.unwrap();
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\nMy note.\n"
+        );
+        bo.engine.decide_claude_md(&id, None, true).await.unwrap();
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "Top.\n# Friends\nMy note.\n"
+        );
+        // Undo goes back to what bo accepted.
+        bo.engine
+            .resolve_edit(&edit(&id, group::CLAUDE_MD), EditAction::Undo)
+            .await
+            .unwrap();
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "Top.\n# Friends\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_line_deleted_in_one_group_stays_in_the_other() {
+        let world = FakeGitHub::new();
+        let text = "# Rules\nAlways run the tests.\n";
+        let a = GroupId::new("ana", group::DEFAULT_REPO);
+        let b = GroupId::new("cy", "crew");
+        for (id, members) in [(&a, ["ana", "bo"]), (&b, ["cy", "bo"])] {
+            let json = group_json("G", &members);
+            let repo = FakeRepo::with_files(
+                id.clone(),
+                &[(group::FILE, &json), (group::CLAUDE_MD, text)],
+            );
+            repo.add_collaborator("bo");
+            world.add(&repo);
+        }
+        let bo = device(&world, "bo", "pc");
+        bo.engine.join(&a).await.unwrap();
+        bo.engine.join(&b).await.unwrap();
+        world
+            .repo(&b)
+            .unwrap()
+            .set_file(group::CLAUDE_MD, "# Rules\n");
+        let report = bo.engine.sync_all().await.unwrap();
+        let of = |id: &GroupId| {
+            report
+                .groups
+                .iter()
+                .find(|g| &g.id == id)
+                .map(|g| lines(&g.review))
+                .unwrap_or_default()
+        };
+        assert!(of(&a).is_empty());
+        assert_eq!(
+            of(&b),
+            [(
+                review::Kind::Remove,
+                "Always run the tests.".into(),
+                "cy".into()
+            )]
+        );
+        bo.engine.decide_claude_md(&b, None, false).await.unwrap();
+        bo.engine.sync_all().await.unwrap();
+        assert_eq!(bo.apply.file(&a, group::CLAUDE_MD).unwrap(), text);
+        assert_eq!(bo.apply.file(&b, group::CLAUDE_MD).unwrap(), text);
+        assert_eq!(
+            world.repo(&a).unwrap().file(group::CLAUDE_MD).unwrap(),
+            text
+        );
+        assert_eq!(md(&bo.engine, &a).pending.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn several_authors_are_told_apart() {
+        let (_, id, repo, bo) = joined().await;
+        repo.set_file_as("bo", group::CLAUDE_MD, "# Friends\nBo's line.\n");
+        repo.set_file(group::CLAUDE_MD, "# Friends\nBo's line.\nAna's line.\n");
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(
+            lines(&report.groups[0].review),
+            [(review::Kind::Add, "Ana's line.".into(), "ana".into())]
+        );
+        assert_eq!(
+            bo.apply.file(&id, group::CLAUDE_MD).unwrap(),
+            "# Friends\nBo's line.\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn integration_declined_changes_are_not_local_edits() {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        let (bo, _dir) = real_device(&world, "bo");
+        bo.join(&id).await.unwrap();
+        let copy = bo.paths.group_dir(&id).join(group::CLAUDE_MD);
+        repo.set_file(group::CLAUDE_MD, "# Friends\nUse tabs.\n");
+        bo.sync_all().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&copy).unwrap(), "# Friends\n");
+        assert!(bo.local_edits().unwrap().is_empty());
+        bo.decide_claude_md(&id, None, false).await.unwrap();
+        bo.sync_all().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&copy).unwrap(), "# Friends\n");
+        assert!(
+            bo.local_edits().unwrap().is_empty(),
+            "a declined change is not the user's edit"
+        );
+        let file = bo.paths.group_dir(&id).join(review::FILE);
+        let st = ReviewState::load(&file).unwrap().unwrap();
+        assert_eq!(st.declined.len(), 1);
+
+        repo.set_file(group::CLAUDE_MD, "# Friends\nUse tabs.\nBe brief.\n");
+        bo.sync_all().await.unwrap();
+        bo.decide_claude_md(&id, None, true).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&copy).unwrap(),
+            "# Friends\nBe brief.\n"
+        );
+        assert!(bo.local_edits().unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn discover_recent_commits_and_leave() {
         let world = FakeGitHub::new();
@@ -2051,6 +3946,8 @@ mod tests {
     async fn two_devices_converge() {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
+        repo.add_collaborator("ana");
         let ana = device(&world, "ana", "mac");
         let bo = device(&world, "bo", "pc");
         ana.engine.join(&id).await.unwrap();
@@ -2320,6 +4217,7 @@ mod tests {
     async fn integration_secret_blocks_the_push() {
         let world = FakeGitHub::new();
         let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        repo.set_owner("bo");
         let (bo, _dir) = real_device(&world, "bo");
         bo.join(&id).await.unwrap();
         let before = repo.commits().len();
@@ -2345,5 +4243,100 @@ mod tests {
         let report = bo.sync_all().await.unwrap();
         assert!(report.groups[0].lost_access);
         assert!(!agent.exists());
+    }
+
+    fn last_message(repo: &FakeRepo) -> String {
+        repo.commits().last().unwrap().message.clone()
+    }
+
+    #[tokio::test]
+    async fn revert_a_modified_file() {
+        let (_, id, repo, bo) = joined_host().await;
+        let target = repo.set_file_as("ana", "agents/a.md", "v2\n").commit;
+        let before = commit_count(&repo);
+
+        let plan = bo.engine.revert_commit(&id, &target).await.unwrap();
+        assert_eq!(plan.files.len(), 1);
+        assert_eq!(plan.files[0].action, RevertAction::Restore);
+        assert_eq!(commit_count(&repo), before + 1, "a new commit, no rewrite");
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+        assert_eq!(
+            last_message(&repo),
+            format!("bo@pc: revert {target} (update agents/a.md)")
+        );
+        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "base\n");
+    }
+
+    #[tokio::test]
+    async fn revert_an_added_file_deletes_it() {
+        let (_, id, repo, bo) = joined_host().await;
+        let target = repo.set_file_as("ana", "agents/new.md", "hi\n").commit;
+        let plan = bo.engine.revert_commit(&id, &target).await.unwrap();
+        assert_eq!(plan.files[0].action, RevertAction::Delete);
+        assert_eq!(repo.file("agents/new.md"), None);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n", "others stay");
+    }
+
+    #[tokio::test]
+    async fn revert_a_deleted_file_restores_it() {
+        let (_, id, repo, bo) = joined_host().await;
+        let target = repo.remove_file("agents/a.md").commit;
+        let plan = bo.engine.revert_commit(&id, &target).await.unwrap();
+        assert_eq!(plan.files[0].action, RevertAction::Recreate);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+    }
+
+    #[tokio::test]
+    async fn revert_is_host_only() {
+        let (_, id, repo, bo) = joined().await;
+        let target = repo.set_file_as("ana", "agents/a.md", "v2\n").commit;
+        let before = commit_count(&repo);
+        let err = bo.engine.revert_commit(&id, &target).await.unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        let err = bo.engine.revert_preview(&id, &target).await.unwrap_err();
+        assert!(matches!(err, Error::HostOnly { .. }), "{err}");
+        assert_eq!(commit_count(&repo), before);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "v2\n");
+    }
+
+    #[tokio::test]
+    async fn revert_refuses_a_file_that_changed_again() {
+        let (_, id, repo, bo) = joined_host().await;
+        let target = repo.set_file_as("ana", "agents/a.md", "v2\n").commit;
+        repo.set_file_as("cy", "agents/a.md", "v3\n");
+        let later = repo.current_head().commit;
+        let before = commit_count(&repo);
+
+        let plan = bo.engine.revert_preview(&id, &target).await.unwrap();
+        assert!(plan.files[0].blocked.is_some());
+        let err = bo.engine.revert_commit(&id, &target).await.unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains(&format!(
+                "agents/a.md changed again after this commit, in {later} by cy"
+            )),
+            "{text}"
+        );
+        assert_eq!(commit_count(&repo), before, "nothing committed");
+        assert_eq!(repo.file("agents/a.md").unwrap(), "v3\n");
+
+        // Reverting the later commit first, then this one, works.
+        bo.engine.revert_commit(&id, &later).await.unwrap();
+        assert_eq!(repo.file("agents/a.md").unwrap(), "v2\n");
+    }
+
+    #[tokio::test]
+    async fn revert_retries_after_a_push_race() {
+        let (_, id, repo, bo) = joined_host().await;
+        let target = repo.set_file_as("ana", "agents/a.md", "v2\n").commit;
+        let mut once = true;
+        repo.before_commit(move |r| {
+            if std::mem::take(&mut once) {
+                r.set_file_as("cy", "skills/x/SKILL.md", "x\n");
+            }
+        });
+        bo.engine.revert_commit(&id, &target).await.unwrap();
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+        assert_eq!(repo.file("skills/x/SKILL.md").unwrap(), "x\n");
     }
 }

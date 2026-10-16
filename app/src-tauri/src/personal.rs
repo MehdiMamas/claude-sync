@@ -27,10 +27,22 @@ pub async fn after_sync(app: &AppHandle, full: bool) {
                 *lock(&CHECKED) = Some(login);
                 match found {
                     NewDevice::Joined => {
-                        notify::show(app, "Personal memory is on", JOINED_NOTICE);
+                        notify::show(
+                            app,
+                            notify::Kind::Personal,
+                            None,
+                            "Personal memory is on",
+                            JOINED_NOTICE,
+                        );
                     }
                     // The window shows the offer from the status (`offer`).
-                    NewDevice::Offer => notify::show(app, "Personal memory", OFFER_NOTICE),
+                    NewDevice::Offer => notify::show(
+                        app,
+                        notify::Kind::Personal,
+                        None,
+                        "Personal memory",
+                        OFFER_NOTICE,
+                    ),
                     NewDevice::Nothing => {}
                 }
                 if found != NewDevice::Nothing {
@@ -49,6 +61,8 @@ pub async fn after_sync(app: &AppHandle, full: bool) {
     for c in &report.conflicts {
         notify::show(
             app,
+            notify::Kind::Personal,
+            None,
             "Conflict in your personal memory",
             &format!(
                 "{}: the version from your other device won; yours was saved.",

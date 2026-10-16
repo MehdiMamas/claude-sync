@@ -22,9 +22,18 @@ The app updates itself after that.
 ## Use it
 
 1. Open claude-sync and click **Sign in with GitHub**. Your browser opens GitHub; enter the code the app shows.
-2. To start a group, click **Create a group** and give it a name. The app creates a private repo on your GitHub account. You are the group's host.
-3. To invite friends, open the group and add their GitHub logins. GitHub sends each of them an invitation. Any member can add or remove members, but the invitations go out from the host's app, so they are sent the next time the host's app runs.
-4. To join, a friend installs claude-sync and signs in. The invitation shows under **Pending invitations**. They click **Accept** and the app sets up the group on their machine.
+2. To start a group, click **Create a group** and give it a name. The app creates a private repo on your GitHub account. You are the group's host. The app offers your own `CLAUDE.md` instructions as the group's starting `CLAUDE.md`: check what it shows, remove anything personal, and it takes them out of your own file so Claude does not read them twice. In a group you host, **Share my CLAUDE.md** adds them later.
+3. To invite friends, open the group and add their GitHub logins. GitHub sends each of them an invitation. Only the host adds or removes members. Members get read-only access; the app sets a rule on the repo so nobody else can change it, and if GitHub can't (a private repo on a free plan) it still only sends changes from the host's machine and tells you.
+4. To join, a friend installs claude-sync and signs in. The invitation shows under **Pending invitations**. They click **Accept** and the app sets up the group on their machine. Only the host can change a group: a member's edits stay on their machine, and they propose changes to the host as a pull request on the group repo.
+5. In several groups? **Copy to another group** on a group's page copies lines of its `CLAUDE.md` (pick whole sections or single lines, and check the preview), its skills, agents and settings to another group you host. Secrets are redacted first, and what the other group already has in another version is refused, never overwritten.
+
+The app tells you when something happens (an invitation, a conflict, an update, plugins to reload). If you miss a notification, click the bell next to the app name: every notification is kept there. You can turn desktop notifications off in **Settings**; they are still kept in the app.
+
+### Reviewing changes to the shared instructions
+
+When another member adds or removes lines in a group's `CLAUDE.md`, nothing changes in yours until you say so. The app tells you, and the group's page shows each change with who made it, so you can **Accept** or **Decline** it. A line you decline stays out (or, for a removal, stays in) and you are not asked about it again. Declining only affects you: it never undoes the change for the rest of the group. Your own changes, from any of your computers, apply at once. Each group is reviewed on its own, so deleting a line in one group never removes it from another. To have everyone's changes apply at once, turn off **Review changes others make to CLAUDE.md** on the group's page.
+
+When two of your groups, or a group and your own `CLAUDE.md`, say the same thing twice or the opposite, or set the same setting differently, the group's page lists them under **Conflicts**, with both sides and the group names. For each one, keep one side (the other is left out on your computer only, never for the rest of the group), or edit the group's line, which the other members then review. Before you share or copy lines, the app warns about the ones that would clash. The check compares words; it does not ask Claude what the rules mean.
 
 ### Personal memory
 
@@ -74,9 +83,8 @@ The layout:
 - `app/src-tauri`: the desktop app (Tauri 2): tray, background sync, commands for the window.
 - `app/ui`: the app's window (TypeScript and Vite, no framework).
 - `relay/`: the web service for updates and feedback ([relay/README.md](relay/README.md)).
-- `bin/`, `lib/`, `tests/`: the older bash CLI that the app replaces ([SPEC.md](SPEC.md)).
 
-`pnpm -C app/ui dev` serves the window in a browser with a fake backend (`?signedOut` and `?empty` show other states).
+`pnpm -C app/ui dev` serves the window in a browser with a fake backend (`?signedOut`, `?empty` and `?noHistory` show other states).
 
 Sign-in needs a GitHub OAuth app with device flow turned on: set `CLAUDE_SYNC_GITHUB_CLIENT_ID` when you build. Updates and feedback need `CLAUDE_SYNC_RELAY_URL`. A release build (`pnpm -C app tauri build`) signs its update bundles, so it also needs `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 

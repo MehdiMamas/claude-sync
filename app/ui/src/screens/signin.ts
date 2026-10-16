@@ -1,6 +1,7 @@
 // Sign in with the GitHub device flow (§3).
 import { api, errorText, on, type DeviceCode } from "../api";
 import { h, replace, toast } from "../dom";
+import { signInCopy } from "../signin-copy";
 import { store } from "../store";
 
 let onFailed: (message: string) => void = () => {};
@@ -34,17 +35,9 @@ export function signInScreen(): HTMLElement {
       );
       return;
     }
-    const btn = h("button", { class: "primary large" }, "Sign in with GitHub");
-    replace(
-      box,
-      h("h1", null, "Sign in with GitHub"),
-      h(
-        "p",
-        { class: "muted" },
-        "claude-sync keeps your group's Claude Code settings in a private GitHub repo. Sign in with your own GitHub account; nothing is stored outside GitHub and this computer.",
-      ),
-      btn,
-    );
+    const copy = signInCopy(store.auth);
+    const btn = h("button", { class: "primary large" }, copy.button);
+    replace(box, h("h1", null, copy.heading), h("p", { class: "muted" }, copy.text), btn);
     btn.addEventListener("click", async () => {
       btn.disabled = true;
       btn.textContent = "Asking GitHub for a code…";

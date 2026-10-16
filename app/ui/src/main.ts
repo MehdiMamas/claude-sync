@@ -1,6 +1,7 @@
 import "./style.css";
 import { api, on, setBackend } from "./api";
-import { go, onRefresh, store, subscribe } from "./store";
+import { countReview, go, onRefresh, store, subscribe } from "./store";
+import { avatar } from "./avatar";
 import { h, replace, relTime } from "./dom";
 import { banners } from "./screens/banners";
 import { signInScreen } from "./screens/signin";
@@ -8,6 +9,7 @@ import { groupsScreen } from "./screens/groups";
 import { groupScreen } from "./screens/group";
 import { settingsScreen } from "./screens/settings";
 import { feedbackScreen } from "./screens/feedback";
+import { notificationsScreen } from "./screens/notifications";
 
 const root = document.getElementById("root")!;
 
@@ -15,7 +17,8 @@ type Route =
   | { name: "groups" }
   | { name: "group"; owner: string; repo: string }
   | { name: "settings" }
-  | { name: "feedback" };
+  | { name: "feedback" }
+  | { name: "notifications" };
 
 function parseRoute(): Route {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
@@ -27,6 +30,8 @@ function parseRoute(): Route {
       return { name: "settings" };
     case "feedback":
       return { name: "feedback" };
+    case "notifications":
+      return { name: "notifications" };
     default:
       return { name: "groups" };
   }
@@ -49,6 +54,41 @@ function statusPill(): HTMLElement {
   );
 }
 
+const SVG = "http://www.w3.org/2000/svg";
+
+/** The bell in the nav, with the unread count. Opens the Notifications screen. */
+function bell(current: boolean): HTMLElement {
+  const n = store.unread;
+  const icon = document.createElementNS(SVG, "svg");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(SVG, "path");
+  path.setAttribute("d", "M12 3a6 6 0 0 0-6 6v3.6L4.3 15.5A1 1 0 0 0 5.2 17h13.6a1 1 0 0 0 .9-1.5L18 12.6V9a6 6 0 0 0-6-6Zm-2.4 15.5a2.5 2.5 0 0 0 4.8 0");
+  icon.append(path);
+  return h(
+    "a",
+    {
+      class: "bell",
+      href: "#/notifications",
+      "aria-current": current ? "page" : false,
+      "aria-label": n > 0 ? `Notifications, ${n} unread` : "Notifications",
+      title: "Notifications",
+    },
+    icon,
+    n > 0 && h("span", { class: "badge", "aria-hidden": "true" }, n > 99 ? "99+" : n),
+  );
+}
+
+/** The nav badge: CLAUDE.md changes waiting for review. */
+function navBadge(): HTMLElement {
+  const n = store.review;
+  return h(
+    "span",
+    { id: "nav-review" },
+    n > 0 && h("span", { class: "nav-badge", title: `${n} CLAUDE.md change${n === 1 ? "" : "s"} to review` }, String(n)),
+  );
+}
+
 let currentKey = "";
 
 function render(): void {
@@ -65,7 +105,9 @@ function render(): void {
   // Same screen, only global state changed: update the status and banners, keep the forms.
   if (key === currentKey) {
     document.getElementById("status-slot")?.replaceChildren(statusPill());
+    document.getElementById("bell-slot")?.replaceChildren(bell(route.name === "notifications"));
     document.getElementById("banners")?.replaceChildren(...banners());
+    document.getElementById("nav-review")?.replaceWith(navBadge());
     return;
   }
   currentKey = key;
@@ -80,7 +122,13 @@ function render(): void {
       h(
         "nav",
         { class: "nav", "aria-label": "Main" },
-        h("div", { class: "brand" }, h("span", { class: "logo", "aria-hidden": "true" }, "⟳"), "claude-sync"),
+        h(
+          "div",
+          { class: "brand" },
+          h("span", { class: "logo", "aria-hidden": "true" }, "⟳"),
+          h("span", { class: "grow" }, "claude-sync"),
+          h("span", { id: "bell-slot" }, bell(route.name === "notifications")),
+        ),
         h(
           "ul",
           null,
@@ -88,7 +136,7 @@ function render(): void {
             h(
               "li",
               null,
-              h("a", { href: `#/${n.path}`, "aria-current": n.name === navRoute ? "page" : false }, n.label),
+              h("a", { href: `#/${n.path}`, "aria-current": n.name === navRoute ? "page" : false }, n.label, n.name === "groups" && navBadge()),
             ),
           ),
         ),
@@ -96,7 +144,7 @@ function render(): void {
           "div",
           { class: "nav-foot" },
           h("div", { id: "status-slot" }, statusPill()),
-          h("div", { class: "muted small" }, `Signed in as ${store.auth.login ?? "?"}`),
+          h("div", { class: "muted small who" }, store.auth.login && avatar(store.auth.login, 18), `Signed in as ${store.auth.login ?? "?"}`),
         ),
       ),
       h("main", { class: "main" }, h("div", { id: "banners" }, banners()), view),
@@ -114,6 +162,9 @@ function render(): void {
       break;
     case "feedback":
       feedbackScreen(view);
+      break;
+    case "notifications":
+      notificationsScreen(view);
       break;
   }
   view.focus({ preventScroll: true });
@@ -133,8 +184,13 @@ async function boot(): Promise<void> {
     on("invitations", (invitations) => store.set({ invitations })),
     on("update-available", (update) => store.set({ update })),
     on("signed-in", async () => store.set({ auth: await api.authStatus() })),
-    on("sync-report", () => store.bump()),
+    on("sign-in-expired", async () => store.set({ auth: await api.authStatus() })),
+    on("sync-report", () => {
+      store.bump();
+      api.groups().then(countReview, () => {});
+    }),
     on("plugins-changed", () => store.set({ pluginsChanged: true })),
+    on("notifications-changed", ({ unread }) => store.set({ unread })),
     on("navigate", (route) => go(route)),
     on("personal", (personal) => {
       store.set({ personal });
@@ -148,6 +204,10 @@ async function boot(): Promise<void> {
     api.updateStatus(),
   ]);
   store.set({ auth, status, info, update });
+  api.notifications().then(
+    (items) => store.set({ unread: items.filter((n) => !n.read).length }),
+    () => {},
+  );
   if (auth.signedIn) {
     api.localEdits().then(
       (edits) => store.set({ edits }),
@@ -157,6 +217,7 @@ async function boot(): Promise<void> {
       (personal) => store.set({ personal }),
       () => {},
     );
+    api.groups().then(countReview, () => {});
   }
 }
 

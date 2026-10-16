@@ -1,12 +1,12 @@
-// Same patterns as lib/secrets.sh (docs/architecture.md §9), plus `Bearer <token>`.
+// Same patterns as crates/core/src/secrets.rs (docs/architecture.md §9), plus `Bearer <token>`.
 // Order matters: the longer, more specific patterns run first so a github_pat is
-// reported under its own name. Minimum lengths match lib/secrets.sh; matches
+// reported under its own name. Minimum lengths match secrets.rs; matches
 // extend over the rest of the token so no tail is left behind.
 const PATTERNS: ReadonlyArray<readonly [name: string, regex: RegExp, replace?: string]> = [
   ["github_pat", /github_pat_[A-Za-z0-9_]{50,}/g],
   ["sk-ant", /sk-ant-[A-Za-z0-9_-]{20,}/g],
   ["ghp", /ghp_[A-Za-z0-9]{36,}/g],
-  ["gh-token", /gh[osu]_[A-Za-z0-9]{36,}/g],
+  ["gh-token", /gh[orsu]_[A-Za-z0-9]{36,}/g],
   ["aws-access-key", /AKIA[0-9A-Z]{16,}/g],
   ["slack-token", /xox[abpr]-[A-Za-z0-9-]{10,}/g],
   // The header, plus the key body up to its END line; with no END line (a cut log),

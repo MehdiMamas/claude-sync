@@ -444,6 +444,8 @@ fn apply_settings(
         .collect();
     let rank = |g: &str| order.iter().position(|x| x.to_string() == g);
     let my_rank = rank(&gkey);
+    // Pointers an earlier group owns: this group may have owned them before a reorder.
+    let mut lost: Vec<String> = Vec::new();
     for (g, o) in &owned_all {
         let earlier = match (rank(g), my_rank) {
             (Some(a), Some(b)) => a < b,
@@ -451,6 +453,7 @@ fn apply_settings(
             _ => false,
         };
         if g != &gkey && earlier {
+            lost.extend(o.values.keys().cloned());
             filters.extend(
                 o.values
                     .keys()
@@ -475,7 +478,10 @@ fn apply_settings(
             return Ok(());
         }
     };
-    let merged = settings::merge(&local, &shared, &prev)?;
+    let mut merged = settings::merge(&local, &shared, &prev)?;
+    for p in &lost {
+        merged.owned.values.remove(p);
+    }
     skipped.extend(merged.skipped);
     if merged.changed {
         if let Some(old) = &existing {
@@ -607,6 +613,41 @@ pub fn excluded_paths(paths: &Paths, group: &GroupId) -> crate::Result<BTreeSet<
     Ok(out)
 }
 
+/// The group moved to a new `owner/repo` (a rename or transfer, §10): re-key everything the
+/// manifest and `settings-owned.json` hold for it, and point the import line at the moved
+/// copy. Safe to run again. The group's folder must already be at its new place.
+pub fn rename_group(paths: &Paths, old: &GroupId, new: &GroupId) -> crate::Result<()> {
+    let mut m = Manifest::load(paths)?;
+    let before = m.clone();
+    let (okey, nkey) = (old.to_string(), new.to_string());
+    if let Some(e) = m.groups.remove(&okey) {
+        m.groups.entry(nkey.clone()).or_insert(e);
+    }
+    for f in m.files.values_mut().filter(|f| f.group == *old) {
+        f.group = new.clone();
+    }
+    for mp in m.marketplaces.values_mut().filter(|mp| mp.group == *old) {
+        mp.group = new.clone();
+    }
+    for g in m.order.iter_mut().filter(|g| **g == *old) {
+        *g = new.clone();
+    }
+    let mut seen = BTreeSet::new();
+    m.order.retain(|g| seen.insert(g.clone()));
+    if m != before {
+        let mut backups = Backups::new(paths);
+        let mut report = ApplyReport::default();
+        update_claude_md_block(paths, &mut m, &mut backups, &mut report)?;
+        m.save(paths)?;
+    }
+    let mut owned = load_owned(paths)?;
+    if let Some(o) = owned.remove(&okey) {
+        owned.entry(nkey).or_insert(o);
+        save_owned(paths, &owned)?;
+    }
+    Ok(())
+}
+
 /// Remove everything this group put on the machine (files, import line, owned settings), with a backup.
 /// Files the user edited are backed up and left in place (reported in `kept`); settings
 /// values the user changed stay and become the user's.
@@ -734,6 +775,39 @@ pub fn keep_local(paths: &Paths, group: &GroupId, path: &str) -> crate::Result<(
     }
     entry.keep_local.insert(path.to_string());
     m.groups.insert(gkey, entry);
+    m.save(paths)
+}
+
+/// Write the group's `CLAUDE.md` copy as `copy` and record `accepted` as the version the app
+/// wrote (§7a): the watcher compares the copy with `accepted`, so differences the user
+/// declined are not local edits, and a `copy` that differs from `accepted` (an unshared
+/// edit kept while accepted changes land) still is one. A copy the user edited is backed up
+/// before it changes.
+pub fn write_claude_md(
+    paths: &Paths,
+    group: &GroupId,
+    copy: &[u8],
+    accepted: &[u8],
+) -> crate::Result<()> {
+    let mut m = Manifest::load(paths)?;
+    let mut backups = Backups::new(paths);
+    let entry = m.groups.entry(group.to_string()).or_default();
+    if entry.keep_local.contains(CLAUDE_MD) {
+        return Ok(());
+    }
+    let file = paths.group_dir(group).join(CLAUDE_MD);
+    let cur = read_file(&file)?;
+    if cur.as_deref() != Some(copy) {
+        if let Some(cur) = &cur {
+            if entry.claude_md.as_deref() != Some(sha256_hex(cur).as_str()) {
+                backups.save(&format!("{}/{CLAUDE_MD}", group.dir_name()), cur)?;
+            }
+        }
+        write_atomic(&file, copy)?;
+    }
+    entry.claude_md = Some(sha256_hex(accepted));
+    let mut report = ApplyReport::default();
+    update_claude_md_block(paths, &mut m, &mut backups, &mut report)?;
     m.save(paths)
 }
 
@@ -1298,21 +1372,21 @@ pub(crate) fn utc_stamp() -> String {
 
 /// One `backups/<UTC time>/` folder per operation, created on the first save.
 /// A path saved twice in one operation keeps its first (original) copy.
-struct Backups {
+pub(crate) struct Backups {
     root: PathBuf,
     dir: Option<PathBuf>,
     saved: BTreeSet<String>,
 }
 
 impl Backups {
-    fn new(paths: &Paths) -> Self {
+    pub(crate) fn new(paths: &Paths) -> Self {
         Self {
             root: paths.state_dir.join("backups"),
             dir: None,
             saved: BTreeSet::new(),
         }
     }
-    fn save(&mut self, rel: &str, bytes: &[u8]) -> io::Result<()> {
+    pub(crate) fn save(&mut self, rel: &str, bytes: &[u8]) -> io::Result<()> {
         if !self.saved.insert(rel.to_string()) {
             return Ok(());
         }

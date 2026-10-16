@@ -1,9 +1,11 @@
-// One group: what it gives this device, its scheduled jobs, members, sharing a skill,
+// One group: CLAUDE.md changes to review, what it gives this device, its scheduled jobs,
+// members, sharing a skill, rules that clash with other groups, copying to another group,
 // recent changes, conflicts and collisions.
 import {
   api,
   errorText,
   groupKey,
+  type ClaudeMdReview,
   type Collision,
   type ContentItem,
   type GroupContents,
@@ -13,13 +15,19 @@ import {
   type JobView,
   type MarketplaceInfo,
   type PermissionMode,
+  type Proposal,
+  type ReviewItem,
 } from "../api";
+import { avatar } from "../avatar";
 import { busy, confirmButton, errorBox, h, relTime, replace, spinner, toast } from "../dom";
-import { go, onRefresh, store } from "../store";
+import { countReview, go, onRefresh, store } from "../store";
+import { claudeMdCard } from "./claude-md";
+import { conflictsCard, copyCard } from "./conflicts";
+import { historyCard } from "./history";
+import { explainButton } from "./helper";
 
 function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
   const you = store.auth?.login?.toLowerCase();
-  const hosting = g.host.toLowerCase() === you;
   const login = h("input", { id: "m-login", placeholder: "GitHub login", autocomplete: "off", spellcheck: "false", required: true });
   const add = h("button", { class: "primary", type: "submit" }, "Add member");
   const form = h(
@@ -44,6 +52,7 @@ function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
   const memberRow = (m: string) => {
     const isHost = m.toLowerCase() === g.host.toLowerCase();
     const remove =
+      g.isHost &&
       !isHost &&
       confirmButton("Remove", `Remove ${m}?`, (btn) =>
         busy(btn, "Removing…", async () => {
@@ -58,7 +67,8 @@ function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
       { class: "row" },
       h(
         "div",
-        { class: "grow" },
+        { class: "grow who" },
+        avatar(m, 20),
         m,
         isHost && h("span", { class: "tag" }, "host"),
         m.toLowerCase() === you && h("span", { class: "tag" }, "you"),
@@ -74,11 +84,67 @@ function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
     h("ul", { class: "list flat" }, g.members.map(memberRow)),
     g.invited.length > 0 && [
       h("h3", null, "Invited, not joined yet"),
-      h("ul", { class: "list flat" }, g.invited.map((m) => h("li", { class: "row muted" }, m))),
+      h("ul", { class: "list flat" }, g.invited.map((m) => h("li", { class: "row muted" }, h("div", { class: "grow who" }, avatar(m, 20), m)))),
     ],
-    form,
-    !hosting && h("p", { class: "muted small" }, `${g.host} hosts this group. Members can add and remove people too.`),
+    g.isHost && form,
   );
+}
+
+/** Host only: hand the group repo to another member. GitHub asks them to accept first. */
+function transferCard(g: GroupStatus, reload: () => void): HTMLElement | false {
+  if (!g.isHost) return false;
+  const others = g.members.filter((m) => m.toLowerCase() !== g.host.toLowerCase());
+  if (others.length === 0) return false;
+  const pick = h("select", { id: "t-member" }, others.map((m) => h("option", { value: m }, m)));
+  const next = h("button", { type: "button" }, "Transfer to a member");
+  const confirm = h("div", { class: "notice info", role: "note", hidden: true });
+  const send = h("button", { class: "danger", type: "button" }, "Send transfer request");
+  const cancel = h("button", { type: "button" }, "Cancel");
+  next.addEventListener("click", () => {
+    const who = pick.value;
+    replace(
+      confirm,
+      h(
+        "div",
+        { class: "notice-text" },
+        `GitHub emails ${who} to accept. Until they accept, nothing changes. After that ${who} hosts the group and you become a member; every app follows the new name on its own.`,
+      ),
+      send,
+      cancel,
+    );
+    confirm.hidden = false;
+  });
+  cancel.addEventListener("click", () => {
+    confirm.hidden = true;
+  });
+  send.addEventListener("click", () =>
+    busy(send, "Sending…", async () => {
+      await api.transferGroup(g.id, pick.value);
+      toast(`Asked ${pick.value} to accept the group. Nothing changes until they do.`);
+      confirm.hidden = true;
+      reload();
+    }),
+  );
+  return h(
+    "section",
+    { class: "card", "aria-labelledby": "transfer-h" },
+    h("h2", { id: "transfer-h" }, "Hand over the group"),
+    h("div", { class: "inline-form" }, h("label", { for: "t-member", class: "sr-only" }, "Member to transfer to"), pick, next),
+    confirm,
+  );
+}
+
+/** Who may change the group, and what that means for this user. */
+function hostNotice(g: GroupStatus): HTMLElement | false {
+  if (!g.isHost)
+    return h(
+      "div",
+      { class: "notice info", role: "note" },
+      h("div", { class: "notice-text" }, g.proposalMode ? `Only ${g.host} can change this group directly. Your changes go to review as proposals; another member approves them.` : `Only ${g.host} can change this group. Your edits stay on this machine.`),
+    );
+  if (g.hostLock === "unavailable")
+    return h("div", { class: "notice info", role: "note" }, h("div", { class: "notice-text" }, "GitHub can't lock this repo on your plan; the app still only sends changes from your machine."));
+  return false;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -204,9 +270,9 @@ function contentsBody(c: GroupContents): (HTMLElement | false)[] {
   ];
 }
 
-function contentsCard(id: GroupId): HTMLElement {
+function contentsCard(contents: Promise<GroupContents>): HTMLElement {
   const body = h("div", null, spinner("Reading what this group gives you"));
-  api.groupContents(id).then(
+  contents.then(
     (c) => replace(body, contentsBody(c)),
     (e) => replace(body, errorBox(errorText(e))),
   );
@@ -474,30 +540,256 @@ function shareCard(id: GroupId): HTMLElement {
   );
 }
 
-function historyCard(id: GroupId): HTMLElement {
-  const body = h("div", null, spinner("Loading changes"));
-  api.recentCommits(id, 20).then(
-    (commits) =>
-      replace(
-        body,
-        commits.length === 0
-          ? h("p", { class: "muted" }, "No changes yet.")
-          : h(
-              "ol",
-              { class: "list flat", "aria-label": "Recent changes" },
-              commits.map((c) =>
-                h(
-                  "li",
-                  { class: "row" },
-                  h("div", { class: "grow" }, h("div", null, c.message.split("\n")[0]), h("div", { class: "muted small" }, `${c.author} · ${relTime(c.atUnix)}`)),
-                  h("code", { class: "muted small", title: c.sha }, c.sha.slice(0, 7)),
-                ),
-              ),
-            ),
+function reviewItem(id: GroupId, item: ReviewItem, done: () => void): HTMLElement {
+  const who = item.author || "Someone";
+  const what = item.kind === "add" ? plural(item.lines.length, "line") + " added" : plural(item.lines.length, "line") + " removed";
+  const decide = (accept: boolean) => {
+    const b = h("button", { class: accept ? "primary" : undefined, "aria-label": `${accept ? "Accept" : "Decline"}: ${who}, ${what}` }, accept ? "Accept" : "Decline");
+    b.addEventListener("click", () =>
+      busy(b, accept ? "Accepting…" : "Declining…", async () => {
+        await api.decideClaudeMd(id, [item.id], accept);
+        done();
+        toast(accept ? "Accepted: your CLAUDE.md has it now" : "Declined: your CLAUDE.md stays as it is");
+      }),
+    );
+    return b;
+  };
+  const sign = item.kind === "add" ? "+" : "−";
+  return h(
+    "li",
+    { class: "review-item" },
+    h(
+      "div",
+      { class: "row" },
+      avatar(item.author, 32),
+      h(
+        "div",
+        { class: "grow" },
+        h("div", null, h("strong", null, who), ` ${item.kind === "add" ? "added" : "removed"} ${plural(item.lines.length, "line")}`),
+        h("div", { class: "muted small" }, [relTime(item.atUnix), item.message.split("\n")[0]].filter(Boolean).join(" · ")),
       ),
-    (e) => replace(body, errorBox(errorText(e))),
+      h("div", { class: "actions" }, decide(false), decide(true)),
+    ),
+    h(
+      "pre",
+      { class: `diff ${item.kind}`, "aria-label": what },
+      item.lines.map((l) => h("span", { class: "diff-line" }, `${sign} ${l}`)),
+    ),
+    explainButton("claudeMdReview", "Explain", () => `${item.message}\n${item.lines.map((l) => `${sign} ${l}`).join("\n")}`),
   );
-  return h("section", { class: "card", "aria-labelledby": "history-h" }, h("h2", { id: "history-h" }, "Recent changes"), body);
+}
+
+function reviewBody(id: GroupId, r: ClaudeMdReview, isHost: boolean): (HTMLElement | false)[] {
+  // Reload the whole screen: the group list, the nav badge and this card.
+  const done = () => store.bump();
+  const n = r.pending.length;
+  const all = (accept: boolean) => {
+    const b = h("button", { class: accept ? "primary" : undefined }, accept ? "Accept all" : "Decline all");
+    b.addEventListener("click", () =>
+      busy(b, accept ? "Accepting…" : "Declining…", async () => {
+        await api.decideClaudeMd(id, null, accept);
+        toast(accept ? `Accepted ${plural(n, "change")}` : `Declined ${plural(n, "change")}`);
+        done();
+      }),
+    );
+    return b;
+  };
+
+  const ask = h("div", { class: "review-ask", hidden: true });
+  // This device's choice: null follows the group.
+  const choice = h(
+    "select",
+    { id: "review-device", "aria-label": "On this device" },
+    h("option", { value: "follow" }, "Follow group"),
+    h("option", { value: "review" }, "Review first"),
+    h("option", { value: "auto" }, "Auto-accept"),
+  );
+  const current = r.reviewOverride === null ? "follow" : r.reviewOverride ? "review" : "auto";
+  choice.value = current;
+  const save = async (value: string) => {
+    choice.disabled = true;
+    try {
+      const on = value === "follow" ? null : value === "review";
+      const after = await api.setClaudeMdReview(id, on);
+      toast(after.review ? "You review changes others make to this CLAUDE.md" : "Changes others make now apply at once");
+      done();
+    } catch (e) {
+      choice.value = current;
+      toast(errorText(e), "error");
+    } finally {
+      choice.disabled = false;
+    }
+  };
+  choice.addEventListener("change", () => {
+    const value = choice.value;
+    const reviewAfter = value === "follow" ? !r.autoAccept : value === "review";
+    if (reviewAfter || n === 0) {
+      save(value);
+      return;
+    }
+    // Review ends up off, which accepts what waits: ask first.
+    choice.value = current;
+    const yes = h("button", { class: "primary" }, `Accept ${plural(n, "change")} and turn off`);
+    const no = h("button", null, "Keep reviewing");
+    yes.addEventListener("click", () => busy(yes, "Accepting…", () => save(value)));
+    no.addEventListener("click", () => {
+      ask.hidden = true;
+    });
+    replace(
+      ask,
+      h("p", { class: "small" }, `${plural(n, "change")} ${n === 1 ? "is" : "are"} waiting. Turning review off accepts ${n === 1 ? "it" : "them"} into your CLAUDE.md.`),
+      h("div", { class: "actions" }, yes, no),
+    );
+    ask.hidden = false;
+  });
+
+  // The group's setting: only the host can change it; members see it but can't.
+  const groupToggle = h("input", { type: "checkbox", id: "auto-accept-md", checked: r.autoAccept, disabled: !isHost });
+  groupToggle.addEventListener("change", async () => {
+    const on = groupToggle.checked;
+    groupToggle.disabled = true;
+    try {
+      await api.setGroupAutoAcceptClaudeMd(id, on);
+      toast(on ? "Changes members make to this CLAUDE.md now apply at once" : "Members now review each other's CLAUDE.md changes");
+      done();
+    } catch (e) {
+      groupToggle.checked = !on;
+      toast(errorText(e), "error");
+    } finally {
+      groupToggle.disabled = !isHost;
+    }
+  });
+  const deviceLine =
+    r.reviewOverride === null
+      ? `On this device: follows the group (${r.autoAccept ? "auto-accept" : "review first"})`
+      : r.reviewOverride
+        ? "On this device: review changes first"
+        : "On this device: auto-accept";
+
+  const useGroup = confirmButton("Use the group's version", "Click again: replace your copy", (btn) =>
+    busy(btn, "Replacing…", async () => {
+      await api.useGroupClaudeMd(id);
+      toast("Your copy is the group's CLAUDE.md again");
+      done();
+    }),
+  );
+  useGroup.classList.remove("danger");
+
+  return [
+    n > 0 && h("p", { class: "muted small" }, "Other members changed the group's CLAUDE.md. Nothing changes in yours until you accept; what you decline stays out and is not asked again."),
+    n > 1 && h("div", { class: "actions review-all" }, all(false), all(true)),
+    n > 0 && h("ul", { class: "list flat review-list", "aria-label": "Changes to review" }, r.pending.map((i) => reviewItem(id, i, done))),
+    n === 0 && h("p", { class: "muted small" }, r.review ? "Nothing to review. Changes other members make to the group's CLAUDE.md wait here for you; yours apply at once." : "Changes other members make to the group's CLAUDE.md apply at once."),
+    n === 0 &&
+      r.differs &&
+      h(
+        "div",
+        { class: "row flat-row" },
+        h("div", { class: "grow muted small" }, r.declined > 0 ? `Your copy leaves out ${plural(r.declined, "change")} you declined.` : "Your copy differs from the group's."),
+        useGroup,
+      ),
+    h("div", { class: "check" }, groupToggle, h("label", { for: "auto-accept-md" }, "Auto-accept CLAUDE.md changes")),
+    h("p", { class: "muted small" }, "Changes members make to this group's CLAUDE.md apply on everyone's device right away. Off: each member reviews them first."),
+    h("div", { class: "row flat-row" }, h("label", { class: "grow small", for: "review-device" }, deviceLine), choice),
+    ask,
+  ];
+}
+
+function diffView(patch: string): HTMLElement {
+  const lines = patch.split("\n").map((l) => h("span", { class: `diff-line${l.startsWith("+") ? " add" : l.startsWith("-") ? " remove" : ""}` }, l || " "));
+  return h("pre", { class: "diff" }, lines);
+}
+
+function proposalItem(id: GroupId, p: Proposal, done: () => void): HTMLElement {
+  const approve = h("button", { class: "primary", disabled: p.approvedByMe || p.needsUpdate, "aria-label": `Approve: ${p.title}` }, p.approvedByMe ? "Approved" : "Approve");
+  approve.addEventListener("click", () =>
+    busy(approve, "Approving…", async () => {
+      await api.approveProposal(id, p.number);
+      toast("Approved");
+      done();
+    }),
+  );
+  const decline = h("button", { "aria-label": `Decline: ${p.title}` }, "Decline");
+  decline.addEventListener("click", () =>
+    busy(decline, "Declining…", async () => {
+      await api.declineProposal(id, p.number);
+      toast("Declined: the proposal is closed");
+      done();
+    }),
+  );
+  return h(
+    "li",
+    { class: "review-item" },
+    h(
+      "div",
+      { class: "row" },
+      avatar(p.author, 32),
+      h(
+        "div",
+        { class: "grow" },
+        h("div", null, h("strong", null, p.title), p.needsUpdate && h("span", { class: "tag warn" }, "needs an update")),
+        h("div", { class: "muted small" }, `${p.mine ? "You" : p.author} · ${plural(p.approvals.length, "approval")} · ${plural(p.files.length, "file")}`),
+        p.needsUpdate && h("div", { class: "muted small" }, "The group changed since. The author sends it again before it can be approved."),
+      ),
+      h("div", { class: "actions" }, decline, !p.mine && approve),
+    ),
+    p.files.map((f) => h("details", null, h("summary", null, h("code", null, f.path)), diffView(f.patch))),
+  );
+}
+
+function proposalsCard(g: GroupStatus): HTMLElement {
+  const id = g.id;
+  const box = h("input", { type: "checkbox", id: "proposal-mode", checked: g.proposalMode, disabled: !g.isHost });
+  box.addEventListener("change", async () => {
+    const on = box.checked;
+    box.disabled = true;
+    try {
+      await api.setGroupProposalMode(id, on);
+      toast(on ? "Members' changes now go to review as proposals" : "Proposal mode is off: only you change the group");
+    } catch (e) {
+      box.checked = !on;
+      toast(errorText(e), "error");
+    } finally {
+      box.disabled = !g.isHost;
+    }
+  });
+  const list = h("div", null, spinner("Loading proposals"));
+  const card = h("section", { class: "card review", "aria-labelledby": "proposals-h" }, h("h2", { id: "proposals-h" }, "Proposals"), list);
+  const load = () =>
+    api.listProposals(id).then(
+      (ps) =>
+        replace(
+          list,
+          ps.length === 0
+            ? h("p", { class: "muted small" }, "No open proposals.")
+            : h("ul", { class: "list flat review-list", "aria-label": "Open proposals" }, ps.map((p) => proposalItem(id, p, load))),
+        ),
+      (e) => replace(list, errorBox(errorText(e), load)),
+    );
+  load();
+  if (g.isHost) {
+    card.append(
+      h("div", { class: "check" }, box, h("label", { for: "proposal-mode" }, "Proposal mode")),
+      h("p", { class: "muted small" }, "On: members' changes to this group don't apply at once. Each becomes a proposal that another member approves first. Off: only you change the group."),
+    );
+  }
+  return card;
+}
+
+function reviewCard(id: GroupId, isHost: boolean): HTMLElement {
+  const title = h("h2", { id: "review-h" }, "CLAUDE.md changes");
+  const body = h("div", null, spinner("Loading CLAUDE.md changes"));
+  const card = h("section", { class: "card review", "aria-labelledby": "review-h" }, title, body);
+  api.claudeMdReview(id).then(
+    (r) => {
+      const n = r.pending.length;
+      replace(title, n > 0 ? ["Changes to review", h("span", { class: "tag warn" }, String(n))] : "CLAUDE.md changes");
+      replace(body, reviewBody(id, r, isHost));
+    },
+    // No CLAUDE.md from this group on this device: nothing to review.
+    () => card.remove(),
+  );
+  return card;
 }
 
 function openButton(label: string, path: string, reveal: boolean, ariaLabel?: string): HTMLButtonElement {
@@ -547,6 +839,7 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
   const load = async () => {
     try {
       const groups = await api.groups();
+      countReview(groups);
       const g = groups.find((x) => x.id.owner === id.owner && x.id.repo === id.repo);
       if (!g) {
         replace(body, errorBox(`You are not in ${groupKey(id)} on this device.`));
@@ -570,16 +863,25 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
         ),
         h("div", { class: "actions" }, leave),
       );
+      // Read once: the contents card lists it and the history card names mods and skills by it.
+      const contents = api.groupContents(g.id);
       replace(
         body,
         g.lastError && h("div", { class: "error", role: "alert" }, g.lastError),
+        hostNotice(g),
+        reviewCard(g.id, g.isHost),
+        (g.isHost || g.proposalMode) && proposalsCard(g),
         pluginNotice(g.id),
-        contentsCard(g.id),
+        contentsCard(contents),
         jobsCard(g.id),
         problemsCard(g),
+        conflictsCard(g.id),
         membersCard(g, load),
-        shareCard(g.id),
-        historyCard(g.id),
+        transferCard(g, load),
+        g.isHost && shareCard(g.id),
+        g.isHost && claudeMdCard(g.id),
+        copyCard(g, groups),
+        historyCard(g.id, contents, g.isHost),
       );
     } catch (e) {
       replace(body, errorBox(errorText(e), load));

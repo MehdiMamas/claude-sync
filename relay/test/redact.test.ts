@@ -4,7 +4,7 @@ import { pickSprint } from "../lib/milestone.ts";
 import { keepTail, redact } from "../lib/redact.ts";
 
 describe("redact", () => {
-  // Same cases as lib/secrets.sh, plus Bearer.
+  // Same cases as crates/core/src/secrets.rs, plus Bearer.
   const cases: Array<[string, string]> = [
     ["github_pat", "github_pat_" + "A1_".repeat(20)],
     ["sk-ant", "sk-ant-api03-" + "x".repeat(30)],
@@ -12,6 +12,7 @@ describe("redact", () => {
     ["gh-token", "gho_" + "b".repeat(36)],
     ["gh-token", "ghu_" + "c".repeat(36)],
     ["gh-token", "ghs_" + "d".repeat(36)],
+    ["gh-token", "ghr_" + "e".repeat(76)],
     ["aws-access-key", "AKIA" + "Q".repeat(16)],
     ["slack-token", "xoxb-1234567890-abcdef"],
   ];

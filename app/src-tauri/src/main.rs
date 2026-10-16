@@ -15,6 +15,7 @@ mod tray;
 mod updates;
 mod window;
 
+use claude_sync_core::notifications::Kind;
 use claude_sync_core::Paths;
 use ctx::Ctx;
 use std::sync::Arc;
@@ -70,8 +71,28 @@ fn first_run_autostart(app: &tauri::AppHandle, ctx: &Ctx) {
     }
 }
 
+/// Move a v0 clone out of `~/.claude-sync` (§10) before the app reads its state.
+/// Skipped when `CLAUDE_SYNC_HOME` points somewhere else. A failure is only logged:
+/// the app then keeps its state in `~/.claude-sync/app`.
+fn migrate_v0() -> Option<claude_sync_core::migrate::Migrated> {
+    let set = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty());
+    if set("CLAUDE_SYNC_HOME").is_some() {
+        return None;
+    }
+    let home = std::env::home_dir()?;
+    let claude_home = set("CLAUDE_HOME").map_or_else(|| home.join(".claude"), Into::into);
+    match claude_sync_core::migrate::migrate_v0(&home, &claude_home) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("claude-sync: could not move the v0 setup: {e}");
+            None
+        }
+    }
+}
+
 fn main() {
     guard::install_panic_hook();
+    let migrated = migrate_v0();
     let paths = match Paths::from_env() {
         Ok(p) => p,
         Err(e) => {
@@ -118,16 +139,43 @@ fn main() {
             commands::join,
             commands::add_member,
             commands::remove_member,
+            commands::transfer_group,
             commands::leave_group,
+            commands::reorder_groups,
             commands::local_edits,
             commands::resolve_edit,
             commands::group_contents,
             commands::local_skills,
             commands::share_skill,
+            commands::claude_md_preview,
+            commands::share_claude_md,
             commands::recent_commits,
+            commands::revert_preview,
+            commands::revert_commit,
+            commands::claude_md_review,
+            commands::decide_claude_md,
+            commands::set_claude_md_review,
+            commands::set_group_auto_accept_claude_md,
+            commands::set_group_proposal_mode,
+            commands::list_proposals,
+            commands::approve_proposal,
+            commands::decline_proposal,
+            commands::use_group_claude_md,
+            commands::conflicts,
+            commands::claude_md_check,
+            commands::drop_claude_md_line,
+            commands::edit_claude_md_line,
+            commands::keep_setting,
+            commands::copy_preview,
+            commands::copy_to_group,
             commands::sync_now,
             commands::get_settings,
             commands::set_settings,
+            commands::notifications,
+            commands::mark_notification_read,
+            commands::mark_all_notifications_read,
+            commands::clear_notifications,
+            commands::test_notification,
             commands::feedback_logs,
             commands::feedback_capture_screen,
             commands::feedback_attach_file,
@@ -153,15 +201,25 @@ fn main() {
             commands::open_job_file,
             commands::plugin_warnings,
             commands::retry_plugins,
+            commands::helper_status,
+            commands::helper_save_key,
+            commands::helper_remove_key,
+            commands::helper_test_key,
+            commands::helper_explain,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
+            auth::init(&handle);
             first_run_autostart(&handle, &ctx);
             #[cfg(debug_assertions)]
             if let Some(token) = auth::dev_token() {
                 auth::sign_in_with_dev_token(&handle, token);
             }
             tray::build(&handle)?;
+            notify::init(&handle);
+            if let Some(m) = &migrated {
+                notify::show(&handle, Kind::Other, None, "Old setup moved", &m.message());
+            }
             background::refresh_status(&handle);
             background::start(&handle);
             jobs::reconcile_soon(&handle, true);

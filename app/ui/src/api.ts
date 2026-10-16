@@ -27,6 +27,41 @@ export interface GroupStatus {
   collisions: Collision[];
   /** Only on the status a join returns: plugin files were placed or changed. */
   pluginsChanged: boolean;
+  /** Changes others made to the group's CLAUDE.md that wait for this user. */
+  reviewPending: number;
+  /** "Review changes others make to CLAUDE.md" (on by default). */
+  reviewClaudeMd: boolean;
+  /** This user owns the group's repo. Only the host changes a group; everyone else's edits stay local. */
+  isHost: boolean;
+  /** Members' changes go to review as proposals another member approves. */
+  proposalMode: boolean;
+  /** The ruleset that stops others writing to the group: "on", "unavailable" (GitHub refused), or null for members. */
+  hostLock: "on" | "unavailable" | null;
+}
+/** One block of lines another member added to or removed from the group's CLAUDE.md. */
+export interface ReviewItem {
+  id: string;
+  kind: "add" | "remove";
+  lines: string[];
+  /** GitHub login; empty when unknown. */
+  author: string;
+  commit: string;
+  message: string;
+  atUnix: number;
+}
+export interface ClaudeMdReview {
+  /** Review is on for this device (its choice, else the group's setting). */
+  review: boolean;
+  /** The group's "Auto-accept CLAUDE.md changes". */
+  autoAccept: boolean;
+  /** This device's choice; null follows the group. */
+  reviewOverride: boolean | null;
+  /** Oldest first. */
+  pending: ReviewItem[];
+  /** How many changes the user declined (never asked again). */
+  declined: number;
+  /** The user's copy differs from the group's (declined or pending changes). */
+  differs: boolean;
 }
 export interface PluginInfo {
   name: string;
@@ -82,15 +117,122 @@ export interface GroupSyncReport {
   conflicts: ConflictInfo[];
   error: string | null;
   lostAccess: boolean;
+  /** This sync sent changes as a proposal instead of applying them to the group. */
+  proposed: boolean;
+  /** CLAUDE.md changes from others that this sync found; they wait for review. */
+  review: ReviewItem[];
+}
+/** A file a proposal changes, as a unified diff. */
+export interface ProposalFile {
+  path: string;
+  patch: string;
+}
+/** A member's change to the group, waiting for another member to approve it. */
+export interface Proposal {
+  number: number;
+  branch: string;
+  author: string;
+  title: string;
+  url: string;
+  files: ProposalFile[];
+  /** Logins that approved it. */
+  approvals: string[];
+  approvedByMe: boolean;
+  /** This user made it. */
+  mine: boolean;
+  /** It no longer applies to the group as it is now; its author sends it again. */
+  needsUpdate: boolean;
 }
 export interface SyncReport {
   groups: GroupSyncReport[];
+  /** Groups whose repo was renamed or transferred; the app follows them to the new name. */
+  moved: { from: GroupId; to: GroupId }[];
+}
+/** The user's own CLAUDE.md text to share with a group, as edited in the preview. */
+export interface ClaudeMdShare {
+  text: string;
+  /** Take the shared lines out of the user's own CLAUDE.md (it now comes from the group). */
+  removeOwn: boolean;
+}
+export interface ClaudeMdShared {
+  /** False: the group's CLAUDE.md already had the text. */
+  appended: boolean;
+  removedOwn: boolean;
+}
+/** Where a clashing line or value comes from (§7b). */
+export type ClashSource = { kind: "group"; id: GroupId } | { kind: "own" };
+export interface ClashSide {
+  source: ClashSource;
+  /** The group's name, or "Your CLAUDE.md". */
+  name: string;
+  /** The line as written, or a setting's value as JSON. */
+  text: string;
+}
+/** Two rules Claude reads on this device that say the same thing or the opposite, or a
+ * setting two groups set differently. For a setting, `a` is the value that applies. */
+export interface Clash {
+  id: string;
+  kind: "duplicate" | "contradiction" | "setting";
+  pointer: string | null;
+  a: ClashSide;
+  b: ClashSide;
+}
+export interface CopyFile {
+  name: string;
+  inTarget: boolean;
+  /** The target has the same one: copying it changes nothing. */
+  same: boolean;
+}
+export interface CopySetting {
+  pointer: string;
+  value: string;
+  target: string | null;
+  /** The target sets it to a different plain value. */
+  clash: boolean;
+}
+/** What "Copy to another group" would bring to `to`. */
+export interface CopyPreview {
+  to: GroupId;
+  toName: string;
+  host: string;
+  /** False: the user can read the target but not push to it. */
+  canPush: boolean;
+  syncs: { claudeMd: boolean; skills: boolean; agents: boolean; settings: boolean };
+  /** The source group's CLAUDE.md, secrets redacted. */
+  claudeMd: string;
+  skills: CopyFile[];
+  agents: CopyFile[];
+  settings: CopySetting[];
+}
+export interface CopyRequest {
+  claudeMd: string;
+  skills: string[];
+  agents: string[];
+  settings: string[];
+}
+export interface Copied {
+  /** False: the target already had all of it. */
+  committed: boolean;
+  claudeMd: boolean;
+  files: number;
+  settings: number;
 }
 export interface CommitInfo {
   sha: string;
   message: string;
   author: string;
   atUnix: number;
+}
+export interface RevertFile {
+  path: string;
+  action: "restore" | "delete" | "recreate";
+  /** Why the file cannot be reverted now (it changed again); null when it can. */
+  blocked: string | null;
+}
+export interface RevertPlan {
+  sha: string;
+  summary: string;
+  files: RevertFile[];
 }
 export interface Invitation {
   id: number;
@@ -104,7 +246,7 @@ export interface LocalEdit {
 }
 export type EditAction = "share" | "keepLocal" | "undo";
 export interface Status {
-  state: "signedOut" | "paused" | "syncing" | "ok" | "error" | "idle";
+  state: "signedOut" | "expired" | "paused" | "syncing" | "ok" | "error" | "idle";
   text: string;
   lastSyncUnix: number | null;
   error: string | null;
@@ -114,6 +256,26 @@ export interface Settings {
   pollSeconds: number;
   autostart: boolean;
   paused: boolean;
+  /** Show desktop notifications. The history is kept either way. */
+  desktopNotifications: boolean;
+}
+export type HelperTask = "collision" | "claudeMdReview" | "activity";
+export interface HelperStatus {
+  saved: boolean;
+  /** Last four characters of the saved key. */
+  hint: string;
+}
+export type NotificationKind = "update" | "group" | "plugins" | "local-edit" | "job" | "personal" | "other";
+/** One entry of the notification history (crates/core/src/notifications.rs). */
+export interface Notification {
+  id: number;
+  /** UTC seconds since the Unix epoch. */
+  time: number;
+  title: string;
+  body: string;
+  kind: NotificationKind;
+  group: GroupId | null;
+  read: boolean;
 }
 export interface UpdateInfo {
   current: string;
@@ -149,6 +311,8 @@ export interface DeviceCode {
 export interface AuthStatus {
   signedIn: boolean;
   login: string | null;
+  /** Signed out because GitHub stopped accepting this login's sign-in. */
+  expiredLogin: string | null;
   clientIdMissing: boolean;
 }
 /** What personal memory syncs. */
@@ -255,7 +419,10 @@ export interface Events {
   invitations: Invitation[];
   "update-available": UpdateInfo;
   "signed-in": { login: string };
+  /** GitHub stopped accepting the sign-in; the app is signed out until the user signs in again. */
+  "sign-in-expired": { login: string };
   "sign-in-failed": { message: string };
+  "notifications-changed": { unread: number };
   navigate: string;
   personal: PersonalStatus;
 }
@@ -293,23 +460,59 @@ export const api = {
   signOut: () => call<void>("sign_out"),
   status: () => call<Status>("status"),
   groups: () => call<GroupStatus[]>("groups"),
-  createGroup: (name: string, repo?: string) => call<GroupStatus>("create_group", { name, repo }),
+  createGroup: (name: string, repo?: string, claudeMd?: ClaudeMdShare) => call<GroupStatus>("create_group", { name, repo, claudeMd }),
   invitations: () => call<Invitation[]>("invitations"),
   acceptInvitation: (id: number) => call<GroupStatus>("accept_invitation", { id }),
   discover: () => call<GroupId[]>("discover"),
   join: (group: GroupId) => call<GroupStatus>("join", { group }),
   addMember: (group: GroupId, login: string) => call<void>("add_member", { group, login }),
+  transferGroup: (group: GroupId, login: string) => call<void>("transfer_group", { group, login }),
   removeMember: (group: GroupId, login: string) => call<void>("remove_member", { group, login }),
+  reorderGroups: (order: GroupId[]) => call<SyncReport>("reorder_groups", { order }),
   leaveGroup: (group: GroupId) => call<void>("leave_group", { group }),
   localEdits: () => call<LocalEdit[]>("local_edits"),
   resolveEdit: (edit: LocalEdit, action: EditAction) => call<void>("resolve_edit", { edit, action }),
   groupContents: (group: GroupId) => call<GroupContents>("group_contents", { group }),
   localSkills: () => call<string[]>("local_skills"),
   shareSkill: (group: GroupId, skill: string) => call<void>("share_skill", { group, skill }),
+  claudeMdPreview: () => call<string>("claude_md_preview"),
+  shareClaudeMd: (group: GroupId, share: ClaudeMdShare) => call<ClaudeMdShared>("share_claude_md", { group, share }),
   recentCommits: (group: GroupId, limit = 20) => call<CommitInfo[]>("recent_commits", { group, limit }),
+  revertPreview: (group: GroupId, sha: string) => call<RevertPlan>("revert_preview", { group, sha }),
+  revertCommit: (group: GroupId, sha: string) => call<RevertPlan>("revert_commit", { group, sha }),
+  claudeMdReview: (group: GroupId) => call<ClaudeMdReview>("claude_md_review", { group }),
+  /** Accept or decline `ids`, or every pending change when `ids` is null. */
+  decideClaudeMd: (group: GroupId, ids: string[] | null, accept: boolean) =>
+    call<ClaudeMdReview>("decide_claude_md", { group, ids, accept }),
+  setClaudeMdReview: (group: GroupId, on: boolean | null) => call<ClaudeMdReview>("set_claude_md_review", { group, on }),
+  setGroupAutoAcceptClaudeMd: (group: GroupId, on: boolean) =>
+    call<ClaudeMdReview>("set_group_auto_accept_claude_md", { group, on }),
+  setGroupProposalMode: (group: GroupId, on: boolean) => call<void>("set_group_proposal_mode", { group, on }),
+  listProposals: (group: GroupId) => call<Proposal[]>("list_proposals", { group }),
+  approveProposal: (group: GroupId, number: number) => call<void>("approve_proposal", { group, number }),
+  declineProposal: (group: GroupId, number: number) => call<void>("decline_proposal", { group, number }),
+  useGroupClaudeMd: (group: GroupId) => call<ClaudeMdReview>("use_group_claude_md", { group }),
   syncNow: () => call<SyncReport>("sync_now"),
+  conflicts: () => call<Clash[]>("conflicts"),
+  /** How `text` would clash once in `group`; `from` is the group it is copied from, null for the user's own text. */
+  claudeMdCheck: (group: GroupId, text: string, from: GroupId | null) => call<Clash[]>("claude_md_check", { group, text, from }),
+  dropClaudeMdLine: (source: ClashSource, line: string) => call<void>("drop_claude_md_line", { source, line }),
+  editClaudeMdLine: (source: ClashSource, line: string, text: string) => call<void>("edit_claude_md_line", { source, line, text }),
+  keepSetting: (keep: GroupId, drop: GroupId, pointer: string) => call<void>("keep_setting", { keep, drop, pointer }),
+  copyPreview: (from: GroupId, to: GroupId) => call<CopyPreview>("copy_preview", { from, to }),
+  copyToGroup: (from: GroupId, to: GroupId, request: CopyRequest) => call<Copied>("copy_to_group", { from, to, request }),
   getSettings: () => call<Settings>("get_settings"),
   setSettings: (settings: Partial<Settings>) => call<Settings>("set_settings", { settings }),
+  helperStatus: () => call<HelperStatus>("helper_status"),
+  helperSaveKey: (key: string) => call<HelperStatus>("helper_save_key", { key }),
+  helperRemoveKey: () => call<HelperStatus>("helper_remove_key"),
+  helperTestKey: () => call<void>("helper_test_key"),
+  helperExplain: (task: HelperTask, text: string) => call<string>("helper_explain", { task, text }),
+  notifications: () => call<Notification[]>("notifications"),
+  markNotificationRead: (id: number) => call<void>("mark_notification_read", { id }),
+  markAllNotificationsRead: () => call<void>("mark_all_notifications_read"),
+  clearNotifications: () => call<void>("clear_notifications"),
+  testNotification: () => call<void>("test_notification"),
   feedbackLogs: () => call<string>("feedback_logs"),
   feedbackCaptureScreen: () => call<Screenshot>("feedback_capture_screen"),
   feedbackAttachFile: (data: string) => call<Screenshot>("feedback_attach_file", { data }),

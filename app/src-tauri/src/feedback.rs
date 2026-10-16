@@ -225,13 +225,19 @@ async fn send(ctx: &Ctx, payload: &Payload) -> Result<FeedbackResult, SendError>
     let auth = ctx
         .auth()
         .ok_or_else(|| SendError::Rejected("sign in to send feedback".into()))?;
+    // Only an expired sign-in fails here: keep the report until the user signs in again.
+    let token = auth
+        .session
+        .token()
+        .await
+        .map_err(|e| SendError::Offline(e.to_string()))?;
     let http = claude_sync_core::github::client_builder()
         .timeout(Duration::from_secs(60))
         .build()
         .map_err(|e| SendError::Offline(e.to_string()))?;
     let resp = http
         .post(config::relay("/api/feedback"))
-        .bearer_auth(&auth.token)
+        .bearer_auth(&token)
         .header("User-Agent", format!("claude-sync/{}", config::VERSION))
         .json(payload)
         .send()
@@ -317,6 +323,8 @@ pub async fn retry_outbox(app: &AppHandle) {
                 let n = r.number.map(|n| format!(" as #{n}")).unwrap_or_default();
                 notify::show(
                     app,
+                    notify::Kind::Other,
+                    None,
                     "Feedback sent",
                     &format!("\"{}\" was filed{n}.", payload.title),
                 );
@@ -330,6 +338,8 @@ pub async fn retry_outbox(app: &AppHandle) {
                 let _ = std::fs::rename(&path, path.with_extension("rejected"));
                 notify::show(
                     app,
+                    notify::Kind::Other,
+                    None,
                     "Feedback not sent",
                     &format!("\"{}\" was not filed: {e}", payload.title),
                 );

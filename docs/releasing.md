@@ -11,6 +11,7 @@ A release is a GitHub release `v<version>` on `MehdiMamas/claude-sync` with thes
 | `claude-sync_<version>_darwin_universal.app.tar.gz` | `macos-latest` |
 | `claude-sync_<version>_darwin_universal.app.tar.gz.sig` | `macos-latest` |
 | `claude-sync_<version>_darwin_universal.dmg` | `macos-latest` |
+| `claude-sync_<version>_linux_x86_64.AppImage` (+ `.sig`) and `.deb` | `ubuntu-22.04` (beta) |
 
 The workflow only ever creates or updates a **draft**. The relay only sees releases that are published (`/releases/latest` skips drafts), so nothing reaches users until the last step.
 

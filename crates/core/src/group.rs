@@ -18,6 +18,8 @@ pub const SCHEDULES: &str = "schedules.json";
 pub const PLUGINS: &str = "plugins";
 /// The largest plugin file that syncs. Bigger files are reported and skipped.
 pub const MAX_PLUGIN_FILE: usize = 1 << 20;
+/// The relay's install page, linked from the group README.
+pub const INSTALL_URL: &str = "https://claude-sync-relay.vercel.app/install";
 /// A security note shown wherever someone joins a group, and in the group README.
 pub const PLUGINS_WARNING: &str =
     "Plugins in this group run code on every member's machine; only join groups whose members you trust.";
@@ -63,6 +65,10 @@ impl Default for SyncFlags {
     }
 }
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GroupFile {
     pub schema: u32,
@@ -72,6 +78,12 @@ pub struct GroupFile {
     pub members: Vec<String>,
     #[serde(default)]
     pub sync: SyncFlags,
+    /// Other members' `CLAUDE.md` changes apply on every device at once (§7a). Absent: on.
+    #[serde(default = "yes", rename = "autoAcceptClaudeMd")]
+    pub auto_accept_claude_md: bool,
+    /// Changes go to a proposal pull request that another member approves (§5c). Absent: off.
+    #[serde(default, rename = "proposalMode", skip_serializing_if = "is_false")]
+    pub proposal_mode: bool,
     /// Unknown keys, kept on rewrite.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -85,6 +97,8 @@ impl GroupFile {
             name: name.into(),
             members: vec![host.into()],
             sync: SyncFlags::default(),
+            auto_accept_claude_md: true,
+            proposal_mode: false,
             extra: Map::new(),
         }
     }
@@ -229,10 +243,10 @@ pub fn readme(name: &str, host: &str) -> String {
          It is managed by the claude-sync app. Do not edit it by hand unless you know what you are doing.\n\n\
          ## Join\n\n\
          1. Accept the GitHub invitation to this repo (the host adds you from the app).\n\
-         2. Install claude-sync and sign in with GitHub.\n\
+         2. Install claude-sync from {INSTALL_URL} (sign in with GitHub there), then sign in with GitHub in the app.\n\
          3. The app finds this group and sets it up on your machine.\n\n\
          ## What is shared\n\n\
-         - `CLAUDE.md`: shared instructions, imported into your `~/.claude/CLAUDE.md`\n\
+         - `CLAUDE.md`: shared instructions, imported into your `~/.claude/CLAUDE.md`. Changes another member makes wait until you accept them in the app.\n\
          - `settings.shared.json`: keys merged into your `~/.claude/settings.json`\n\
          - `skills/`, `agents/`, `commands/`, `output-styles/`\n\
          - `plugins/`: plugin marketplaces, installed for every member as a local directory marketplace\n\
@@ -244,6 +258,21 @@ pub fn readme(name: &str, host: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn proposal_mode_defaults_off_round_trips_and_is_omitted_when_off() {
+        let g = GroupFile::parse(br#"{"schema":1,"name":"G","members":["a"]}"#).unwrap();
+        assert!(!g.proposal_mode);
+        let off = String::from_utf8(g.to_bytes()).unwrap();
+        assert!(!off.contains("proposalMode"), "{off}");
+
+        let mut on = g.clone();
+        on.proposal_mode = true;
+        let bytes = on.to_bytes();
+        assert!(String::from_utf8(bytes.clone())
+            .unwrap()
+            .contains("proposalMode"));
+        assert!(GroupFile::parse(&bytes).unwrap().proposal_mode);
+    }
 
     #[test]
     fn parses_the_documented_example() {
@@ -256,6 +285,18 @@ mod tests {
         assert_eq!(g.members, ["MehdiMamas", "friend-login"]);
         assert!(!g.sync.output_styles);
         assert!(g.sync.claude_md);
+    }
+
+    #[test]
+    fn auto_accept_claude_md_defaults_on() {
+        let absent = GroupFile::parse(br#"{"schema":1,"name":"n","members":["a"]}"#).unwrap();
+        assert!(absent.auto_accept_claude_md);
+        assert!(GroupFile::new("n", "a").auto_accept_claude_md);
+        let off = GroupFile::parse(br#"{"schema":1,"autoAcceptClaudeMd":false}"#).unwrap();
+        assert!(!off.auto_accept_claude_md);
+        let back: Value = serde_json::from_slice(&off.to_bytes()).unwrap();
+        assert_eq!(back["autoAcceptClaudeMd"], false);
+        assert!(back.get("auto_accept_claude_md").is_none());
     }
 
     #[test]
@@ -398,5 +439,10 @@ mod tests {
         assert!(r.contains("`plugins/`"));
         assert!(r.contains(PLUGINS_WARNING));
         assert!(r.contains("`schedules.json`"));
+    }
+
+    #[test]
+    fn readme_links_the_install_page() {
+        assert!(readme("n", "h").contains(INSTALL_URL));
     }
 }

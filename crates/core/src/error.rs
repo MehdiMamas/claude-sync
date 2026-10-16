@@ -6,6 +6,9 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub enum Error {
     #[error("not signed in")]
     NotSignedIn,
+    /// GitHub no longer accepts the sign-in and it could not be refreshed.
+    #[error("Your GitHub sign-in expired. Sign in again.")]
+    SignInExpired,
     #[error("GitHub returned {status}: {message}")]
     GitHub { status: u16, message: String },
     #[error("rate limited by GitHub until {reset_unix}")]
@@ -26,6 +29,9 @@ pub enum Error {
     PublicRepo(String),
     #[error("group file schema {0} is newer than this app; update the app")]
     SchemaTooNew(u32),
+    /// A member tried to change the group; only the host's app writes to it.
+    #[error("Only {host} can change {group}. Your change stays on this machine; ask {host}, or propose it as a pull request.")]
+    HostOnly { group: String, host: String },
     #[error("{0}")]
     Invalid(String),
     #[error(transparent)]

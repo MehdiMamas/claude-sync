@@ -1,5 +1,5 @@
 // Global UI state fed by commands and backend events.
-import type { AppInfo, AuthStatus, Invitation, LocalEdit, PersonalStatus, Status, UpdateInfo } from "./api";
+import type { AppInfo, AuthStatus, GroupStatus, Invitation, LocalEdit, PersonalStatus, Status, UpdateInfo } from "./api";
 
 interface State {
   auth: AuthStatus | null;
@@ -12,6 +12,12 @@ interface State {
   pluginsChanged: boolean;
   /** Personal memory on this device; drives the offer notice. */
   personal: PersonalStatus | null;
+  /** Unread notifications (the bell's badge). */
+  unread: number;
+  /** CLAUDE.md changes from others waiting for review, over all groups (the nav badge). */
+  review: number;
+  /** Groups ("owner/repo") the user does not host: their edits there stay on this device. */
+  guestOf: string[];
 }
 
 type Listener = () => void;
@@ -30,6 +36,9 @@ export const store: State & {
   update: null,
   pluginsChanged: false,
   personal: null,
+  unread: 0,
+  review: 0,
+  guestOf: [],
   set(patch) {
     Object.assign(this, patch);
     for (const l of listeners) l();
@@ -39,6 +48,13 @@ export const store: State & {
     refreshHook?.();
   },
 };
+
+/** Keep the nav badge and the groups the user does not host in step with a fresh group list. */
+export function countReview(groups: GroupStatus[]): void {
+  const review = groups.reduce((n, g) => n + (g.reviewPending ?? 0), 0);
+  const guestOf = groups.filter((g) => !g.isHost).map((g) => `${g.id.owner}/${g.id.repo}`);
+  if (review !== store.review || guestOf.join() !== store.guestOf.join()) store.set({ review, guestOf });
+}
 
 export function subscribe(l: Listener): void {
   listeners.push(l);

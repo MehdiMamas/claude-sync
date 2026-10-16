@@ -9,7 +9,7 @@
 //! - `memory/<key>/**`: `~/.claude/projects/<folder>/memory/**`, keyed by `keys::key_for`
 //!
 //! Local state lives in `<state_dir>/personal/` (`state.json`, `base/`).
-mod claude_md;
+pub(crate) mod claude_md;
 pub mod keys;
 mod lines;
 #[cfg(test)]

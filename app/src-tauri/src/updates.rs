@@ -54,13 +54,14 @@ async fn check(app: &AppHandle) -> Result<Option<Update>, Error> {
         .state::<Arc<Ctx>>()
         .auth()
         .ok_or("sign in to check for updates")?;
+    let token = auth.session.token().await.map_err(|e| e.to_string())?;
     let url = endpoint()
         .parse()
         .map_err(|e| format!("bad update URL: {e}"))?;
     let updater = app
         .updater_builder()
         .endpoints(vec![url])
-        .and_then(|b| b.header("Authorization", format!("Bearer {}", auth.token)))
+        .and_then(|b| b.header("Authorization", format!("Bearer {token}")))
         .map(|b| b.timeout(Duration::from_secs(60)))
         .and_then(|b| b.build())
         .map_err(|e| e.to_string())?;
@@ -101,6 +102,8 @@ pub async fn check_and_download(app: &AppHandle) -> Result<UpdateInfo, Error> {
                 let _ = a.emit("update-available", &info);
                 notify::show(
                     &a,
+                    notify::Kind::Update,
+                    None,
                     "claude-sync update ready",
                     &format!(
                         "Version {} installs when you quit, or restart now from Settings.",

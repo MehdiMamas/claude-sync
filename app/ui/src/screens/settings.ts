@@ -1,8 +1,10 @@
-// Settings: device name, how often to check, start at login, pause, personal memory, account,
+// Settings: device name, how often to check, start at login, pause, personal memory,
+// notifications, account,
 // updates.
-import { api, errorText, type Settings } from "../api";
+import { api, errorText, type HelperStatus, type Settings } from "../api";
 import { busy, errorBox, h, replace, spinner, toast } from "../dom";
 import { onRefresh, store } from "../store";
+import { forgetHelperState } from "./helper";
 import { personalCard } from "./personal";
 
 const POLL: [number, string][] = [
@@ -49,6 +51,71 @@ function updateCard(): HTMLElement {
     h("h2", { id: "update-h" }, "Updates"),
     line,
     h("div", { class: "actions" }, check, restart),
+  );
+}
+
+function helperCard(): HTMLElement {
+  const status = h("p", { role: "status" }, "Checking…");
+  const key = h("input", { id: "s-key", type: "password", autocomplete: "off", spellcheck: "false", placeholder: "sk-ant-…" });
+  const save = h("button", { type: "submit" }, "Save");
+  const test = h("button", { type: "button" }, "Test key");
+  const remove = h("button", { type: "button", class: "danger" }, "Remove");
+  const show = (s: HelperStatus) => {
+    forgetHelperState();
+    status.textContent = s.saved ? `Key saved, ending in ${s.hint}.` : "No key saved. The helper is off.";
+    test.hidden = remove.hidden = !s.saved;
+  };
+  api.helperStatus().then(show, (e) => (status.textContent = errorText(e)));
+  const form = h(
+    "form",
+    { class: "form" },
+    h("label", { for: "s-key" }, "Anthropic API key"),
+    h("div", { class: "inline-form" }, key, save),
+  );
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    busy(save, "Saving…", async () => {
+      try {
+        show(await api.helperSaveKey(key.value));
+        key.value = "";
+        toast("Key saved in your keychain");
+      } catch (e) {
+        toast(errorText(e), "error");
+      }
+    });
+  });
+  test.addEventListener("click", () =>
+    busy(test, "Testing…", async () => {
+      try {
+        await api.helperTestKey();
+        toast("The key works");
+      } catch (e) {
+        toast(errorText(e), "error");
+      }
+    }),
+  );
+  remove.addEventListener("click", () =>
+    busy(remove, "Removing…", async () => {
+      try {
+        show(await api.helperRemoveKey());
+        toast("Key removed");
+      } catch (e) {
+        toast(errorText(e), "error");
+      }
+    }),
+  );
+  return h(
+    "section",
+    { class: "card", "aria-labelledby": "helper-h" },
+    h("h2", { id: "helper-h" }, "Claude helper (optional)"),
+    h(
+      "p",
+      { class: "muted small" },
+      "Paste your own Anthropic API key to get Explain and Summarise buttons for conflicts, CLAUDE.md changes and group activity. Nothing is sent until you click one, and each click costs a little on your Anthropic account. The key stays in your computer's keychain and is only sent to api.anthropic.com. Text with a secret in it is never sent.",
+    ),
+    status,
+    form,
+    h("div", { class: "actions" }, test, remove),
   );
 }
 
@@ -100,11 +167,16 @@ function form(s: Settings): HTMLElement[] {
     save({ paused: paused.checked }, paused.checked ? "Sync paused" : "Sync resumed"),
   );
 
+  const desktop = h("input", { id: "s-desktop", type: "checkbox", checked: s.desktopNotifications });
+  desktop.addEventListener("change", () => save({ desktopNotifications: desktop.checked }));
+  const test = h("button", null, "Send a test notification");
+  test.addEventListener("click", () => busy(test, "Sending…", () => api.testNotification()));
+
   const signOut = h("button", { class: "danger" }, "Sign out");
   signOut.addEventListener("click", () =>
     busy(signOut, "Signing out…", async () => {
       await api.signOut();
-      store.set({ auth: { signedIn: false, login: null, clientIdMissing: store.auth?.clientIdMissing ?? false } });
+      store.set({ auth: { signedIn: false, login: null, expiredLogin: null, clientIdMissing: store.auth?.clientIdMissing ?? false } });
     }),
   );
 
@@ -121,12 +193,27 @@ function form(s: Settings): HTMLElement[] {
     personal.card,
     h(
       "section",
+      { class: "card", "aria-labelledby": "notify-h" },
+      h("h2", { id: "notify-h" }, "Notifications"),
+      h("div", { class: "check" }, desktop, h("label", { for: "s-desktop" }, "Show desktop notifications")),
+      h(
+        "p",
+        { class: "muted small" },
+        "Either way, every notification is kept in ",
+        h("a", { href: "#/notifications" }, "Notifications"),
+        ".",
+      ),
+      h("div", { class: "actions" }, test),
+    ),
+    h(
+      "section",
       { class: "card", "aria-labelledby": "account-h" },
       h("h2", { id: "account-h" }, "Account"),
       h("p", null, "Signed in to GitHub as ", h("strong", null, store.auth?.login ?? "?"), "."),
       h("p", { class: "muted small" }, "Signing out removes the token from this computer. Your groups stay on GitHub and the files stay on this device."),
       h("div", { class: "actions" }, signOut),
     ),
+    helperCard(),
     updateCard(),
     h(
       "p",

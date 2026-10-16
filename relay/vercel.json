@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
+  "rewrites": [{ "source": "/install", "destination": "/api/install/page" }],
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 30

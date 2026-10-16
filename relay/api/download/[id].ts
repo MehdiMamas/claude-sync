@@ -1,4 +1,5 @@
 import { requireCaller } from "../../lib/auth.ts";
+import { sessionLogin } from "../../lib/session.ts";
 import { env } from "../../lib/env.ts";
 import { discard, github, GitHubError, repoPath } from "../../lib/github.ts";
 import { handler, HttpError } from "../../lib/http.ts";
@@ -18,7 +19,14 @@ function assetId(req: Request): string {
  * The bytes never pass through the relay.
  */
 export const GET = handler("download", async (req) => {
-  await requireCaller(req);
+  // The install page sends a signed session cookie instead of a bearer token.
+  if (!req.headers.has("authorization")) {
+    const login = sessionLogin(req);
+    if (!login) throw new HttpError(401, "missing GitHub token", { "www-authenticate": "Bearer" });
+    if (env.blockedUsers().has(login.toLowerCase())) throw new HttpError(403, `${login} is not allowed to use this relay`);
+  } else {
+    await requireCaller(req);
+  }
   const id = assetId(req);
 
   // The asset is looked up under RELEASES_REPO, so ids from other repos 404.

@@ -3,19 +3,25 @@
 
 pub mod apply;
 pub mod claude_cli;
+pub mod conflicts;
 pub mod contents;
 pub mod engine;
 pub mod error;
 pub mod github;
 pub mod group;
+pub mod helper;
 pub mod jobs;
 pub mod logging;
 pub mod members;
 pub mod merge;
+pub mod migrate;
+pub mod notifications;
 pub mod paths;
 pub mod personal;
 pub mod plugin_install;
 pub mod remote;
+pub mod rename;
+pub mod review;
 pub mod secrets;
 pub mod settings;
 pub mod state;

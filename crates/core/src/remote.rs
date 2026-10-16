@@ -43,6 +43,34 @@ pub enum Collaborator {
     Invited { login: String, invitation_id: u64 },
 }
 
+/// A file a proposal changes, as a unified diff.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ProposalFile {
+    pub path: String,
+    pub patch: String,
+}
+
+/// An open proposal: a pull request from a `proposal/<login>-<time>` branch (§5c).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Proposal {
+    pub number: u64,
+    pub branch: String,
+    pub author: String,
+    pub title: String,
+    pub url: String,
+    pub files: Vec<ProposalFile>,
+    /// Logins whose latest review approves the proposal as it is now (never the author).
+    pub approvals: Vec<String>,
+    /// The branch no longer applies cleanly to the default branch.
+    pub needs_update: bool,
+}
+
+/// Prefix of every proposal branch.
+pub const PROPOSAL_PREFIX: &str = "proposal/";
+
+/// Name of the ruleset that keeps everyone but the host from pushing to a group.
+pub const HOST_LOCK_NAME: &str = "claude-sync: only the host updates the group";
+
 #[async_trait]
 pub trait RemoteRepo: Send + Sync {
     fn id(&self) -> &crate::GroupId;
@@ -68,15 +96,79 @@ pub trait RemoteRepo: Send + Sync {
         message: &str,
     ) -> crate::Result<Head>;
     async fn is_private(&self) -> crate::Result<bool>;
+    /// The signed-in account may push to the repo (not a read-only collaborator).
+    async fn can_push(&self) -> crate::Result<bool> {
+        Ok(true)
+    }
     async fn owner_login(&self) -> crate::Result<String>;
+    /// The repo's name right now. It differs from `id()` after a rename or transfer, which
+    /// GitHub answers with a redirect from the old name (§10).
+    async fn current_id(&self) -> crate::Result<crate::GroupId> {
+        Ok(self.id().clone())
+    }
+    /// Ask GitHub to transfer the repo to `new_owner`. The new owner has to accept by email
+    /// before anything changes.
+    async fn transfer(&self, new_owner: &str) -> crate::Result<()>;
     async fn collaborators(&self) -> crate::Result<Vec<Collaborator>>;
     async fn invite(&self, login: &str) -> crate::Result<()>;
+    /// Make sure GitHub refuses pushes to the default branch from everyone but repo admins
+    /// (a ruleset named [`HOST_LOCK_NAME`]). Host only; may be refused by the plan.
+    async fn ensure_host_lock(&self) -> crate::Result<()>;
     async fn remove_collaborator(&self, login: &str) -> crate::Result<()>;
     async fn cancel_invitation(&self, invitation_id: u64) -> crate::Result<()>;
+    /// Push `changes` on top of `parent` to a new branch `branch` and open a pull request
+    /// against the default branch. Needs no right to write to the default branch.
+    async fn propose(
+        &self,
+        _parent: &Head,
+        _changes: &Changes,
+        _branch: &str,
+        _title: &str,
+    ) -> crate::Result<u64> {
+        Err(Error::Invalid("proposals are not available".into()))
+    }
+    /// Open proposals (pull requests from `proposal/` branches), oldest first.
+    async fn proposals(&self) -> crate::Result<Vec<Proposal>> {
+        Err(Error::Invalid("proposals are not available".into()))
+    }
+    /// Review the proposal as approved (as the signed-in account).
+    async fn approve_proposal(&self, _number: u64) -> crate::Result<()> {
+        Err(Error::Invalid("proposals are not available".into()))
+    }
+    /// Squash-merge the proposal. Refused when it no longer applies cleanly.
+    async fn merge_proposal(&self, _number: u64) -> crate::Result<()> {
+        Err(Error::Invalid("proposals are not available".into()))
+    }
+    /// Close the proposal with a comment.
+    async fn decline_proposal(&self, _number: u64, _comment: &str) -> crate::Result<()> {
+        Err(Error::Invalid("proposals are not available".into()))
+    }
     /// Newest first.
     async fn recent_commits(&self, _limit: usize) -> crate::Result<Vec<CommitInfo>> {
         Ok(Vec::new())
     }
+    /// The commits after `from` up to `to`, oldest first, with their GitHub author login
+    /// (used to tell this account's `CLAUDE.md` changes from other members', §7a).
+    async fn commits_between(&self, _from: &str, _to: &str) -> crate::Result<Vec<CommitInfo>> {
+        Err(Error::Invalid("commit history is not available".into()))
+    }
+    /// One file at a commit; `None` when the commit does not have it.
+    async fn file_at(&self, _commit: &str, _path: &str) -> crate::Result<Option<Vec<u8>>> {
+        Err(Error::Invalid("file history is not available".into()))
+    }
+    /// The paths a commit touched and its parent (for reverting it, §6).
+    async fn commit_files(&self, _commit: &str) -> crate::Result<CommitFiles> {
+        Err(Error::Invalid("file history is not available".into()))
+    }
+}
+
+/// The files one commit touched, and the commit it was made on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitFiles {
+    /// The only parent; `None` for a root commit.
+    pub parent: Option<String>,
+    /// Every path the commit added, changed, removed or renamed (both names of a rename).
+    pub paths: Vec<String>,
 }
 
 /// Account-level calls and a way to open repos: what the engine needs beyond one repo.
@@ -151,9 +243,21 @@ pub struct GitHubRepo {
 
 #[derive(Debug, Clone, Deserialize)]
 struct RepoInfo {
+    /// `owner/repo` as GitHub names it now.
+    #[serde(default)]
+    full_name: Option<String>,
     default_branch: String,
     private: bool,
     owner: Owner,
+    /// The signed-in account's rights; GitHub sends them to an authenticated caller.
+    #[serde(default)]
+    permissions: Option<Permissions>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Permissions {
+    #[serde(default)]
+    push: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -219,6 +323,52 @@ impl GitHubRepo {
         let info: RepoInfo = self.gh.get(&self.path("")).await?;
         *self.info.lock().unwrap() = Some(info.clone());
         Ok(info)
+    }
+
+    /// Blobs, tree and commit for `changes` on top of `parent` (not empty), without moving
+    /// any branch.
+    async fn make_commit(
+        &self,
+        parent: &Head,
+        changes: &Changes,
+        message: &str,
+    ) -> crate::Result<Head> {
+        let mut entries = Vec::new();
+        for (path, content) in changes {
+            let sha = match content {
+                Some(bytes) => {
+                    let body = json!({ "content": b64().encode(bytes), "encoding": "base64" });
+                    let blob: Sha = self
+                        .gh
+                        .send(Method::POST, &self.path("/git/blobs"), &body)
+                        .await?;
+                    self.blobs
+                        .lock()
+                        .unwrap()
+                        .insert(blob.sha.clone(), bytes.clone());
+                    Value::String(blob.sha)
+                }
+                None => Value::Null,
+            };
+            entries.push(json!({ "path": path, "mode": "100644", "type": "blob", "sha": sha }));
+        }
+        let tree: Sha = self
+            .gh
+            .send(
+                Method::POST,
+                &self.path("/git/trees"),
+                &json!({ "base_tree": parent.tree, "tree": entries }),
+            )
+            .await?;
+        let body = json!({ "message": message, "tree": tree.sha, "parents": [parent.commit] });
+        let commit: Sha = self
+            .gh
+            .send(Method::POST, &self.path("/git/commits"), &body)
+            .await?;
+        Ok(Head {
+            commit: commit.sha,
+            tree: tree.sha,
+        })
     }
 
     fn remember(&self, head: &Head) {
@@ -436,40 +586,9 @@ impl RemoteRepo for GitHubRepo {
                 return Ok(parent);
             }
         }
-        let mut entries = Vec::new();
-        for (path, content) in &changes {
-            let sha = match content {
-                Some(bytes) => {
-                    let body = json!({ "content": b64().encode(bytes), "encoding": "base64" });
-                    let blob: Sha = self
-                        .gh
-                        .send(Method::POST, &self.path("/git/blobs"), &body)
-                        .await?;
-                    self.blobs
-                        .lock()
-                        .unwrap()
-                        .insert(blob.sha.clone(), bytes.clone());
-                    Value::String(blob.sha)
-                }
-                None => Value::Null,
-            };
-            entries.push(json!({ "path": path, "mode": "100644", "type": "blob", "sha": sha }));
-        }
-        let tree: Sha = self
-            .gh
-            .send(
-                Method::POST,
-                &self.path("/git/trees"),
-                &json!({ "base_tree": parent.tree, "tree": entries }),
-            )
-            .await?;
-        let body = json!({ "message": message, "tree": tree.sha, "parents": [parent.commit] });
-        let commit: Sha = self
-            .gh
-            .send(Method::POST, &self.path("/git/commits"), &body)
-            .await?;
+        let made = self.make_commit(&parent, &changes, message).await?;
         let branch = self.info().await?.default_branch;
-        let body = json!({ "sha": commit.sha, "force": false });
+        let body = json!({ "sha": made.commit, "force": false });
         match self
             .gh
             .call(
@@ -485,20 +604,189 @@ impl RemoteRepo for GitHubRepo {
             }) if is_ref_race(&message) => return Err(Error::PushRace),
             r => r?,
         }
-        let head = Head {
-            commit: commit.sha,
-            tree: tree.sha,
+        self.remember(&made);
+        Ok(made)
+    }
+
+    async fn propose(
+        &self,
+        parent: &Head,
+        changes: &Changes,
+        branch: &str,
+        title: &str,
+    ) -> crate::Result<u64> {
+        if parent.is_empty() || !branch.starts_with(PROPOSAL_PREFIX) {
+            return Err(Error::Invalid("not a proposal branch".into()));
+        }
+        let made = self.make_commit(parent, changes, title).await?;
+        let body = json!({ "ref": format!("refs/heads/{branch}"), "sha": made.commit });
+        self.gh
+            .call(Method::POST, &self.path("/git/refs"), Some(&body))
+            .await?;
+        let base = self.info().await?.default_branch;
+        let body = json!({
+            "title": title,
+            "head": branch,
+            "base": base,
+            "body": "Proposed with claude-sync. Approve or decline it in the claude-sync app.",
+        });
+        let pr: PullNumber = self
+            .gh
+            .send(Method::POST, &self.path("/pulls"), &body)
+            .await?;
+        Ok(pr.number)
+    }
+
+    async fn proposals(&self) -> crate::Result<Vec<Proposal>> {
+        let prs: Vec<PullItem> = self
+            .gh
+            .get_pages(&self.path("/pulls?state=open&per_page=100"))
+            .await?;
+        let mut out = Vec::new();
+        for pr in prs
+            .into_iter()
+            .filter(|p| p.head.r#ref.starts_with(PROPOSAL_PREFIX))
+        {
+            let author = pr.user.login.clone();
+            let files: Vec<PullFile> = self
+                .gh
+                .get_pages(&self.path(&format!("/pulls/{}/files?per_page=100", pr.number)))
+                .await?;
+            let reviews: Vec<Review> = self
+                .gh
+                .get_pages(&self.path(&format!("/pulls/{}/reviews?per_page=100", pr.number)))
+                .await?;
+            // The newest review of each person counts, and only on the current branch head.
+            let mut latest: Vec<(String, bool)> = Vec::new();
+            for r in reviews {
+                let (Some(user), Some(state)) = (r.user, r.state) else {
+                    continue;
+                };
+                if matches!(state.as_str(), "COMMENTED" | "PENDING") {
+                    continue;
+                }
+                let ok = state == "APPROVED" && r.commit_id.as_deref() == Some(&pr.head.sha);
+                latest.retain(|(l, _)| !l.eq_ignore_ascii_case(&user.login));
+                latest.push((user.login, ok));
+            }
+            // The list reply leaves `mergeable` out; the single pull has it.
+            let detail: PullItem = self
+                .gh
+                .get(&self.path(&format!("/pulls/{}", pr.number)))
+                .await?;
+            out.push(Proposal {
+                number: pr.number,
+                branch: pr.head.r#ref,
+                title: pr.title,
+                url: pr.html_url,
+                files: files
+                    .into_iter()
+                    .filter(|f| crate::group::is_allowlisted(&f.filename))
+                    .map(|f| ProposalFile {
+                        path: f.filename,
+                        patch: f.patch.unwrap_or_default(),
+                    })
+                    .collect(),
+                approvals: latest
+                    .into_iter()
+                    .filter(|(l, ok)| *ok && !l.eq_ignore_ascii_case(&author))
+                    .map(|(l, _)| l)
+                    .collect(),
+                needs_update: detail.mergeable == Some(false),
+                author,
+            });
+        }
+        Ok(out)
+    }
+
+    async fn approve_proposal(&self, number: u64) -> crate::Result<()> {
+        let body = json!({ "event": "APPROVE" });
+        self.gh
+            .call(
+                Method::POST,
+                &self.path(&format!("/pulls/{number}/reviews")),
+                Some(&body),
+            )
+            .await
+    }
+
+    async fn merge_proposal(&self, number: u64) -> crate::Result<()> {
+        let pr: PullItem = self.gh.get(&self.path(&format!("/pulls/{number}"))).await?;
+        let needs_update = || {
+            Error::Invalid(format!(
+                "proposal #{number} needs an update before it can be merged"
+            ))
         };
-        self.remember(&head);
-        Ok(head)
+        if pr.mergeable == Some(false) {
+            return Err(needs_update());
+        }
+        // Pinning the head means a push after the approval is never merged.
+        let body = json!({ "merge_method": "squash", "sha": pr.head.sha });
+        match self
+            .gh
+            .call(
+                Method::PUT,
+                &self.path(&format!("/pulls/{number}/merge")),
+                Some(&body),
+            )
+            .await
+        {
+            Err(Error::GitHub {
+                status: 405 | 409, ..
+            }) => Err(needs_update()),
+            r => r,
+        }
+    }
+
+    async fn decline_proposal(&self, number: u64, comment: &str) -> crate::Result<()> {
+        self.gh
+            .call(
+                Method::POST,
+                &self.path(&format!("/issues/{number}/comments")),
+                Some(&json!({ "body": comment })),
+            )
+            .await?;
+        self.gh
+            .call(
+                Method::PATCH,
+                &self.path(&format!("/pulls/{number}")),
+                Some(&json!({ "state": "closed" })),
+            )
+            .await
     }
 
     async fn is_private(&self) -> crate::Result<bool> {
         Ok(self.info().await?.private)
     }
 
+    async fn can_push(&self) -> crate::Result<bool> {
+        Ok(self.info().await?.permissions.is_none_or(|p| p.push))
+    }
+
     async fn owner_login(&self) -> crate::Result<String> {
         Ok(self.info().await?.owner.login)
+    }
+
+    async fn current_id(&self) -> crate::Result<GroupId> {
+        // Never from the cache: it is the one thing that changes under the old name. The GET
+        // follows GitHub's redirect for a renamed or transferred repo.
+        let info: RepoInfo = self.gh.get(&self.path("")).await?;
+        let id = info
+            .full_name
+            .as_deref()
+            .and_then(GroupId::parse)
+            .unwrap_or_else(|| self.id.clone());
+        *self.info.lock().unwrap() = Some(info);
+        Ok(id)
+    }
+
+    async fn transfer(&self, new_owner: &str) -> crate::Result<()> {
+        // POST is not redirected, so this always goes to the name the app holds; the engine
+        // resolves the current name first.
+        let body = json!({ "new_owner": new_owner });
+        self.gh
+            .call(Method::POST, &self.path("/transfer"), Some(&body))
+            .await
     }
 
     async fn collaborators(&self) -> crate::Result<Vec<Collaborator>> {
@@ -527,8 +815,33 @@ impl RemoteRepo for GitHubRepo {
             .collect())
     }
 
+    async fn ensure_host_lock(&self) -> crate::Result<()> {
+        #[derive(Deserialize)]
+        struct Ruleset {
+            name: String,
+        }
+        let have: Vec<Ruleset> = self.gh.get(&self.path("/rulesets")).await?;
+        if have.iter().any(|r| r.name == HOST_LOCK_NAME) {
+            return Ok(());
+        }
+        let body = json!({
+            "name": HOST_LOCK_NAME,
+            "target": "branch",
+            "enforcement": "active",
+            "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+            "rules": [{"type": "update"}, {"type": "deletion"}, {"type": "non_fast_forward"}],
+            // Repository role 5 is admin.
+            "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}],
+        });
+        self.gh
+            .call(Method::POST, &self.path("/rulesets"), Some(&body))
+            .await
+    }
+
     async fn invite(&self, login: &str) -> crate::Result<()> {
-        let body = json!({ "permission": "push" });
+        // Members read; the ruleset (not this) is what stops personal repos from letting
+        // collaborators push, since GitHub ignores the permission there.
+        let body = json!({ "permission": "pull" });
         self.gh
             .call(
                 Method::PUT,
@@ -559,51 +872,175 @@ impl RemoteRepo for GitHubRepo {
     }
 
     async fn recent_commits(&self, limit: usize) -> crate::Result<Vec<CommitInfo>> {
-        #[derive(Deserialize)]
-        struct Item {
-            sha: String,
-            commit: Detail,
-            author: Option<Owner>,
-        }
-        #[derive(Deserialize)]
-        struct Detail {
-            message: String,
-            author: Option<Person>,
-        }
-        #[derive(Deserialize)]
-        struct Person {
-            name: Option<String>,
-            date: Option<String>,
-        }
         let branch = self.info().await?.default_branch;
         let path = self.path(&format!(
             "/commits?sha={branch}&per_page={}",
             limit.clamp(1, 100)
         ));
-        let items: Vec<Item> = match self.gh.get(&path).await {
+        let items: Vec<CommitItem> = match self.gh.get(&path).await {
             Err(e) if is_empty_repo(&e) => return Ok(Vec::new()),
             r => r?,
         };
-        Ok(items
-            .into_iter()
-            .map(|i| {
-                let person = i.commit.author;
-                CommitInfo {
-                    sha: i.sha,
-                    message: i.commit.message,
-                    author: i
-                        .author
-                        .map(|a| a.login)
-                        .or_else(|| person.as_ref().and_then(|p| p.name.clone()))
-                        .unwrap_or_default(),
-                    at_unix: person
-                        .and_then(|p| p.date)
-                        .and_then(|d| crate::state::parse_rfc3339(&d))
-                        .unwrap_or(0),
-                }
-            })
-            .collect())
+        Ok(items.into_iter().map(CommitItem::info).collect())
     }
+
+    async fn commits_between(&self, from: &str, to: &str) -> crate::Result<Vec<CommitInfo>> {
+        #[derive(Deserialize)]
+        struct Compare {
+            commits: Vec<CommitItem>,
+        }
+        let c: Compare = self
+            .gh
+            .get(&self.path(&format!("/compare/{from}...{to}")))
+            .await?;
+        Ok(c.commits.into_iter().map(CommitItem::info).collect())
+    }
+
+    async fn file_at(&self, commit: &str, path: &str) -> crate::Result<Option<Vec<u8>>> {
+        #[derive(Deserialize)]
+        struct Contents {
+            content: String,
+            encoding: String,
+        }
+        let url = self.path(&format!("/contents/{path}?ref={commit}"));
+        match self.gh.get::<Contents>(&url).await {
+            Err(Error::GitHub { status: 404, .. }) => Ok(None),
+            Err(e) => Err(e),
+            Ok(c) if c.encoding == "base64" => decode_base64(&c.content).map(Some),
+            Ok(_) => Err(Error::Invalid(format!(
+                "{path} at {commit} is too large to read"
+            ))),
+        }
+    }
+
+    async fn commit_files(&self, commit: &str) -> crate::Result<CommitFiles> {
+        let c: CommitDetailFiles = self
+            .gh
+            .get(&self.path(&format!("/commits/{commit}")))
+            .await?;
+        if c.parents.len() > 1 {
+            return Err(Error::Invalid(format!(
+                "{commit} is a merge commit and cannot be reverted here"
+            )));
+        }
+        if c.files.len() >= MAX_COMMIT_FILES {
+            return Err(Error::Invalid(format!(
+                "{commit} changed too many files to revert here"
+            )));
+        }
+        let mut paths = Vec::new();
+        for f in c.files {
+            paths.extend(f.previous_filename);
+            paths.push(f.filename);
+        }
+        Ok(CommitFiles {
+            parent: c.parents.into_iter().next().map(|p| p.sha),
+            paths,
+        })
+    }
+}
+
+/// A commit as `/commits/{sha}` returns it, with the files it touched.
+#[derive(Deserialize)]
+struct CommitDetailFiles {
+    parents: Vec<Sha>,
+    #[serde(default)]
+    files: Vec<ChangedFile>,
+}
+
+#[derive(Deserialize)]
+struct ChangedFile {
+    filename: String,
+    previous_filename: Option<String>,
+}
+
+/// GitHub lists at most this many files of a commit.
+const MAX_COMMIT_FILES: usize = 300;
+
+#[derive(Deserialize)]
+struct PullNumber {
+    number: u64,
+}
+
+#[derive(Deserialize)]
+struct PullRef {
+    r#ref: String,
+    sha: String,
+}
+
+#[derive(Deserialize)]
+struct PullItem {
+    number: u64,
+    title: String,
+    #[serde(default)]
+    html_url: String,
+    head: PullRef,
+    user: Owner,
+    /// `None` while GitHub is still working it out, and in list replies.
+    #[serde(default)]
+    mergeable: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct PullFile {
+    filename: String,
+    #[serde(default)]
+    patch: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Review {
+    user: Option<Owner>,
+    state: Option<String>,
+    commit_id: Option<String>,
+}
+
+/// A commit as `/commits` and `/compare` list it.
+#[derive(Deserialize)]
+struct CommitItem {
+    sha: String,
+    commit: CommitDetail,
+    author: Option<Owner>,
+}
+
+#[derive(Deserialize)]
+struct CommitDetail {
+    message: String,
+    author: Option<CommitPerson>,
+}
+
+#[derive(Deserialize)]
+struct CommitPerson {
+    name: Option<String>,
+    date: Option<String>,
+}
+
+impl CommitItem {
+    /// The GitHub login when GitHub knows the author, else the git author name.
+    fn info(self) -> CommitInfo {
+        let person = self.commit.author;
+        CommitInfo {
+            sha: self.sha,
+            message: self.commit.message,
+            author: self
+                .author
+                .map(|a| a.login)
+                .or_else(|| person.as_ref().and_then(|p| p.name.clone()))
+                .unwrap_or_default(),
+            at_unix: person
+                .and_then(|p| p.date)
+                .and_then(|d| crate::state::parse_rfc3339(&d))
+                .unwrap_or(0),
+        }
+    }
+}
+
+/// GitHub's base64 (wrapped in newlines).
+fn decode_base64(content: &str) -> crate::Result<Vec<u8>> {
+    let clean: String = content.chars().filter(|c| !c.is_whitespace()).collect();
+    b64()
+        .decode(clean)
+        .map_err(|e| Error::Invalid(format!("bad base64 from GitHub: {e}")))
 }
 
 #[cfg(test)]
@@ -715,6 +1152,24 @@ mod tests {
             gone.head().await,
             Err(Error::GitHub { status: 404, .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn can_push_follows_the_repos_permissions() {
+        let (server, repo) = setup().await;
+        // No `permissions` in the answer: assume yes, the push itself says otherwise.
+        assert!(repo.can_push().await.unwrap());
+        Mock::given(method("GET"))
+            .and(path("/repos/o/ro"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "default_branch": "main", "private": true, "owner": {"login": "o"},
+                "permissions": {"admin": false, "push": false, "pull": true}
+            })))
+            .mount(&server)
+            .await;
+        let gh = GitHub::with_api("tok".into(), server.uri());
+        let read_only = GitHubRepo::new(gh, GroupId::new("o", "ro"));
+        assert!(!read_only.can_push().await.unwrap());
     }
 
     #[tokio::test]
@@ -977,7 +1432,7 @@ mod tests {
             .await;
         Mock::given(method("PUT"))
             .and(path("/repos/o/r/collaborators/q"))
-            .and(body_json(json!({"permission": "push"})))
+            .and(body_json(json!({"permission": "pull"})))
             .and(header_exists("authorization"))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": 8})))
             .expect(1)
@@ -1012,6 +1467,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ensure_host_lock_creates_the_ruleset_once() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/rulesets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/rulesets"))
+            .and(body_partial_json(json!({
+                "name": HOST_LOCK_NAME,
+                "enforcement": "active",
+            })))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": 1})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        repo.ensure_host_lock().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ensure_host_lock_leaves_an_existing_ruleset_alone() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/rulesets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"id": 3, "name": "something else"},
+                {"id": 4, "name": HOST_LOCK_NAME},
+            ])))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/rulesets"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": 1})))
+            .expect(0)
+            .mount(&server)
+            .await;
+        repo.ensure_host_lock().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn recent_commits_newest_first() {
         let (server, repo) = setup().await;
         Mock::given(method("GET"))
@@ -1031,5 +1527,37 @@ mod tests {
             ("f", 1_791_884_701)
         );
         assert_eq!((got[1].author.as_str(), got[1].at_unix), ("Someone", 0));
+    }
+
+    #[tokio::test]
+    async fn commits_between_and_file_at() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/compare/c1...c3"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"commits": [
+                {"sha": "c2", "author": {"login": "f"}, "commit": {"message": "m2", "author": {"name": "F"}}},
+                {"sha": "c3", "author": null, "commit": {"message": "m3", "author": {"name": "G"}}},
+            ]})))
+            .mount(&server)
+            .await;
+        let got = repo.commits_between("c1", "c3").await.unwrap();
+        let who: Vec<_> = got
+            .iter()
+            .map(|c| (c.sha.as_str(), c.author.as_str()))
+            .collect();
+        assert_eq!(who, [("c2", "f"), ("c3", "G")]);
+
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/contents/CLAUDE.md"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "content": "aGVs\nbG8K\n", "encoding": "base64"
+            })))
+            .mount(&server)
+            .await;
+        assert_eq!(
+            repo.file_at("c2", "CLAUDE.md").await.unwrap().unwrap(),
+            b"hello\n"
+        );
+        assert_eq!(repo.file_at("c2", "missing.md").await.unwrap(), None);
     }
 }

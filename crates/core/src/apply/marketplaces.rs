@@ -46,7 +46,18 @@ pub(super) fn plan(
     let mut placed = BTreeSet::new();
     for name in names {
         let owner = m.marketplaces.get(name).map(|o| &o.group);
-        if let Some(owner) = owner.filter(|g| *g != group && order.contains(g)) {
+        // The owner keeps it while it ranks above this group; a group that ranks above the
+        // owner takes it over (after a reorder, §7).
+        let rank = |g: &GroupId| order.iter().position(|x| x == g);
+        let held = owner.filter(|g| {
+            **g != *group
+                && match (rank(g), rank(group)) {
+                    (Some(o), Some(me)) => o < me,
+                    (Some(_), None) => true,
+                    _ => false,
+                }
+        });
+        if let Some(owner) = held {
             report.collisions.push(Collision::OtherGroup {
                 path: format!("{}/{name}", group::PLUGINS),
                 owner: owner.clone(),

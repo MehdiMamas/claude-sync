@@ -15,7 +15,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1   # Window
 scripts/check.sh                                                        # macOS, Linux, Git Bash
 ```
 
-They run `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, the relay's tests and typecheck, and the UI build. They print a summary and exit non-zero if anything failed.
+They run `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, the relay's tests and typecheck, and the UI tests and build. They print a summary and exit non-zero if anything failed.
 
 To run one part on its own:
 
@@ -23,8 +23,8 @@ To run one part on its own:
 cargo test --workspace
 pnpm -C relay test
 pnpm -C relay typecheck
+pnpm -C app/ui test     # the UI's unit tests (activity feed parsing)
 pnpm -C app/ui build
-bash tests/run.sh     # the old bash CLI's tests
 ```
 
 ## Pull requests

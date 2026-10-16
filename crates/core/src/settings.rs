@@ -517,7 +517,7 @@ mod tests {
         merge(&local, &shared, prev).expect("merge")
     }
 
-    // ---- v0 tests/settings-merge-cases.test.sh ----
+    // ---- cases carried over from the v0 CLI ----
 
     #[test]
     fn v0_merge_cases() {
@@ -636,7 +636,7 @@ mod tests {
         );
     }
 
-    // ---- v0 tests/settings-invalid-json.test.sh ----
+    // ---- cases carried over from the v0 CLI ----
 
     #[test]
     fn v0_invalid_json_is_an_error() {
@@ -712,7 +712,7 @@ mod tests {
         assert!(r.skipped.is_empty());
     }
 
-    // ---- v0 tests/settings-ten-merges.test.sh ----
+    // ---- cases carried over from the v0 CLI ----
 
     #[test]
     fn v0_ten_merges_keep_local_only_keys() {

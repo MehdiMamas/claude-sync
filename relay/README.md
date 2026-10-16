@@ -32,7 +32,7 @@ Errors are JSON `{ "error": "<message>" }`:
 
 No auth. `200 {"ok": true}`.
 
-### `GET /api/update?target=<windows|darwin>&arch=<x86_64|aarch64>&current_version=<semver>`
+### `GET /api/update?target=<windows|darwin|linux>&arch=<x86_64|aarch64>&current_version=<semver>`
 
 Reads the latest release of `RELEASES_REPO` (`GET /repos/{repo}/releases/latest`, which skips drafts and prereleases).
 
@@ -73,7 +73,7 @@ Body (JSON, at most 4.5 MB, the Vercel limit):
 
 The screenshot type is checked by its magic bytes. The app should send at most the last ~500 KB of logs so the whole body stays under 4.5 MB.
 
-1. Title, description and logs are redacted again (the patterns of `lib/secrets.sh` plus `Bearer <token>`), then the logs are cut to their last 200 KB.
+1. Title, description and logs are redacted again (the patterns of `crates/core/src/secrets.rs` plus `Bearer <token>`), then the logs are cut to their last 200 KB.
 2. The issue goes to `FEEDBACK_REPO`, opened with the caller's token, so GitHub shows the user as its author. It has the title and a body with the description, kind, app version and OS. Nothing from the user's disk goes into it, and no labels yet.
 3. The screenshot (`screenshot.png` or `.jpg`), the logs (`logs.txt`) and `report.json` (issue repo, number and URL, login, kind, app version, OS, time) are committed with the relay token to the private `FEEDBACK_ATTACHMENTS_REPO` at `issues/<number>/`, as one commit on its default branch (Git Data API: blobs, tree, commit, then the ref, retried when another post moved the ref first). Skipped when there is neither a screenshot nor logs. Best effort: on a failure the issue body says the attachments could not be stored. Because this runs after the create, a refused issue leaves no files behind.
 4. GitHub drops labels and milestone sent by someone without push access, so the relay then sets labels `feedback` and `type:bug` / `type:idea` and the milestone with its own token (`PATCH /issues/{n}`, which also rewrites the body when storing failed). This comes last because the `feedback` label starts the triage workflow (below), which reads the attachments. Best effort: a failure is logged and the post still answers 201.
@@ -106,6 +106,18 @@ The issue is public when `FEEDBACK_REPO` is a public repo, and it shows the user
 
 Secrets on this repo: `FEEDBACK_DEPLOY_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`). Labels `feedback`, `triaged` and `needs-moderation` must exist.
 
+## Install page
+
+`GET /install` is a self-contained page for people: **Sign in with GitHub**, then buttons for the latest release's Windows `-setup.exe` and macOS `.dmg`, the version, and the macOS first-run steps (the build is not notarized). The group README links to it.
+
+- `GET /api/install/login` redirects to GitHub's OAuth web flow (scope `read:user` only) with a random `state` in a 10-minute HttpOnly, Secure, SameSite=Lax cookie.
+- `GET /api/install/callback` checks `state` against the cookie, exchanges the code with the client secret, reads the login with `GET /user`, **discards the token** (never stored or logged) and sets the `cs_install` session cookie: `<login + expiry>.<HMAC-SHA256 with INSTALL_SESSION_SECRET>`, 1 day, HttpOnly, Secure, SameSite=Lax.
+- `GET /api/install/logout` clears it. The download buttons use `/api/download/<asset-id>`, which also accepts that cookie instead of a bearer token.
+- The relay has no allowlist any more (see above), so "allowed" means "not in `BLOCKED_GITHUB_USERS`". A blocked login sees "isn't on the list yet. Ask the person who invited you."
+- If any of the three env vars is missing, the page says install sign-in is not configured.
+
+**Reusing the device-flow OAuth App.** The app's sign-in uses the device flow of a GitHub OAuth App; that App can be reused for the web flow. An OAuth App has one callback URL, and the device flow ignores it, so set **Authorization callback URL** to `https://claude-sync-relay.vercel.app/api/install/callback`. Generate a client secret on the App's page and put it in `GITHUB_OAUTH_CLIENT_SECRET`; `GITHUB_OAUTH_CLIENT_ID` is the App's client ID (the same one the app uses).
+
 ## Release assets
 
 `scripts/release.ps1` and the macOS release workflow must name the assets exactly like this. `<version>` is the release version without the leading `v` (tag `v0.3.0` → `0.3.0`).
@@ -117,6 +129,8 @@ Secrets on this repo: `FEEDBACK_DEPLOY_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` (`clau
 | `claude-sync_<version>_darwin_universal.app.tar.gz` | macOS update bundle; served to both `aarch64` and `x86_64` |
 | `claude-sync_<version>_darwin_universal.app.tar.gz.sig` | Its updater signature |
 | `claude-sync_<version>_darwin_universal.dmg` | macOS installer for people (not used by the updater) |
+| `claude-sync_<version>_linux_x86_64.AppImage` (+ `.sig`) | Linux update bundle (beta) |
+| `claude-sync_<version>_linux_x86_64.deb` | Linux package for people (not used by the updater) |
 
 A darwin request first looks for `claude-sync_<version>_darwin_<arch>.app.tar.gz`, then the universal one, so per-arch builds can be added later. `windows_aarch64` works the same way if it is ever built. A platform whose bundle or `.sig` is not uploaded yet gets `204`, so the Windows release can go out before the macOS build finishes. The rule lives in `lib/assets.ts`.
 
@@ -129,6 +143,9 @@ A darwin request first looks for `claude-sync_<version>_darwin_<arch>.app.tar.gz
 | `FEEDBACK_REPO` | no | Where feedback issues go. Defaults to `RELEASES_REPO` |
 | `FEEDBACK_ATTACHMENTS_REPO` | no | Private repo for feedback screenshots and logs. Defaults to `<FEEDBACK_REPO>-feedback` |
 | `BLOCKED_GITHUB_USERS` | no | Comma-separated logins refused with 403. Everyone else with a valid GitHub token may use the relay |
+| `GITHUB_OAUTH_CLIENT_ID` | for `/install` | Client ID of the GitHub OAuth App (see "Install page") |
+| `GITHUB_OAUTH_CLIENT_SECRET` | for `/install` | Its client secret. Used only to exchange the sign-in code |
+| `INSTALL_SESSION_SECRET` | for `/install` | Random string, 32+ bytes (`openssl rand -base64 48`), signs the 1-day session cookie |
 | `RELAY_PUBLIC_URL` | no | Public base URL used in `/api/update` download links, e.g. `https://claude-sync-relay.vercel.app`. Defaults to the request's origin |
 
 ## The relay token (fine-grained PAT)

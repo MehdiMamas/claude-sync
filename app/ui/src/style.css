@@ -281,6 +281,14 @@ legend {
 .check label {
   font-weight: normal;
 }
+.warn-text {
+  color: var(--warn);
+  margin: 0;
+}
+textarea.mono {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+}
 .radios {
   margin-bottom: 0.5rem;
 }
@@ -645,4 +653,408 @@ details summary {
 .card > .form + .form,
 .card > .form + .check {
   margin-top: 0.75rem;
+}
+
+/* Recent changes: the activity feed */
+.day + .day {
+  margin-top: 0.75rem;
+}
+.card .day-label {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.act {
+  display: flex;
+  gap: 0.7rem;
+  padding: 0.55rem 0;
+}
+.feed > .act + .act {
+  border-top: 1px solid var(--line);
+}
+/* avatar.ts: initials underneath, the GitHub picture fades in over them once loaded. */
+.avatar {
+  position: relative;
+  flex: none;
+  width: var(--size, 28px);
+  height: var(--size, 28px);
+  border-radius: 50%;
+  overflow: hidden;
+  display: inline-grid;
+  place-items: center;
+  font-size: calc(var(--size, 28px) * 0.38);
+  line-height: 1;
+  font-weight: 700;
+  color: #fff;
+  background: hsl(var(--h, 210) 55% 42%);
+  user-select: none;
+  vertical-align: middle;
+}
+.avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.avatar.loaded img {
+  opacity: 1;
+}
+.who {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.who .tag {
+  margin-left: 0;
+}
+.act-body {
+  flex: 1;
+  min-width: 0;
+}
+.act-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+.act-head .tag {
+  margin-left: 0;
+}
+.act-title {
+  font-weight: 600;
+}
+.act-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.act-icon.k-created,
+.act-icon.k-memberAdded {
+  color: var(--ok);
+}
+.act-icon.k-memberRemoved {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.act-icon.k-job {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+.chip {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  font-size: 0.75rem;
+  padding: 0 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.act-detail {
+  margin-top: 0.15rem;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+button.act-more {
+  padding: 0;
+  font-size: 0.85rem;
+}
+.act-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem;
+  margin-top: 0.15rem;
+}
+.act-who {
+  color: var(--text);
+}
+.device {
+  padding: 0 0.35rem;
+  border-radius: 4px;
+  background: var(--bg);
+}
+.act-meta button.link {
+  padding: 0;
+  font-size: inherit;
+  color: var(--muted);
+}
+.act-meta button.link:hover,
+.act-meta button.link:focus-visible {
+  color: var(--accent);
+}
+.revert-panel {
+  margin-top: 0.4rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border, #8884);
+  border-radius: 6px;
+}
+.revert-panel ul {
+  margin: 0.3rem 0;
+  padding-left: 1.1rem;
+}
+.revert-panel .row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+.feed-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.feed-body > .empty {
+  margin-bottom: 0;
+  padding: 1.25rem 1rem;
+}
+
+/* Notifications */
+.bell {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.nav a.bell {
+  padding: 0;
+}
+.bell:hover,
+.bell[aria-current="page"] {
+  color: var(--text);
+}
+.bell svg {
+  width: 1.2rem;
+  height: 1.2rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.badge {
+  position: absolute;
+  top: -0.1rem;
+  right: -0.25rem;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.15rem;
+  text-align: center;
+}
+.notifications > li.unread {
+  background: var(--accent-soft);
+}
+.notifications > li.unread .link-row:hover {
+  background: transparent;
+}
+.notifications .row {
+  align-items: flex-start;
+}
+.kind-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.kind-icon.update,
+.kind-icon.plugins {
+  color: var(--accent);
+}
+.kind-icon.group {
+  color: var(--ok);
+}
+.kind-icon.local-edit {
+  color: var(--warn);
+}
+.list.notifications {
+  overflow: hidden;
+}
+
+/* CLAUDE.md review */
+.nav-badge {
+  display: inline-block;
+  min-width: 1.3rem;
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.3rem;
+  text-align: center;
+}
+.card.review > h2 .tag {
+  vertical-align: middle;
+}
+.review-all {
+  margin: 0.5rem 0;
+  justify-content: flex-end;
+}
+.review-list > li.review-item {
+  padding: 0.25rem 0 0.75rem;
+}
+.review-item > .row {
+  padding-bottom: 0.4rem;
+}
+.diff {
+  margin: 0;
+  padding: 0.4rem 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.diff-line {
+  display: block;
+  padding: 0 0.6rem;
+}
+.diff-line.add {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.diff-line.remove {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+.diff.add .diff-line {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.diff.remove .diff-line {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+.review-ask {
+  margin-top: 0.25rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+}
+.review-ask[hidden] {
+  display: none;
+}
+.review-ask p {
+  margin: 0 0 0.5rem;
+}
+
+/* Rules that clash between groups, and copying to another group (§7b) */
+.list.flat.clash-list > li.clash {
+  padding: 0.6rem 0;
+}
+.clash-side {
+  display: grid;
+  grid-template-columns: minmax(7rem, 11rem) 1fr;
+  gap: 0.6rem;
+  align-items: baseline;
+  margin: 0.35rem 0;
+}
+.clash-name {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.clash-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+li.clash .actions {
+  margin-top: 0.4rem;
+}
+li.clash p {
+  margin: 0.4rem 0 0;
+}
+.clash-warnings {
+  margin: 0.4rem 0;
+  padding: 0.4rem 0.7rem;
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+}
+.clash-warnings ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.2rem;
+}
+.pick-sections > li {
+  padding: 0.3rem 0;
+}
+.pick-list {
+  list-style: none;
+  margin: 0;
+  padding-left: 1.5rem;
+}
+.pick-list .check {
+  margin: 0.2rem 0;
+  align-items: flex-start;
+}
+.pick-line {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 620px) {
+  .clash-side {
+    grid-template-columns: 1fr;
+    gap: 0.1rem;
+  }
+}
+
+.group-item {
+  display: flex;
+  align-items: center;
+}
+.reorder {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0 0 0 0.6rem;
+}
+.icon-btn {
+  padding: 0 0.4rem;
+  line-height: 1.2;
+  font-size: 0.7rem;
+}
+.helper {
+  margin-top: 0.5rem;
+}
+.helper-out {
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--line);
+  white-space: pre-wrap;
+}
+.helper-out.error {
+  border-left-color: var(--danger, #c0392b);
 }

@@ -222,7 +222,10 @@ async fn two_devices_against_real_github() {
     let raw = GitHubRepo::new(gh.clone(), id.clone());
 
     // Create: private, tagged, initial commit on an empty repo, joined.
-    let status = a.create_group("E2E", &name).await.expect("create group");
+    let status = a
+        .create_group("E2E", &name, None)
+        .await
+        .expect("create group");
     assert_eq!(status.id, id);
     assert_eq!(status.last_error, None);
     assert_eq!(status.host, login);
