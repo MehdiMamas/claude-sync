@@ -3,7 +3,10 @@
 //! `FakeGitHub` is a world of repos. `FakeGitHub::account(login)` is what one signed-in user
 //! sees: repo handles that answer `404` once that user has no access, like GitHub does.
 //! A `FakeRepo` made with `FakeRepo::new` has no viewer and can do anything (the test's view).
-use super::{Changes, Collaborator, CommitFiles, Head, PathFilter, RemoteFactory, RemoteRepo};
+use super::{
+    Changes, Collaborator, CommitFiles, Head, PathFilter, Proposal, ProposalFile, RemoteFactory,
+    RemoteRepo, PROPOSAL_PREFIX,
+};
 use crate::engine::CommitInfo;
 use crate::github::Invitation;
 use crate::{Error, FileSet, GroupId};
@@ -23,6 +26,23 @@ pub struct FakeCommit {
     pub files: FileSet,
     pub message: String,
     pub author: String,
+}
+
+/// A pull request on the fake repo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FakePull {
+    pub number: u64,
+    pub branch: String,
+    pub author: String,
+    pub title: String,
+    /// The default-branch commit the branch was made from.
+    pub base: String,
+    pub changes: Changes,
+    /// `Open`, `Merged` or `Closed`.
+    pub state: &'static str,
+    /// `(login, approved)`, one per reviewer.
+    pub reviews: Vec<(String, bool)>,
+    pub comments: Vec<String>,
 }
 
 type Hook = Box<dyn FnMut(&FakeRepo) + Send>;
@@ -50,6 +70,7 @@ struct State {
     failures: Vec<Failure>,
     before_commit: Option<Hook>,
     calls: Vec<String>,
+    pulls: Vec<FakePull>,
 }
 
 impl State {
@@ -142,6 +163,7 @@ impl FakeRepo {
                 failures: Vec::new(),
                 before_commit: None,
                 calls: Vec::new(),
+                pulls: Vec::new(),
             })),
             viewer: None,
             seen: Arc::default(),
@@ -338,6 +360,19 @@ impl FakeRepo {
         self.lock().rulesets.clone()
     }
 
+    /// Every pull request, oldest first.
+    pub fn pulls(&self) -> Vec<FakePull> {
+        self.lock().pulls.clone()
+    }
+
+    /// `login` reviews pull request `number` from outside the app.
+    pub fn review_as(&self, login: &str, number: u64, approved: bool) {
+        let mut st = self.lock();
+        let pr = st.pulls.iter_mut().find(|p| p.number == number).unwrap();
+        pr.reviews.retain(|(l, _)| !l.eq_ignore_ascii_case(login));
+        pr.reviews.push((login.into(), approved));
+    }
+
     pub fn calls(&self) -> Vec<String> {
         self.lock().calls.clone()
     }
@@ -447,6 +482,143 @@ impl RemoteRepo for FakeRepo {
         let files = apply_changes(st.files(), changes)?;
         let author = self.viewer.clone().unwrap_or_else(|| st.owner.clone());
         Ok(st.push(files, message, &author))
+    }
+
+    async fn propose(
+        &self,
+        parent: &Head,
+        changes: &Changes,
+        branch: &str,
+        title: &str,
+    ) -> crate::Result<u64> {
+        drop(self.enter("propose")?);
+        if !self.pushable() || !branch.starts_with(PROPOSAL_PREFIX) {
+            return Err(Error::GitHub {
+                status: 403,
+                message: "Permission denied".into(),
+            });
+        }
+        let mut st = self.lock();
+        if !st.commits.iter().any(|c| c.sha == parent.commit) {
+            return Err(not_found());
+        }
+        let author = self.viewer.clone().unwrap_or_else(|| st.owner.clone());
+        let number = st.pulls.len() as u64 + 1;
+        st.pulls.push(FakePull {
+            number,
+            branch: branch.into(),
+            author,
+            title: title.into(),
+            base: parent.commit.clone(),
+            changes: changes.clone(),
+            state: "Open",
+            reviews: Vec::new(),
+            comments: Vec::new(),
+        });
+        Ok(number)
+    }
+
+    async fn proposals(&self) -> crate::Result<Vec<Proposal>> {
+        let st = self.enter("proposals")?;
+        let now = st.files();
+        Ok(st
+            .pulls
+            .iter()
+            .filter(|p| p.state == "Open")
+            .map(|p| {
+                let old = st
+                    .commits
+                    .iter()
+                    .find(|c| c.sha == p.base)
+                    .map(|c| c.files.clone())
+                    .unwrap_or_default();
+                let text = |b: Option<&Vec<u8>>| {
+                    b.map(|b| String::from_utf8_lossy(b).into_owned())
+                        .unwrap_or_default()
+                };
+                Proposal {
+                    number: p.number,
+                    branch: p.branch.clone(),
+                    author: p.author.clone(),
+                    title: p.title.clone(),
+                    url: format!("https://github.com/{}/pull/{}", self.id, p.number),
+                    files: p
+                        .changes
+                        .iter()
+                        .filter(|(path, _)| crate::group::is_allowlisted(path))
+                        .map(|(path, new)| ProposalFile {
+                            path: path.clone(),
+                            patch: format!("-{}\n+{}", text(old.get(path)), text(new.as_ref())),
+                        })
+                        .collect(),
+                    approvals: p
+                        .reviews
+                        .iter()
+                        .filter(|(l, ok)| *ok && !l.eq_ignore_ascii_case(&p.author))
+                        .map(|(l, _)| l.clone())
+                        .collect(),
+                    needs_update: p.changes.keys().any(|path| now.get(path) != old.get(path)),
+                }
+            })
+            .collect())
+    }
+
+    async fn approve_proposal(&self, number: u64) -> crate::Result<()> {
+        let mut st = self.enter("approve_proposal")?;
+        let me = self.viewer.clone().unwrap_or_else(|| st.owner.clone());
+        let pr = st
+            .pulls
+            .iter_mut()
+            .find(|p| p.number == number && p.state == "Open")
+            .ok_or_else(not_found)?;
+        if pr.author.eq_ignore_ascii_case(&me) {
+            return Err(Error::GitHub {
+                status: 422,
+                message: "Can not approve your own pull request".into(),
+            });
+        }
+        pr.reviews.retain(|(l, _)| !l.eq_ignore_ascii_case(&me));
+        pr.reviews.push((me, true));
+        Ok(())
+    }
+
+    async fn merge_proposal(&self, number: u64) -> crate::Result<()> {
+        // The default branch is locked to the host (§5a), so a merge needs the owner.
+        let mut st = self.enter_as_owner("merge_proposal")?;
+        let i = st
+            .pulls
+            .iter()
+            .position(|p| p.number == number && p.state == "Open")
+            .ok_or_else(not_found)?;
+        let pr = st.pulls[i].clone();
+        let old = st
+            .commits
+            .iter()
+            .find(|c| c.sha == pr.base)
+            .map(|c| c.files.clone())
+            .unwrap_or_default();
+        let now = st.files();
+        if pr.changes.keys().any(|path| now.get(path) != old.get(path)) {
+            return Err(Error::Invalid(format!(
+                "proposal #{number} needs an update before it can be merged"
+            )));
+        }
+        let files = apply_changes(now, &pr.changes)?;
+        st.push(files, &pr.title, &pr.author);
+        st.pulls[i].state = "Merged";
+        Ok(())
+    }
+
+    async fn decline_proposal(&self, number: u64, comment: &str) -> crate::Result<()> {
+        let mut st = self.enter("decline_proposal")?;
+        let pr = st
+            .pulls
+            .iter_mut()
+            .find(|p| p.number == number && p.state == "Open")
+            .ok_or_else(not_found)?;
+        pr.comments.push(comment.into());
+        pr.state = "Closed";
+        Ok(())
     }
 
     async fn is_private(&self) -> crate::Result<bool> {

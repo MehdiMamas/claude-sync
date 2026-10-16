@@ -33,6 +33,8 @@ export interface GroupStatus {
   reviewClaudeMd: boolean;
   /** This user owns the group's repo. Only the host changes a group; everyone else's edits stay local. */
   isHost: boolean;
+  /** Members' changes go to review as proposals another member approves. */
+  proposalMode: boolean;
   /** The ruleset that stops others writing to the group: "on", "unavailable" (GitHub refused), or null for members. */
   hostLock: "on" | "unavailable" | null;
 }
@@ -115,8 +117,31 @@ export interface GroupSyncReport {
   conflicts: ConflictInfo[];
   error: string | null;
   lostAccess: boolean;
+  /** This sync sent changes as a proposal instead of applying them to the group. */
+  proposed: boolean;
   /** CLAUDE.md changes from others that this sync found; they wait for review. */
   review: ReviewItem[];
+}
+/** A file a proposal changes, as a unified diff. */
+export interface ProposalFile {
+  path: string;
+  patch: string;
+}
+/** A member's change to the group, waiting for another member to approve it. */
+export interface Proposal {
+  number: number;
+  branch: string;
+  author: string;
+  title: string;
+  url: string;
+  files: ProposalFile[];
+  /** Logins that approved it. */
+  approvals: string[];
+  approvedByMe: boolean;
+  /** This user made it. */
+  mine: boolean;
+  /** It no longer applies to the group as it is now; its author sends it again. */
+  needsUpdate: boolean;
 }
 export interface SyncReport {
   groups: GroupSyncReport[];
@@ -462,6 +487,10 @@ export const api = {
   setClaudeMdReview: (group: GroupId, on: boolean | null) => call<ClaudeMdReview>("set_claude_md_review", { group, on }),
   setGroupAutoAcceptClaudeMd: (group: GroupId, on: boolean) =>
     call<ClaudeMdReview>("set_group_auto_accept_claude_md", { group, on }),
+  setGroupProposalMode: (group: GroupId, on: boolean) => call<void>("set_group_proposal_mode", { group, on }),
+  listProposals: (group: GroupId) => call<Proposal[]>("list_proposals", { group }),
+  approveProposal: (group: GroupId, number: number) => call<void>("approve_proposal", { group, number }),
+  declineProposal: (group: GroupId, number: number) => call<void>("decline_proposal", { group, number }),
   useGroupClaudeMd: (group: GroupId) => call<ClaudeMdReview>("use_group_claude_md", { group }),
   syncNow: () => call<SyncReport>("sync_now"),
   conflicts: () => call<Clash[]>("conflicts"),

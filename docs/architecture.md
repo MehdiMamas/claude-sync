@@ -120,6 +120,20 @@ Only the host changes the member list, even though the list lives in `claude-syn
 
 - **The app.** Members are invited with read (pull) access, and only the host's app pushes to a group repo. A member's local edit to a managed file is never pushed: the notice offers **Keep local** and **Undo** but no **Share with group**, the group screen shows "Only <host> can change this group. Your edits stay on this machine.", and the core refuses a member's change with `Error::HostOnly` ("Only <host> can change <group>. Your change stays on this machine; ask <host>, or propose it as a pull request."). A member who wants a change opens a pull request on the group repo; the host reviews and merges it.
 - **GitHub.** The host's app creates a repository ruleset on the default branch that blocks update, deletion and non-fast-forward pushes for everyone except repository admins. If GitHub refuses (for example a private repo on a free plan), the app still only pushes from the host's machine, and the host sees "GitHub can't lock this repo on your plan; the app still only sends changes from your machine." (`GroupStatus.hostLock` is `on`, `unavailable`, or null for members.)
+- **Proposals.** A group can opt into proposal mode, which lets members send changes through the host's review (§5b).
+
+### 5b. Proposals
+
+- **Setting.** A group has an optional `proposalMode` flag, stored in `claude-sync.json` in the group repo. Only the host can toggle it. Members, settings and the toggle itself stay direct host changes.
+- **Mode off.** Nothing changes: members get `HostOnly` (§5a).
+- **Mode on.** Any change, from a member or the host, is pushed to a branch `proposal/<login>-<UTC yyyymmddHHMMSS>` and a pull request against the default branch is opened, titled `login@device: summary`. The ruleset (§5a) protects only the default branch, so members can push these branches.
+- **Proposals section.** The app lists open proposals with the author, the changed files with their diff, and the approvals. Each has **Approve** and **Decline**.
+  - A member's **Approve** is a GitHub review approval.
+  - The host's **Approve** on a member's proposal squash-merges it.
+  - **Decline** closes the PR with a comment.
+- **Host's own proposals.** These need one approval from another group member, and the host's app merges them on its next sync.
+- **Stale proposals.** If a file in a proposal changed on the default branch since the proposal branched, the proposal is "needs an update" and is never merged.
+- **Local edits.** After proposing, the edit stays a local edit and is not proposed again on each sync. Sharing a skill as a proposal keeps the local folder (no backup move).
 
 ### 5b. Transfer and rename
 

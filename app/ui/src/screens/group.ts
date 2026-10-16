@@ -15,6 +15,7 @@ import {
   type JobView,
   type MarketplaceInfo,
   type PermissionMode,
+  type Proposal,
   type ReviewItem,
 } from "../api";
 import { avatar } from "../avatar";
@@ -135,7 +136,12 @@ function transferCard(g: GroupStatus, reload: () => void): HTMLElement | false {
 
 /** Who may change the group, and what that means for this user. */
 function hostNotice(g: GroupStatus): HTMLElement | false {
-  if (!g.isHost) return h("div", { class: "notice info", role: "note" }, h("div", { class: "notice-text" }, `Only ${g.host} can change this group. Your edits stay on this machine.`));
+  if (!g.isHost)
+    return h(
+      "div",
+      { class: "notice info", role: "note" },
+      h("div", { class: "notice-text" }, g.proposalMode ? `Only ${g.host} can change this group directly. Your changes go to review as proposals; another member approves them.` : `Only ${g.host} can change this group. Your edits stay on this machine.`),
+    );
   if (g.hostLock === "unavailable")
     return h("div", { class: "notice info", role: "note" }, h("div", { class: "notice-text" }, "GitHub can't lock this repo on your plan; the app still only sends changes from your machine."));
   return false;
@@ -689,6 +695,87 @@ function reviewBody(id: GroupId, r: ClaudeMdReview, isHost: boolean): (HTMLEleme
   ];
 }
 
+function diffView(patch: string): HTMLElement {
+  const lines = patch.split("\n").map((l) => h("span", { class: `diff-line${l.startsWith("+") ? " add" : l.startsWith("-") ? " remove" : ""}` }, l || " "));
+  return h("pre", { class: "diff" }, lines);
+}
+
+function proposalItem(id: GroupId, p: Proposal, done: () => void): HTMLElement {
+  const approve = h("button", { class: "primary", disabled: p.approvedByMe || p.needsUpdate, "aria-label": `Approve: ${p.title}` }, p.approvedByMe ? "Approved" : "Approve");
+  approve.addEventListener("click", () =>
+    busy(approve, "Approving…", async () => {
+      await api.approveProposal(id, p.number);
+      toast("Approved");
+      done();
+    }),
+  );
+  const decline = h("button", { "aria-label": `Decline: ${p.title}` }, "Decline");
+  decline.addEventListener("click", () =>
+    busy(decline, "Declining…", async () => {
+      await api.declineProposal(id, p.number);
+      toast("Declined: the proposal is closed");
+      done();
+    }),
+  );
+  return h(
+    "li",
+    { class: "review-item" },
+    h(
+      "div",
+      { class: "row" },
+      avatar(p.author, 32),
+      h(
+        "div",
+        { class: "grow" },
+        h("div", null, h("strong", null, p.title), p.needsUpdate && h("span", { class: "tag warn" }, "needs an update")),
+        h("div", { class: "muted small" }, `${p.mine ? "You" : p.author} · ${plural(p.approvals.length, "approval")} · ${plural(p.files.length, "file")}`),
+        p.needsUpdate && h("div", { class: "muted small" }, "The group changed since. The author sends it again before it can be approved."),
+      ),
+      h("div", { class: "actions" }, decline, !p.mine && approve),
+    ),
+    p.files.map((f) => h("details", null, h("summary", null, h("code", null, f.path)), diffView(f.patch))),
+  );
+}
+
+function proposalsCard(g: GroupStatus): HTMLElement {
+  const id = g.id;
+  const box = h("input", { type: "checkbox", id: "proposal-mode", checked: g.proposalMode, disabled: !g.isHost });
+  box.addEventListener("change", async () => {
+    const on = box.checked;
+    box.disabled = true;
+    try {
+      await api.setGroupProposalMode(id, on);
+      toast(on ? "Members' changes now go to review as proposals" : "Proposal mode is off: only you change the group");
+    } catch (e) {
+      box.checked = !on;
+      toast(errorText(e), "error");
+    } finally {
+      box.disabled = !g.isHost;
+    }
+  });
+  const list = h("div", null, spinner("Loading proposals"));
+  const card = h("section", { class: "card review", "aria-labelledby": "proposals-h" }, h("h2", { id: "proposals-h" }, "Proposals"), list);
+  const load = () =>
+    api.listProposals(id).then(
+      (ps) =>
+        replace(
+          list,
+          ps.length === 0
+            ? h("p", { class: "muted small" }, "No open proposals.")
+            : h("ul", { class: "list flat review-list", "aria-label": "Open proposals" }, ps.map((p) => proposalItem(id, p, load))),
+        ),
+      (e) => replace(list, errorBox(errorText(e), load)),
+    );
+  load();
+  if (g.isHost) {
+    card.append(
+      h("div", { class: "check" }, box, h("label", { for: "proposal-mode" }, "Proposal mode")),
+      h("p", { class: "muted small" }, "On: members' changes to this group don't apply at once. Each becomes a proposal that another member approves first. Off: only you change the group."),
+    );
+  }
+  return card;
+}
+
 function reviewCard(id: GroupId, isHost: boolean): HTMLElement {
   const title = h("h2", { id: "review-h" }, "CLAUDE.md changes");
   const body = h("div", null, spinner("Loading CLAUDE.md changes"));
@@ -783,6 +870,7 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
         g.lastError && h("div", { class: "error", role: "alert" }, g.lastError),
         hostNotice(g),
         reviewCard(g.id, g.isHost),
+        (g.isHost || g.proposalMode) && proposalsCard(g),
         pluginNotice(g.id),
         contentsCard(contents),
         jobsCard(g.id),

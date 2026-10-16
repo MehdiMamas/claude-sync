@@ -9,7 +9,7 @@
 // `?noConflicts` shows no rules clashing between groups; `?noPush` makes "Copy to another
 // group" find the other group read-only.
 // The first group has one job waiting for consent, one accepted job and a plugin warning.
-import { groupKey, type Backend, Clash, ClashSide, ClashSource, ClaudeMdReview, ClaudeMdShare, CommitInfo, CopyPreview, CopyRequest, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, Notification, PersonalStatus, ReviewItem } from "./api";
+import { groupKey, type Backend, Clash, ClashSide, ClashSource, ClaudeMdReview, ClaudeMdShare, CommitInfo, CopyPreview, CopyRequest, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, Notification, PersonalStatus, Proposal, ReviewItem } from "./api";
 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
@@ -33,6 +33,7 @@ const groups: GroupStatus[] = q.has("empty")
         reviewPending: 0,
         reviewClaudeMd: true,
         isHost: true,
+        proposalMode: q.has("proposals"),
         hostLock: q.has("noLock") ? "unavailable" : "on",
       },
       {
@@ -49,6 +50,7 @@ const groups: GroupStatus[] = q.has("empty")
         reviewPending: 0,
         reviewClaudeMd: true,
         isHost: false,
+        proposalMode: false,
         hostLock: null,
       },
     ];
@@ -324,6 +326,45 @@ const syncReview = () => {
 };
 syncReview();
 
+let proposals: Proposal[] = [
+  {
+    number: 12,
+    branch: "proposal/sara-dev-20261014",
+    author: "sara-dev",
+    title: "Add the review skill",
+    url: "https://github.com/mehdimamas/claude-sync-data/pull/12",
+    files: [{ path: "skills/review/SKILL.md", patch: "@@ -0,0 +1,3 @@\n+---\n+name: review\n+---" }],
+    approvals: ["yassine"],
+    approvedByMe: false,
+    mine: false,
+    needsUpdate: false,
+  },
+  {
+    number: 13,
+    branch: "proposal/mehdimamas-20261014",
+    author: "mehdimamas",
+    title: "Change CLAUDE.md",
+    url: "https://github.com/mehdimamas/claude-sync-data/pull/13",
+    files: [{ path: "CLAUDE.md", patch: "@@ -1,2 +1,3 @@\n # Rules\n-Be brief.\n+Be brief and exact." }],
+    approvals: [],
+    approvedByMe: false,
+    mine: true,
+    needsUpdate: false,
+  },
+  {
+    number: 9,
+    branch: "proposal/yassine-20261010",
+    author: "yassine",
+    title: "Update the scout agent",
+    url: "https://github.com/mehdimamas/claude-sync-data/pull/9",
+    files: [{ path: "agents/scout.md", patch: "@@ -1 +1 @@\n-model: haiku\n+model: sonnet" }],
+    approvals: [],
+    approvedByMe: false,
+    mine: false,
+    needsUpdate: true,
+  },
+];
+
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   claude_md_review: (a) => {
     if ((a.group as GroupId).owner === "acme") throw "acme/claude-team has no CLAUDE.md on this device to review";
@@ -345,6 +386,25 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     review.autoAccept = a.on as boolean;
     acceptWhenUnreviewed();
     return syncReview();
+  },
+  set_group_proposal_mode: (a) => {
+    const g = groups.find((x) => groupKey(x.id) === groupKey(a.group as GroupId));
+    if (g) g.proposalMode = a.on as boolean;
+    return null;
+  },
+  list_proposals: () => proposals,
+  approve_proposal: (a) => {
+    const p = proposals.find((x) => x.number === a.number);
+    if (!p) throw `proposal #${a.number} is not open`;
+    if (p.mine) throw "you cannot approve your own proposal; another member has to";
+    if (p.needsUpdate) throw `proposal #${p.number} needs an update before it can be merged`;
+    p.approvedByMe = true;
+    p.approvals = [...p.approvals, "mehdimamas"];
+    return null;
+  },
+  decline_proposal: (a) => {
+    proposals = proposals.filter((x) => x.number !== a.number);
+    return null;
   },
   use_group_claude_md: () => {
     pending = [];
@@ -387,6 +447,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
       reviewPending: 0,
       reviewClaudeMd: true,
       isHost: true,
+      proposalMode: false,
       hostLock: "on",
     };
     groups.push(g);

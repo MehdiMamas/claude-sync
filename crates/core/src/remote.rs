@@ -43,6 +43,31 @@ pub enum Collaborator {
     Invited { login: String, invitation_id: u64 },
 }
 
+/// A file a proposal changes, as a unified diff.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ProposalFile {
+    pub path: String,
+    pub patch: String,
+}
+
+/// An open proposal: a pull request from a `proposal/<login>-<time>` branch (§5b).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Proposal {
+    pub number: u64,
+    pub branch: String,
+    pub author: String,
+    pub title: String,
+    pub url: String,
+    pub files: Vec<ProposalFile>,
+    /// Logins whose latest review approves the proposal as it is now (never the author).
+    pub approvals: Vec<String>,
+    /// The branch no longer applies cleanly to the default branch.
+    pub needs_update: bool,
+}
+
+/// Prefix of every proposal branch.
+pub const PROPOSAL_PREFIX: &str = "proposal/";
+
 /// Name of the ruleset that keeps everyone but the host from pushing to a group.
 pub const HOST_LOCK_NAME: &str = "claude-sync: only the host updates the group";
 
@@ -91,6 +116,33 @@ pub trait RemoteRepo: Send + Sync {
     async fn ensure_host_lock(&self) -> crate::Result<()>;
     async fn remove_collaborator(&self, login: &str) -> crate::Result<()>;
     async fn cancel_invitation(&self, invitation_id: u64) -> crate::Result<()>;
+    /// Push `changes` on top of `parent` to a new branch `branch` and open a pull request
+    /// against the default branch. Needs no right to write to the default branch.
+    async fn propose(
+        &self,
+        _parent: &Head,
+        _changes: &Changes,
+        _branch: &str,
+        _title: &str,
+    ) -> crate::Result<u64> {
+        Err(Error::Invalid("proposals are not available".into()))
+    }
+    /// Open proposals (pull requests from `proposal/` branches), oldest first.
+    async fn proposals(&self) -> crate::Result<Vec<Proposal>> {
+        Err(Error::Invalid("proposals are not available".into()))
+    }
+    /// Review the proposal as approved (as the signed-in account).
+    async fn approve_proposal(&self, _number: u64) -> crate::Result<()> {
+        Err(Error::Invalid("proposals are not available".into()))
+    }
+    /// Squash-merge the proposal. Refused when it no longer applies cleanly.
+    async fn merge_proposal(&self, _number: u64) -> crate::Result<()> {
+        Err(Error::Invalid("proposals are not available".into()))
+    }
+    /// Close the proposal with a comment.
+    async fn decline_proposal(&self, _number: u64, _comment: &str) -> crate::Result<()> {
+        Err(Error::Invalid("proposals are not available".into()))
+    }
     /// Newest first.
     async fn recent_commits(&self, _limit: usize) -> crate::Result<Vec<CommitInfo>> {
         Ok(Vec::new())
@@ -271,6 +323,52 @@ impl GitHubRepo {
         let info: RepoInfo = self.gh.get(&self.path("")).await?;
         *self.info.lock().unwrap() = Some(info.clone());
         Ok(info)
+    }
+
+    /// Blobs, tree and commit for `changes` on top of `parent` (not empty), without moving
+    /// any branch.
+    async fn make_commit(
+        &self,
+        parent: &Head,
+        changes: &Changes,
+        message: &str,
+    ) -> crate::Result<Head> {
+        let mut entries = Vec::new();
+        for (path, content) in changes {
+            let sha = match content {
+                Some(bytes) => {
+                    let body = json!({ "content": b64().encode(bytes), "encoding": "base64" });
+                    let blob: Sha = self
+                        .gh
+                        .send(Method::POST, &self.path("/git/blobs"), &body)
+                        .await?;
+                    self.blobs
+                        .lock()
+                        .unwrap()
+                        .insert(blob.sha.clone(), bytes.clone());
+                    Value::String(blob.sha)
+                }
+                None => Value::Null,
+            };
+            entries.push(json!({ "path": path, "mode": "100644", "type": "blob", "sha": sha }));
+        }
+        let tree: Sha = self
+            .gh
+            .send(
+                Method::POST,
+                &self.path("/git/trees"),
+                &json!({ "base_tree": parent.tree, "tree": entries }),
+            )
+            .await?;
+        let body = json!({ "message": message, "tree": tree.sha, "parents": [parent.commit] });
+        let commit: Sha = self
+            .gh
+            .send(Method::POST, &self.path("/git/commits"), &body)
+            .await?;
+        Ok(Head {
+            commit: commit.sha,
+            tree: tree.sha,
+        })
     }
 
     fn remember(&self, head: &Head) {
@@ -488,40 +586,9 @@ impl RemoteRepo for GitHubRepo {
                 return Ok(parent);
             }
         }
-        let mut entries = Vec::new();
-        for (path, content) in &changes {
-            let sha = match content {
-                Some(bytes) => {
-                    let body = json!({ "content": b64().encode(bytes), "encoding": "base64" });
-                    let blob: Sha = self
-                        .gh
-                        .send(Method::POST, &self.path("/git/blobs"), &body)
-                        .await?;
-                    self.blobs
-                        .lock()
-                        .unwrap()
-                        .insert(blob.sha.clone(), bytes.clone());
-                    Value::String(blob.sha)
-                }
-                None => Value::Null,
-            };
-            entries.push(json!({ "path": path, "mode": "100644", "type": "blob", "sha": sha }));
-        }
-        let tree: Sha = self
-            .gh
-            .send(
-                Method::POST,
-                &self.path("/git/trees"),
-                &json!({ "base_tree": parent.tree, "tree": entries }),
-            )
-            .await?;
-        let body = json!({ "message": message, "tree": tree.sha, "parents": [parent.commit] });
-        let commit: Sha = self
-            .gh
-            .send(Method::POST, &self.path("/git/commits"), &body)
-            .await?;
+        let made = self.make_commit(&parent, &changes, message).await?;
         let branch = self.info().await?.default_branch;
-        let body = json!({ "sha": commit.sha, "force": false });
+        let body = json!({ "sha": made.commit, "force": false });
         match self
             .gh
             .call(
@@ -537,12 +604,155 @@ impl RemoteRepo for GitHubRepo {
             }) if is_ref_race(&message) => return Err(Error::PushRace),
             r => r?,
         }
-        let head = Head {
-            commit: commit.sha,
-            tree: tree.sha,
+        self.remember(&made);
+        Ok(made)
+    }
+
+    async fn propose(
+        &self,
+        parent: &Head,
+        changes: &Changes,
+        branch: &str,
+        title: &str,
+    ) -> crate::Result<u64> {
+        if parent.is_empty() || !branch.starts_with(PROPOSAL_PREFIX) {
+            return Err(Error::Invalid("not a proposal branch".into()));
+        }
+        let made = self.make_commit(parent, changes, title).await?;
+        let body = json!({ "ref": format!("refs/heads/{branch}"), "sha": made.commit });
+        self.gh
+            .call(Method::POST, &self.path("/git/refs"), Some(&body))
+            .await?;
+        let base = self.info().await?.default_branch;
+        let body = json!({
+            "title": title,
+            "head": branch,
+            "base": base,
+            "body": "Proposed with claude-sync. Approve or decline it in the claude-sync app.",
+        });
+        let pr: PullNumber = self
+            .gh
+            .send(Method::POST, &self.path("/pulls"), &body)
+            .await?;
+        Ok(pr.number)
+    }
+
+    async fn proposals(&self) -> crate::Result<Vec<Proposal>> {
+        let prs: Vec<PullItem> = self
+            .gh
+            .get_pages(&self.path("/pulls?state=open&per_page=100"))
+            .await?;
+        let mut out = Vec::new();
+        for pr in prs
+            .into_iter()
+            .filter(|p| p.head.r#ref.starts_with(PROPOSAL_PREFIX))
+        {
+            let author = pr.user.login.clone();
+            let files: Vec<PullFile> = self
+                .gh
+                .get_pages(&self.path(&format!("/pulls/{}/files?per_page=100", pr.number)))
+                .await?;
+            let reviews: Vec<Review> = self
+                .gh
+                .get_pages(&self.path(&format!("/pulls/{}/reviews?per_page=100", pr.number)))
+                .await?;
+            // The newest review of each person counts, and only on the current branch head.
+            let mut latest: Vec<(String, bool)> = Vec::new();
+            for r in reviews {
+                let (Some(user), Some(state)) = (r.user, r.state) else {
+                    continue;
+                };
+                if matches!(state.as_str(), "COMMENTED" | "PENDING") {
+                    continue;
+                }
+                let ok = state == "APPROVED" && r.commit_id.as_deref() == Some(&pr.head.sha);
+                latest.retain(|(l, _)| !l.eq_ignore_ascii_case(&user.login));
+                latest.push((user.login, ok));
+            }
+            // The list reply leaves `mergeable` out; the single pull has it.
+            let detail: PullItem = self
+                .gh
+                .get(&self.path(&format!("/pulls/{}", pr.number)))
+                .await?;
+            out.push(Proposal {
+                number: pr.number,
+                branch: pr.head.r#ref,
+                title: pr.title,
+                url: pr.html_url,
+                files: files
+                    .into_iter()
+                    .filter(|f| crate::group::is_allowlisted(&f.filename))
+                    .map(|f| ProposalFile {
+                        path: f.filename,
+                        patch: f.patch.unwrap_or_default(),
+                    })
+                    .collect(),
+                approvals: latest
+                    .into_iter()
+                    .filter(|(l, ok)| *ok && !l.eq_ignore_ascii_case(&author))
+                    .map(|(l, _)| l)
+                    .collect(),
+                needs_update: detail.mergeable == Some(false),
+                author,
+            });
+        }
+        Ok(out)
+    }
+
+    async fn approve_proposal(&self, number: u64) -> crate::Result<()> {
+        let body = json!({ "event": "APPROVE" });
+        self.gh
+            .call(
+                Method::POST,
+                &self.path(&format!("/pulls/{number}/reviews")),
+                Some(&body),
+            )
+            .await
+    }
+
+    async fn merge_proposal(&self, number: u64) -> crate::Result<()> {
+        let pr: PullItem = self.gh.get(&self.path(&format!("/pulls/{number}"))).await?;
+        let needs_update = || {
+            Error::Invalid(format!(
+                "proposal #{number} needs an update before it can be merged"
+            ))
         };
-        self.remember(&head);
-        Ok(head)
+        if pr.mergeable == Some(false) {
+            return Err(needs_update());
+        }
+        // Pinning the head means a push after the approval is never merged.
+        let body = json!({ "merge_method": "squash", "sha": pr.head.sha });
+        match self
+            .gh
+            .call(
+                Method::PUT,
+                &self.path(&format!("/pulls/{number}/merge")),
+                Some(&body),
+            )
+            .await
+        {
+            Err(Error::GitHub {
+                status: 405 | 409, ..
+            }) => Err(needs_update()),
+            r => r,
+        }
+    }
+
+    async fn decline_proposal(&self, number: u64, comment: &str) -> crate::Result<()> {
+        self.gh
+            .call(
+                Method::POST,
+                &self.path(&format!("/issues/{number}/comments")),
+                Some(&json!({ "body": comment })),
+            )
+            .await?;
+        self.gh
+            .call(
+                Method::PATCH,
+                &self.path(&format!("/pulls/{number}")),
+                Some(&json!({ "state": "closed" })),
+            )
+            .await
     }
 
     async fn is_private(&self) -> crate::Result<bool> {
@@ -746,6 +956,44 @@ struct ChangedFile {
 
 /// GitHub lists at most this many files of a commit.
 const MAX_COMMIT_FILES: usize = 300;
+
+#[derive(Deserialize)]
+struct PullNumber {
+    number: u64,
+}
+
+#[derive(Deserialize)]
+struct PullRef {
+    r#ref: String,
+    sha: String,
+}
+
+#[derive(Deserialize)]
+struct PullItem {
+    number: u64,
+    title: String,
+    #[serde(default)]
+    html_url: String,
+    head: PullRef,
+    user: Owner,
+    /// `None` while GitHub is still working it out, and in list replies.
+    #[serde(default)]
+    mergeable: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct PullFile {
+    filename: String,
+    #[serde(default)]
+    patch: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Review {
+    user: Option<Owner>,
+    state: Option<String>,
+    commit_id: Option<String>,
+}
 
 /// A commit as `/commits` and `/compare` list it.
 #[derive(Deserialize)]

@@ -13,7 +13,7 @@ use claude_sync_core::conflicts::{Conflict, Source};
 use claude_sync_core::contents::{self, GroupContents};
 use claude_sync_core::engine::{
     ClaudeMdReview, ClaudeMdShare, ClaudeMdShared, CommitInfo, Copied, CopyPreview, CopyRequest,
-    GroupStatus, RevertPlan, SyncReport,
+    GroupStatus, ProposalView, RevertPlan, SyncReport,
 };
 use claude_sync_core::github::token_store::Keychain;
 use claude_sync_core::github::Invitation;
@@ -432,6 +432,63 @@ pub async fn set_group_auto_accept_claude_md(
         .map_err(guard::logged("CLAUDE.md review"))?;
     background::refresh_status(&app);
     Ok(r)
+}
+
+/// The group setting "Proposal mode" (host only): members' changes become proposals.
+#[tauri::command]
+pub async fn set_group_proposal_mode(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    group: GroupId,
+    on: bool,
+) -> Res<()> {
+    let e = ctx.engine()?;
+    e.set_group_proposal_mode(&group, on)
+        .await
+        .map_err(guard::logged("proposal mode"))?;
+    background::refresh_status(&app);
+    Ok(())
+}
+
+/// The group's open proposals.
+#[tauri::command]
+pub async fn list_proposals(ctx: CtxState<'_>, group: GroupId) -> Res<Vec<ProposalView>> {
+    let e = ctx.engine()?;
+    e.proposals(&group)
+        .await
+        .map_err(guard::logged("proposals"))
+}
+
+/// Approve a proposal (merges it once enough members have).
+#[tauri::command]
+pub async fn approve_proposal(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    group: GroupId,
+    number: u64,
+) -> Res<()> {
+    let e = ctx.engine()?;
+    e.approve_proposal(&group, number)
+        .await
+        .map_err(guard::logged("approve proposal"))?;
+    background::refresh_status(&app);
+    Ok(())
+}
+
+/// Decline a proposal (closes it).
+#[tauri::command]
+pub async fn decline_proposal(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    group: GroupId,
+    number: u64,
+) -> Res<()> {
+    let e = ctx.engine()?;
+    e.decline_proposal(&group, number)
+        .await
+        .map_err(guard::logged("decline proposal"))?;
+    background::refresh_status(&app);
+    Ok(())
 }
 
 /// Make the copy the group's CLAUDE.md again, forgetting declined changes.
