@@ -4,6 +4,7 @@ import { collapse, groupByDay, parseCommit, timeLabel, type Activity, type FeedC
 import { avatar } from "../avatar";
 import { errorBox, h, replace, spinner, toast } from "../dom";
 import { store } from "../store";
+import { explainButton } from "./helper";
 
 /** Entries shown at first and added per "Show more". */
 const PAGE = 8;
@@ -223,6 +224,13 @@ export function historyCard(id: GroupId, contents: Promise<GroupContents>): HTML
     "section",
     { class: "card", "aria-labelledby": "history-h" },
     h("h2", { id: "history-h" }, "Recent changes"),
+    explainButton("activity", "Summarise", () =>
+      commits
+        .filter((c) => !store.auth?.login || c.author.toLowerCase() !== store.auth.login.toLowerCase())
+        .slice(0, 30)
+        .map((c) => `${c.author}: ${c.message}`)
+        .join("\n\n"),
+    ),
     body,
   );
 }

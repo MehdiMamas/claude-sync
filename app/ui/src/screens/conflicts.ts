@@ -6,6 +6,7 @@ import { api, errorText, type Clash, type ClashSide, type ClashSource, type Copy
 import { clashesOf, clashTitle, compose, isGroup, keys, sameGroup, sections, warning } from "../copy";
 import { busy, errorBox, h, replace, spinner, toast } from "../dom";
 import { store } from "../store";
+import { explainButton } from "./helper";
 
 const keepLabel = (s: ClashSide) => (s.source.kind === "own" ? "Keep yours" : `Keep ${s.name}'s`);
 
@@ -49,6 +50,10 @@ function sideRow(s: ClashSide, tag?: string): HTMLElement {
   );
 }
 
+function clashText(c: Clash): string {
+  return `${c.kind}${c.pointer ? ` ${c.pointer}` : ""}\n${c.a.name}: ${c.a.text}\n${c.b.name}: ${c.b.text}`;
+}
+
 function clashItem(c: Clash, applies: boolean): HTMLElement {
   const done = (msg: string) => {
     toast(msg);
@@ -80,6 +85,7 @@ function clashItem(c: Clash, applies: boolean): HTMLElement {
       sideRow(c.a, applies ? "applies now" : undefined),
       sideRow(c.b, applies ? undefined : "applies now"),
       h("div", { class: "actions" }, keep(a, b, c.a, keepLabel(c.a)), keep(b, a, c.b, `Use ${c.b.name}'s`)),
+      explainButton("collision", "Explain", () => clashText(c)),
       h("p", { class: "muted small" }, "The other group's value stays in that group; it is just not applied on this device."),
     );
   }
@@ -120,6 +126,7 @@ function clashItem(c: Clash, applies: boolean): HTMLElement {
       { class: "muted small" },
       c.kind === "duplicate" ? "Claude reads it twice. Keep one: the other is left out on this device only." : "Claude gets both. Keep one: the other is left out on this device only.",
     ),
+    explainButton("collision", "Explain", () => clashText(c)),
     editor,
   );
 }

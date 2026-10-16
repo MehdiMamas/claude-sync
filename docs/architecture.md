@@ -416,3 +416,13 @@ Placing a group's marketplace (§7) and its `enabledPlugins` (§8) is not enough
 3. `claude plugin update <name>@<mp>` when the plugin's marketplace entry or declared version changed.
 
 Each command has a 2-minute timeout and no console window; its output goes to the app log, redacted (§9). Nothing is uninstalled, and `enabledPlugins` handling stays as in §8. `-y` is never passed: a plugin that asks for confirmation is reported as needing it. Failures become warnings on the group screen ("couldn't install X: reason") with a Retry, and never fail the sync. Without `claude` the screen says "Claude Code not found" and the next sync tries again. State is in `plugins.json`; the CLI sits behind the `PluginCli` trait, and tests use a fake.
+
+## 19. Claude helper (optional)
+
+Explains a collision (§7), a pending CLAUDE.md change (§7a) and incoming group activity, using the user's own Anthropic API key. Off until a key is saved in Settings → "Claude helper (optional)".
+
+- **Key:** stored only in the OS keychain, service `claude-sync`, account `@anthropic-key` (the GitHub token uses `@current` and the login). Never in `state.json`, never logged; the UI shows its last four characters. "Test key" sends one 5-token request.
+- **On demand only:** "Explain" (collisions, CLAUDE.md review) and "Summarise" (activity feed) call `POST https://api.anthropic.com/v1/messages` (`x-api-key`, `anthropic-version: 2023-06-01`, model `claude-haiku-5-5`, `max_tokens` 600) when clicked. The buttons are hidden without a key. Each click costs the user money, so nothing runs automatically.
+- **Before sending:** the §9 secret scan runs on the text; a hit refuses with a message that names the pattern, not the text. Input over 40 KB is cut with a note.
+- **Errors in plain words:** 401/403 key rejected, 429 too many requests or no credit, 529 overloaded, no answer means offline.
+- **Code:** `crates/core/src/helper.rs` (an `Http` trait so tests use a fake; the keychain goes through `token_store::Store`), commands `helper_*` in `app/src-tauri/src/commands.rs`, `app/ui/src/screens/helper.ts`.

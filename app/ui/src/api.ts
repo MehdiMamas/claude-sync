@@ -221,6 +221,12 @@ export interface Settings {
   /** Show desktop notifications. The history is kept either way. */
   desktopNotifications: boolean;
 }
+export type HelperTask = "collision" | "claudeMdReview" | "activity";
+export interface HelperStatus {
+  saved: boolean;
+  /** Last four characters of the saved key. */
+  hint: string;
+}
 export type NotificationKind = "update" | "group" | "plugins" | "local-edit" | "job" | "personal" | "other";
 /** One entry of the notification history (crates/core/src/notifications.rs). */
 export interface Notification {
@@ -452,6 +458,11 @@ export const api = {
   copyToGroup: (from: GroupId, to: GroupId, request: CopyRequest) => call<Copied>("copy_to_group", { from, to, request }),
   getSettings: () => call<Settings>("get_settings"),
   setSettings: (settings: Partial<Settings>) => call<Settings>("set_settings", { settings }),
+  helperStatus: () => call<HelperStatus>("helper_status"),
+  helperSaveKey: (key: string) => call<HelperStatus>("helper_save_key", { key }),
+  helperRemoveKey: () => call<HelperStatus>("helper_remove_key"),
+  helperTestKey: () => call<void>("helper_test_key"),
+  helperExplain: (task: HelperTask, text: string) => call<string>("helper_explain", { task, text }),
   notifications: () => call<Notification[]>("notifications"),
   markNotificationRead: (id: number) => call<void>("mark_notification_read", { id }),
   markAllNotificationsRead: () => call<void>("mark_all_notifications_read"),

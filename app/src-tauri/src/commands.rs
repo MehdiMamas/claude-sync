@@ -15,7 +15,9 @@ use claude_sync_core::engine::{
     ClaudeMdReview, ClaudeMdShare, ClaudeMdShared, CommitInfo, Copied, CopyPreview, CopyRequest,
     GroupStatus, SyncReport,
 };
+use claude_sync_core::github::token_store::Keychain;
 use claude_sync_core::github::Invitation;
+use claude_sync_core::helper;
 use claude_sync_core::jobs::JobsOverview;
 use claude_sync_core::notifications::{self, Notification};
 use claude_sync_core::watch::{EditAction, LocalEdit};
@@ -796,6 +798,63 @@ pub fn plugin_warnings(ctx: CtxState, group: GroupId) -> Res<Vec<String>> {
 #[tauri::command]
 pub async fn retry_plugins(app: AppHandle, group: GroupId) -> Res<Vec<String>> {
     app_jobs::retry_plugins(app, group).await
+}
+
+/// Whether an Anthropic API key is saved for the Claude helper, and its last four characters.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HelperStatus {
+    saved: bool,
+    hint: String,
+}
+
+fn helper_status_now() -> Res<HelperStatus> {
+    let key = helper::load_key(&Keychain).map_err(guard::logged("helper key"))?;
+    Ok(HelperStatus {
+        saved: key.is_some(),
+        hint: key.as_deref().map(helper::key_hint).unwrap_or_default(),
+    })
+}
+
+fn helper_key() -> Res<String> {
+    helper::load_key(&Keychain)
+        .map_err(guard::logged("helper key"))?
+        .ok_or_else(|| "Add your Anthropic API key in Settings first.".to_string())
+}
+
+#[tauri::command]
+pub fn helper_status() -> Res<HelperStatus> {
+    helper_status_now()
+}
+
+#[tauri::command]
+pub fn helper_save_key(key: String) -> Res<HelperStatus> {
+    helper::save_key(&Keychain, &key).map_err(guard::logged("helper key"))?;
+    helper_status_now()
+}
+
+#[tauri::command]
+pub fn helper_remove_key() -> Res<HelperStatus> {
+    helper::remove_key(&Keychain).map_err(guard::logged("helper key"))?;
+    helper_status_now()
+}
+
+/// Ask Anthropic whether the saved key works.
+#[tauri::command]
+pub async fn helper_test_key() -> Res<()> {
+    let key = helper_key()?;
+    helper::test_key(&helper::ReqwestHttp, &key)
+        .await
+        .map_err(guard::logged("helper test"))
+}
+
+/// Explain or summarise `text` with the user's key. On demand only.
+#[tauri::command]
+pub async fn helper_explain(task: helper::Task, text: String) -> Res<String> {
+    let key = helper_key()?;
+    helper::explain(&helper::ReqwestHttp, &key, task, &text)
+        .await
+        .map_err(guard::logged("helper explain"))
 }
 
 #[cfg(test)]

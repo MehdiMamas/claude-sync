@@ -23,6 +23,7 @@ import { countReview, go, onRefresh, store } from "../store";
 import { claudeMdCard } from "./claude-md";
 import { conflictsCard, copyCard } from "./conflicts";
 import { historyCard } from "./history";
+import { explainButton } from "./helper";
 
 function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
   const you = store.auth?.login?.toLowerCase();
@@ -524,6 +525,7 @@ function reviewItem(id: GroupId, item: ReviewItem, done: () => void): HTMLElemen
       { class: `diff ${item.kind}`, "aria-label": what },
       item.lines.map((l) => h("span", { class: "diff-line" }, `${sign} ${l}`)),
     ),
+    explainButton("claudeMdReview", "Explain", () => `${item.message}\n${item.lines.map((l) => `${sign} ${l}`).join("\n")}`),
   );
 }
 
