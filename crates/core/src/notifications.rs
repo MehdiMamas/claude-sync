@@ -104,6 +104,15 @@ fn update<T>(paths: &Paths, change: impl FnOnce(&mut File) -> T) -> crate::Resul
     Ok(out)
 }
 
+/// The group moved to a new `owner/repo`: its history entries follow.
+pub fn rename_group(paths: &Paths, old: &GroupId, new: &GroupId) -> crate::Result<()> {
+    update(paths, |f| {
+        for n in f.items.iter_mut().filter(|n| n.group.as_ref() == Some(old)) {
+            n.group = Some(new.clone());
+        }
+    })
+}
+
 /// Add a notification (unread, now) and return it.
 pub fn record(
     paths: &Paths,

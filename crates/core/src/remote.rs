@@ -76,6 +76,14 @@ pub trait RemoteRepo: Send + Sync {
         Ok(true)
     }
     async fn owner_login(&self) -> crate::Result<String>;
+    /// The repo's name right now. It differs from `id()` after a rename or transfer, which
+    /// GitHub answers with a redirect from the old name (§10).
+    async fn current_id(&self) -> crate::Result<crate::GroupId> {
+        Ok(self.id().clone())
+    }
+    /// Ask GitHub to transfer the repo to `new_owner`. The new owner has to accept by email
+    /// before anything changes.
+    async fn transfer(&self, new_owner: &str) -> crate::Result<()>;
     async fn collaborators(&self) -> crate::Result<Vec<Collaborator>>;
     async fn invite(&self, login: &str) -> crate::Result<()>;
     /// Make sure GitHub refuses pushes to the default branch from everyone but repo admins
@@ -170,6 +178,9 @@ pub struct GitHubRepo {
 
 #[derive(Debug, Clone, Deserialize)]
 struct RepoInfo {
+    /// `owner/repo` as GitHub names it now.
+    #[serde(default)]
+    full_name: Option<String>,
     default_branch: String,
     private: bool,
     owner: Owner,
@@ -531,6 +542,28 @@ impl RemoteRepo for GitHubRepo {
 
     async fn owner_login(&self) -> crate::Result<String> {
         Ok(self.info().await?.owner.login)
+    }
+
+    async fn current_id(&self) -> crate::Result<GroupId> {
+        // Never from the cache: it is the one thing that changes under the old name. The GET
+        // follows GitHub's redirect for a renamed or transferred repo.
+        let info: RepoInfo = self.gh.get(&self.path("")).await?;
+        let id = info
+            .full_name
+            .as_deref()
+            .and_then(GroupId::parse)
+            .unwrap_or_else(|| self.id.clone());
+        *self.info.lock().unwrap() = Some(info);
+        Ok(id)
+    }
+
+    async fn transfer(&self, new_owner: &str) -> crate::Result<()> {
+        // POST is not redirected, so this always goes to the name the app holds; the engine
+        // resolves the current name first.
+        let body = json!({ "new_owner": new_owner });
+        self.gh
+            .call(Method::POST, &self.path("/transfer"), Some(&body))
+            .await
     }
 
     async fn collaborators(&self) -> crate::Result<Vec<Collaborator>> {

@@ -188,6 +188,22 @@ pub async fn add_member(
 }
 
 #[tauri::command]
+pub async fn transfer_group(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    group: GroupId,
+    login: String,
+) -> Res<()> {
+    let login = valid_login(&login)?;
+    let e = ctx.engine()?;
+    e.transfer_group(&group, login)
+        .await
+        .map_err(guard::logged("transfer group"))?;
+    background::sync_soon(&app, true);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn remove_member(
     app: AppHandle,
     ctx: CtxState<'_>,

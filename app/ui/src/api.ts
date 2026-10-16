@@ -120,6 +120,8 @@ export interface GroupSyncReport {
 }
 export interface SyncReport {
   groups: GroupSyncReport[];
+  /** Groups whose repo was renamed or transferred; the app follows them to the new name. */
+  moved: { from: GroupId; to: GroupId }[];
 }
 /** The user's own CLAUDE.md text to share with a group, as edited in the preview. */
 export interface ClaudeMdShare {
@@ -422,6 +424,7 @@ export const api = {
   discover: () => call<GroupId[]>("discover"),
   join: (group: GroupId) => call<GroupStatus>("join", { group }),
   addMember: (group: GroupId, login: string) => call<void>("add_member", { group, login }),
+  transferGroup: (group: GroupId, login: string) => call<void>("transfer_group", { group, login }),
   removeMember: (group: GroupId, login: string) => call<void>("remove_member", { group, login }),
   reorderGroups: (order: GroupId[]) => call<SyncReport>("reorder_groups", { order }),
   leaveGroup: (group: GroupId) => call<void>("leave_group", { group }),

@@ -86,6 +86,15 @@ pub struct ConflictInfo {
 #[serde(rename_all = "camelCase")]
 pub struct SyncReport {
     pub groups: Vec<GroupSyncReport>,
+    /// Groups whose repo was renamed or transferred; everything local follows to the new name.
+    pub moved: Vec<MovedGroup>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MovedGroup {
+    pub from: GroupId,
+    pub to: GroupId,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -351,6 +360,7 @@ impl Engine {
     pub async fn sync_all(&self) -> crate::Result<SyncReport> {
         let _busy = self.busy.lock().await;
         let mut out = SyncReport::default();
+        out.moved = self.follow_moves().await;
         for id in AppState::load(&self.paths)?.groups {
             out.groups.push(self.sync_group(&id, None).await.0);
         }
@@ -361,11 +371,12 @@ impl Engine {
     /// The 60 s loop calls this.
     pub async fn sync_if_changed(&self) -> crate::Result<SyncReport> {
         let _busy = self.busy.lock().await;
-        let state = AppState::load(&self.paths)?;
-        let mut out = SyncReport::default();
-        if state.paused {
-            return Ok(out);
+        if AppState::load(&self.paths)?.paused {
+            return Ok(SyncReport::default());
         }
+        let mut out = SyncReport::default();
+        out.moved = self.follow_moves().await;
+        let state = AppState::load(&self.paths)?;
         for id in &state.groups {
             let head = match self.remotes.open(id).head_if_changed().await {
                 Ok(Some(head)) => Some(head),
@@ -384,6 +395,66 @@ impl Engine {
             out.groups.push(self.sync_group(id, head).await.0);
         }
         Ok(out)
+    }
+
+    /// Ask GitHub for each joined repo's current name; a renamed or transferred repo moves every
+    /// local trace to the new id (`rename::migrate`, resumable). Errors (offline, no access) are
+    /// left to the sync itself to report. The caller holds the busy lock.
+    async fn follow_moves(&self) -> Vec<MovedGroup> {
+        let mut moved = Vec::new();
+        let Ok(state) = AppState::load(&self.paths) else {
+            return moved;
+        };
+        for id in state.groups {
+            let Ok(now) = self.remotes.open(&id).current_id().await else {
+                continue;
+            };
+            if now.to_string().eq_ignore_ascii_case(&id.to_string()) {
+                continue;
+            }
+            match crate::rename::migrate(&self.paths, &id, &now) {
+                Ok(()) => moved.push(MovedGroup { from: id, to: now }),
+                Err(e) => tracing::warn!("following {id} to {now} failed: {e}"),
+            }
+        }
+        moved
+    }
+
+    /// Hand the group repo to another member (host only). GitHub emails the new owner, who must
+    /// accept; until then nothing changes. Afterwards this user is a member, and every app follows
+    /// the new name on its next sync.
+    pub async fn transfer_group(&self, id: &GroupId, new_owner: &str) -> crate::Result<()> {
+        if !valid_login(new_owner) {
+            return Err(Error::Invalid(format!(
+                "{new_owner:?} is not a GitHub login"
+            )));
+        }
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        self.require_host(id).await?;
+        if new_owner.eq_ignore_ascii_case(&self.login) {
+            return Err(Error::Invalid(format!("you already host {id}")));
+        }
+        let remote = self.remotes.open(id);
+        let head = remote.head().await?;
+        let files = remote.files_at(&head.commit).await?;
+        let bytes = files
+            .get(group::FILE)
+            .ok_or_else(|| Error::Invalid(format!("{id} has no {}", group::FILE)))?;
+        let gf = GroupFile::parse(bytes)?;
+        if !gf.has_member(new_owner) {
+            return Err(Error::Invalid(format!(
+                "{new_owner} is not a member of {id}; add them first"
+            )));
+        }
+        // The former host stays in `members`, so the new host's reconcile keeps their access.
+        if !gf.has_member(&self.login) {
+            self.edit_group_file(id, "keep former host as member", |gf| {
+                Ok(gf.add_member(&self.login))
+            })
+            .await?;
+        }
+        remote.transfer(new_owner).await
     }
 
     /// Put the joined groups in `order` (first wins collisions, §7) and apply every group again
@@ -2582,6 +2653,92 @@ mod tests {
             .await
             .is_err());
         assert_eq!(AppState::load(&bo.engine.paths).unwrap().groups, [b, a]);
+    }
+
+    #[tokio::test]
+    async fn a_renamed_repo_is_followed_everywhere() {
+        let (world, a, _, bo) = joined().await;
+        let (b, _) = group_repo(&world, &["cy", "bo"]);
+        bo.engine.join(&b).await.unwrap();
+        let new = GroupId::new("ana", "renamed");
+        world.rename(&a, &new);
+
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(report.moved.len(), 1);
+        assert_eq!((&report.moved[0].from, &report.moved[0].to), (&a, &new));
+        // The order is kept: the renamed group stays first.
+        assert_eq!(
+            AppState::load(&bo.engine.paths).unwrap().groups,
+            [new.clone(), b.clone()]
+        );
+        assert!(!bo.engine.paths.group_dir(&a).exists());
+        assert!(bo.engine.paths.group_dir(&new).join("status.json").exists());
+        assert_eq!(
+            report
+                .groups
+                .iter()
+                .map(|g| g.id.clone())
+                .collect::<Vec<_>>(),
+            [new.clone(), b.clone()]
+        );
+
+        // Already moved: nothing to do.
+        assert!(bo.engine.sync_all().await.unwrap().moved.is_empty());
+        assert!(bo.engine.sync_if_changed().await.unwrap().moved.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_move_finishes_on_the_next_run() {
+        let (world, a, _, bo) = joined().await;
+        let new = GroupId::new("ana", "renamed");
+        world.rename(&a, &new);
+        // The folder moved, then the app stopped before saving state.json.
+        std::fs::rename(
+            bo.engine.paths.group_dir(&a),
+            bo.engine.paths.group_dir(&new),
+        )
+        .unwrap();
+
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(report.moved.len(), 1);
+        assert_eq!(
+            AppState::load(&bo.engine.paths).unwrap().groups,
+            [new.clone()]
+        );
+        assert!(bo.engine.paths.group_dir(&new).exists());
+        assert!(bo
+            .engine
+            .group_status(&new)
+            .members
+            .contains(&"bo".to_string()));
+    }
+
+    #[tokio::test]
+    async fn transferring_the_group_flips_the_host() {
+        let (world, id, repo, bo) = joined_host().await;
+        assert!(bo.engine.group_status(&id).is_host);
+
+        // Only members can receive it; a stranger and yourself are refused.
+        assert!(bo.engine.transfer_group(&id, "zed").await.is_err());
+        assert!(bo.engine.transfer_group(&id, "bo").await.is_err());
+        assert!(repo.transfer_requests().is_empty());
+
+        bo.engine.transfer_group(&id, "ana").await.unwrap();
+        assert_eq!(repo.transfer_requests(), ["ana"]);
+        // Nothing changes until ana accepts.
+        assert!(bo.engine.sync_all().await.unwrap().moved.is_empty());
+
+        let new = GroupId::new("ana", "handed-over");
+        world.rename(&id, &new);
+        let report = bo.engine.sync_all().await.unwrap();
+        assert_eq!(report.moved.len(), 1);
+        let status = bo.engine.group_status(&new);
+        assert!(!status.is_host);
+        assert_eq!(status.host, "ana");
+        // The former host stays a member, so ana's reconcile keeps them.
+        assert!(status.members.contains(&"bo".to_string()));
+        // A member can't transfer.
+        assert!(bo.engine.transfer_group(&new, "bo").await.is_err());
     }
 
     #[tokio::test]

@@ -18,6 +18,7 @@ pub mod paths;
 pub mod personal;
 pub mod plugin_install;
 pub mod remote;
+pub mod rename;
 pub mod review;
 pub mod secrets;
 pub mod settings;
