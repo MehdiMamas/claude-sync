@@ -34,6 +34,10 @@ struct Failure {
 }
 
 struct State {
+    /// The repo's name now; differs from a handle's `id` after `FakeGitHub::rename`.
+    full_name: GroupId,
+    /// Owners a transfer was asked for (GitHub waits for them to accept).
+    transfers: Vec<String>,
     commits: Vec<FakeCommit>,
     owner: String,
     private: bool,
@@ -121,9 +125,12 @@ impl FakeRepo {
     /// An empty private repo owned by `id.owner`, with the group topic.
     pub fn new(id: GroupId) -> Self {
         let owner = id.owner.clone();
+        let full_name = id.clone();
         Self {
             id,
             state: Arc::new(Mutex::new(State {
+                full_name,
+                transfers: Vec::new(),
                 commits: Vec::new(),
                 owner,
                 private: true,
@@ -235,6 +242,11 @@ impl FakeRepo {
 
     pub fn topics(&self) -> Vec<String> {
         self.lock().topics.clone()
+    }
+
+    /// Owners `transfer` was asked for, oldest first.
+    pub fn transfer_requests(&self) -> Vec<String> {
+        self.lock().transfers.clone()
     }
 
     pub fn owner(&self) -> String {
@@ -450,6 +462,17 @@ impl RemoteRepo for FakeRepo {
         Ok(self.enter("owner_login")?.owner.clone())
     }
 
+    async fn current_id(&self) -> crate::Result<GroupId> {
+        Ok(self.enter("current_id")?.full_name.clone())
+    }
+
+    async fn transfer(&self, new_owner: &str) -> crate::Result<()> {
+        self.enter_as_owner("transfer")?
+            .transfers
+            .push(new_owner.into());
+        Ok(())
+    }
+
     async fn collaborators(&self) -> crate::Result<Vec<Collaborator>> {
         let st = self.enter_as_owner("collaborators")?;
         let members = std::iter::once(&st.owner)
@@ -607,6 +630,28 @@ impl FakeGitHub {
             ..repo.clone()
         };
         self.repos.lock().unwrap().insert(repo.id.clone(), god);
+    }
+
+    /// The repo is now called `new` (a rename or a finished transfer). The old name keeps
+    /// reaching it, like GitHub's redirect. A new owner takes over as the host; the old one
+    /// stays a collaborator, as GitHub keeps the former owner of a transferred repo.
+    pub fn rename(&self, old: &GroupId, new: &GroupId) {
+        let repo = self.repo(old).expect("no such repo");
+        {
+            let mut st = repo.lock();
+            st.full_name = new.clone();
+            if !st.owner.eq_ignore_ascii_case(&new.owner) {
+                let before = std::mem::replace(&mut st.owner, new.owner.clone());
+                st.collaborators
+                    .retain(|c| !c.eq_ignore_ascii_case(&new.owner));
+                st.collaborators.push(before);
+            }
+        }
+        let alias = FakeRepo {
+            id: new.clone(),
+            ..repo
+        };
+        self.repos.lock().unwrap().insert(new.clone(), alias);
     }
 
     /// The test's (all-powerful) handle on a repo.

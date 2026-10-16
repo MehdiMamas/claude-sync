@@ -102,6 +102,15 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
                 .filter_map(|g| g.error.as_ref().map(|e| format!("{}: {e}", g.id)))
                 .collect();
             let groups = engine.groups().await.unwrap_or_default();
+            for m in &report.moved {
+                notify::show(
+                    app,
+                    Kind::Group,
+                    Some(&m.to),
+                    "Group moved",
+                    &format!("{} moved to {}; claude-sync follows it.", m.from, m.to),
+                );
+            }
             for g in &report.groups {
                 for c in &g.conflicts {
                     notify::show(

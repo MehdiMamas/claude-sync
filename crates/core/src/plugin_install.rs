@@ -200,6 +200,16 @@ pub fn warnings(paths: &Paths, group: &GroupId) -> crate::Result<Vec<String>> {
         .unwrap_or_default())
 }
 
+/// The group moved to a new `owner/repo`: keep its install record under the new name.
+pub fn rename_group(paths: &Paths, old: &GroupId, new: &GroupId) -> crate::Result<()> {
+    let mut st = State::load(paths)?;
+    if let Some(g) = st.groups.remove(&old.to_string()) {
+        st.groups.entry(new.to_string()).or_insert(g);
+        st.save(paths)?;
+    }
+    Ok(())
+}
+
 /// Forget a group that was left (its plugins stay installed).
 pub fn forget(paths: &Paths, group: &GroupId) -> crate::Result<()> {
     let mut st = State::load(paths)?;

@@ -89,6 +89,50 @@ function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
   );
 }
 
+/** Host only: hand the group repo to another member. GitHub asks them to accept first. */
+function transferCard(g: GroupStatus, reload: () => void): HTMLElement | false {
+  if (!g.isHost) return false;
+  const others = g.members.filter((m) => m.toLowerCase() !== g.host.toLowerCase());
+  if (others.length === 0) return false;
+  const pick = h("select", { id: "t-member" }, others.map((m) => h("option", { value: m }, m)));
+  const next = h("button", { type: "button" }, "Transfer to a member");
+  const confirm = h("div", { class: "notice info", role: "note", hidden: true });
+  const send = h("button", { class: "danger", type: "button" }, "Send transfer request");
+  const cancel = h("button", { type: "button" }, "Cancel");
+  next.addEventListener("click", () => {
+    const who = pick.value;
+    replace(
+      confirm,
+      h(
+        "div",
+        { class: "notice-text" },
+        `GitHub emails ${who} to accept. Until they accept, nothing changes. After that ${who} hosts the group and you become a member; every app follows the new name on its own.`,
+      ),
+      send,
+      cancel,
+    );
+    confirm.hidden = false;
+  });
+  cancel.addEventListener("click", () => {
+    confirm.hidden = true;
+  });
+  send.addEventListener("click", () =>
+    busy(send, "Sending…", async () => {
+      await api.transferGroup(g.id, pick.value);
+      toast(`Asked ${pick.value} to accept the group. Nothing changes until they do.`);
+      confirm.hidden = true;
+      reload();
+    }),
+  );
+  return h(
+    "section",
+    { class: "card", "aria-labelledby": "transfer-h" },
+    h("h2", { id: "transfer-h" }, "Hand over the group"),
+    h("div", { class: "inline-form" }, h("label", { for: "t-member", class: "sr-only" }, "Member to transfer to"), pick, next),
+    confirm,
+  );
+}
+
 /** Who may change the group, and what that means for this user. */
 function hostNotice(g: GroupStatus): HTMLElement | false {
   if (!g.isHost) return h("div", { class: "notice info", role: "note" }, h("div", { class: "notice-text" }, `Only ${g.host} can change this group. Your edits stay on this machine.`));
@@ -745,6 +789,7 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
         problemsCard(g),
         conflictsCard(g.id),
         membersCard(g, load),
+        transferCard(g, load),
         g.isHost && shareCard(g.id),
         g.isHost && claudeMdCard(g.id),
         copyCard(g, groups),

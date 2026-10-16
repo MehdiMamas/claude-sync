@@ -613,6 +613,41 @@ pub fn excluded_paths(paths: &Paths, group: &GroupId) -> crate::Result<BTreeSet<
     Ok(out)
 }
 
+/// The group moved to a new `owner/repo` (a rename or transfer, §10): re-key everything the
+/// manifest and `settings-owned.json` hold for it, and point the import line at the moved
+/// copy. Safe to run again. The group's folder must already be at its new place.
+pub fn rename_group(paths: &Paths, old: &GroupId, new: &GroupId) -> crate::Result<()> {
+    let mut m = Manifest::load(paths)?;
+    let before = m.clone();
+    let (okey, nkey) = (old.to_string(), new.to_string());
+    if let Some(e) = m.groups.remove(&okey) {
+        m.groups.entry(nkey.clone()).or_insert(e);
+    }
+    for f in m.files.values_mut().filter(|f| f.group == *old) {
+        f.group = new.clone();
+    }
+    for mp in m.marketplaces.values_mut().filter(|mp| mp.group == *old) {
+        mp.group = new.clone();
+    }
+    for g in m.order.iter_mut().filter(|g| **g == *old) {
+        *g = new.clone();
+    }
+    let mut seen = BTreeSet::new();
+    m.order.retain(|g| seen.insert(g.clone()));
+    if m != before {
+        let mut backups = Backups::new(paths);
+        let mut report = ApplyReport::default();
+        update_claude_md_block(paths, &mut m, &mut backups, &mut report)?;
+        m.save(paths)?;
+    }
+    let mut owned = load_owned(paths)?;
+    if let Some(o) = owned.remove(&okey) {
+        owned.entry(nkey).or_insert(o);
+        save_owned(paths, &owned)?;
+    }
+    Ok(())
+}
+
 /// Remove everything this group put on the machine (files, import line, owned settings), with a backup.
 /// Files the user edited are backed up and left in place (reported in `kept`); settings
 /// values the user changed stay and become the user's.

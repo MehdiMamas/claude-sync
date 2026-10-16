@@ -139,6 +139,7 @@ fn main() {
             commands::join,
             commands::add_member,
             commands::remove_member,
+            commands::transfer_group,
             commands::leave_group,
             commands::reorder_groups,
             commands::local_edits,
