@@ -359,8 +359,10 @@ impl Engine {
     /// if this user is the host, detect lost access. Errors per group go in the report, not `Err`.
     pub async fn sync_all(&self) -> crate::Result<SyncReport> {
         let _busy = self.busy.lock().await;
-        let mut out = SyncReport::default();
-        out.moved = self.follow_moves().await;
+        let mut out = SyncReport {
+            moved: self.follow_moves().await,
+            ..SyncReport::default()
+        };
         for id in AppState::load(&self.paths)?.groups {
             out.groups.push(self.sync_group(&id, None).await.0);
         }
@@ -374,8 +376,10 @@ impl Engine {
         if AppState::load(&self.paths)?.paused {
             return Ok(SyncReport::default());
         }
-        let mut out = SyncReport::default();
-        out.moved = self.follow_moves().await;
+        let mut out = SyncReport {
+            moved: self.follow_moves().await,
+            ..SyncReport::default()
+        };
         let state = AppState::load(&self.paths)?;
         for id in &state.groups {
             let head = match self.remotes.open(id).head_if_changed().await {
@@ -2703,7 +2707,7 @@ mod tests {
         assert_eq!(report.moved.len(), 1);
         assert_eq!(
             AppState::load(&bo.engine.paths).unwrap().groups,
-            [new.clone()]
+            std::slice::from_ref(&new)
         );
         assert!(bo.engine.paths.group_dir(&new).exists());
         assert!(bo
