@@ -7,11 +7,13 @@
 //! - `devices.json`: `{"devices": [{"id", "name", "os", "lastSeenUnix"}]}`
 //! - `CLAUDE.md`: the user's own text of `~/.claude/CLAUDE.md`
 //! - `memory/<key>/**`: `~/.claude/projects/<folder>/memory/**`, keyed by `keys::key_for`
+//! - `state/**`: `~/.claude/personal-state/**`, small state that mods save (see `state`)
 //!
 //! Local state lives in `<state_dir>/personal/` (`state.json`, `base/`).
 pub(crate) mod claude_md;
 pub mod keys;
 mod lines;
+mod state;
 #[cfg(test)]
 mod tests;
 
@@ -59,11 +61,14 @@ pub fn is_personal_path(path: &str) -> bool {
                 && keys::is_key(key)
                 && rest.iter().all(|s| safe_segment(s) && !s.starts_with('.'))
         }
+        [state::DIR, rest @ ..] => {
+            !rest.is_empty() && rest.iter().all(|s| safe_segment(s) && !s.starts_with('.'))
+        }
         _ => false,
     }
 }
 
-/// What syncs. Both are on when personal memory is turned on.
+/// What syncs. All are on when personal memory is turned on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Kinds {
@@ -71,6 +76,8 @@ pub struct Kinds {
     pub claude_md: bool,
     /// `~/.claude/projects/*/memory/**`.
     pub memory: bool,
+    /// `~/.claude/personal-state/**`.
+    pub state: bool,
 }
 
 impl Default for Kinds {
@@ -78,17 +85,14 @@ impl Default for Kinds {
         Self {
             claude_md: true,
             memory: true,
+            state: true,
         }
     }
 }
 
 impl Kinds {
     fn syncs(&self, path: &str) -> bool {
-        if path == CLAUDE_MD {
-            self.claude_md
-        } else {
-            self.memory && path.starts_with("memory/")
-        }
+        Kind::ALL.into_iter().any(|k| k.covers(path) && k.on(self))
     }
 }
 
@@ -257,6 +261,8 @@ struct LocalScan {
     held: BTreeSet<String>,
     /// Keys whose folder is a link: everything under them is held.
     held_keys: BTreeSet<String>,
+    /// `~/.claude/personal-state` is a link: everything under `state/` is held.
+    held_state: bool,
     notes: Vec<String>,
     /// Key -> the folder under `projects/` it uses on this device.
     folders: BTreeMap<String, String>,
@@ -265,6 +271,7 @@ struct LocalScan {
 impl LocalScan {
     fn is_held(&self, path: &str) -> bool {
         self.held.contains(path)
+            || (self.held_state && path.starts_with("state/"))
             || path
                 .strip_prefix("memory/")
                 .and_then(|r| r.split('/').next())
@@ -754,9 +761,13 @@ impl Engine {
                 Err(e) => return Err(e.into()),
             }
         }
+        if kinds.state {
+            self.scan_state(&mut out)?;
+        }
         if !kinds.memory {
             return Ok(out);
         }
+        let mut total: usize = out.files.values().map(Vec::len).sum();
         let home_enc = self.home_enc()?;
         let projects = self.paths.claude_home.join("projects");
         let entries = match std::fs::read_dir(&projects) {
@@ -774,7 +785,6 @@ impl Engine {
                 by_key.entry(key).or_default().push(name);
             }
         }
-        let mut total = 0usize;
         for (key, names) in by_key {
             let folder = keys::choose(&projects, names, &home_enc);
             out.folders.insert(key.clone(), folder.clone());
@@ -833,6 +843,61 @@ impl Engine {
             }
         }
         Ok(out)
+    }
+
+    /// `~/.claude/personal-state/**` as `state/**`, held back by the same rules as memory.
+    fn scan_state(&self, out: &mut LocalScan) -> crate::Result<()> {
+        let root = self.paths.claude_home.join(state::LOCAL_DIR);
+        if blocked_by_user(&self.paths.claude_home, &format!("{}/x", state::LOCAL_DIR)) {
+            out.held_state = true;
+            out.notes
+                .push(format!("{}/: not synced, its folder is a link", state::DIR));
+            return Ok(());
+        }
+        let mut total: usize = out.files.values().map(Vec::len).sum();
+        let mut dirs = vec![root.clone()];
+        while let Some(dir) = dirs.pop() {
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(e) => e,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e.into()),
+            };
+            for entry in entries {
+                let entry = entry?;
+                let path = entry.path();
+                let rel: Vec<String> = path
+                    .strip_prefix(&root)
+                    .expect("walked from root")
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                let repo_path = format!("{}/{}", state::DIR, rel.join("/"));
+                let kind = entry.file_type()?;
+                if kind.is_symlink() {
+                    out.held.insert(repo_path.clone());
+                    out.notes
+                        .push(format!("{repo_path}: not synced, it is a link"));
+                } else if kind.is_dir() {
+                    dirs.push(path);
+                } else if kind.is_file() && is_personal_path(&repo_path) {
+                    let len = entry.metadata()?.len() as usize;
+                    if len > MAX_FILE {
+                        out.held.insert(repo_path.clone());
+                        out.notes.push(too_large(&repo_path));
+                    } else if total + len > MAX_TOTAL {
+                        out.held.insert(repo_path.clone());
+                        out.notes.push(format!(
+                            "{repo_path}: not synced, personal memory is over {} MiB",
+                            MAX_TOTAL >> 20
+                        ));
+                    } else {
+                        total += len;
+                        out.files.insert(repo_path, std::fs::read(&path)?);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Changed files that look like they hold a secret stay on this device.
@@ -900,18 +965,30 @@ impl Engine {
                 written.push(path.clone());
                 continue;
             }
-            let Some((key, rel)) = path.strip_prefix("memory/").and_then(|r| r.split_once('/'))
-            else {
-                continue;
+            let (under_home, stop, folder) = if let Some(rel) = path.strip_prefix("state/") {
+                (
+                    format!("{}/{rel}", state::LOCAL_DIR),
+                    state::LOCAL_DIR.to_string(),
+                    None,
+                )
+            } else {
+                let Some((key, rel)) = path.strip_prefix("memory/").and_then(|r| r.split_once('/'))
+                else {
+                    continue;
+                };
+                let folder = match scan.folders.get(key) {
+                    Some(f) => f.clone(),
+                    None => match keys::folder_for(key, &self.home_enc()?) {
+                        Some(f) => f,
+                        None => continue,
+                    },
+                };
+                (
+                    format!("projects/{folder}/memory/{rel}"),
+                    format!("projects/{folder}/memory"),
+                    Some((key.to_string(), folder)),
+                )
             };
-            let folder = match scan.folders.get(key) {
-                Some(f) => f.clone(),
-                None => match keys::folder_for(key, &self.home_enc()?) {
-                    Some(f) => f,
-                    None => continue,
-                },
-            };
-            let under_home = format!("projects/{folder}/memory/{rel}");
             if blocked_by_user(&self.paths.claude_home, &under_home) {
                 scan.notes.push(format!(
                     "{path}: not written, a folder on the way is a link"
@@ -919,7 +996,7 @@ impl Engine {
                 continue;
             }
             let file = join_rel(&self.paths.claude_home, &under_home);
-            // The memory being overwritten or deleted is kept, like CLAUDE.md.
+            // The file being overwritten or deleted is kept, like CLAUDE.md.
             if let Some(old) = local.get(path) {
                 write_atomic(&join_rel(&backup_root, path), old)?;
             }
@@ -930,16 +1007,12 @@ impl Engine {
                         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
                         _ => {}
                     }
-                    prune_empty(
-                        &file,
-                        &join_rel(
-                            &self.paths.claude_home,
-                            &format!("projects/{folder}/memory"),
-                        ),
-                    );
+                    prune_empty(&file, &join_rel(&self.paths.claude_home, &stop));
                 }
             }
-            scan.folders.entry(key.to_string()).or_insert(folder);
+            if let Some((key, folder)) = folder {
+                scan.folders.entry(key).or_insert(folder);
+            }
             written.push(path.clone());
         }
         Ok(written)
@@ -1019,6 +1092,7 @@ impl Engine {
             "base.old",
             Kind::ClaudeMd.off_dir(),
             Kind::Memory.off_dir(),
+            Kind::State.off_dir(),
         ] {
             remove_dir_if_exists(&dir.join(name))?;
         }
@@ -1118,20 +1192,22 @@ impl Engine {
     }
 }
 
-/// One of the two things that can be turned on and off.
+/// One of the things that can be turned on and off.
 #[derive(Clone, Copy)]
 enum Kind {
     ClaudeMd,
     Memory,
+    State,
 }
 
 impl Kind {
-    const ALL: [Kind; 2] = [Kind::ClaudeMd, Kind::Memory];
+    const ALL: [Kind; 3] = [Kind::ClaudeMd, Kind::Memory, Kind::State];
 
     fn on(self, kinds: &Kinds) -> bool {
         match self {
             Kind::ClaudeMd => kinds.claude_md,
             Kind::Memory => kinds.memory,
+            Kind::State => kinds.state,
         }
     }
 
@@ -1139,6 +1215,7 @@ impl Kind {
         match self {
             Kind::ClaudeMd => path == CLAUDE_MD,
             Kind::Memory => path.starts_with("memory/"),
+            Kind::State => path.starts_with("state/"),
         }
     }
 
@@ -1147,27 +1224,46 @@ impl Kind {
         match self {
             Kind::ClaudeMd => "off-claude-md",
             Kind::Memory => "off-memory",
+            Kind::State => "off-state",
         }
     }
 }
 
-/// Three-way merge, except `MEMORY.md` indexes, which merge as line sets.
+/// Three-way merge, except `MEMORY.md` indexes, which merge as line sets, `state/**.jsonl`
+/// logs, which merge as sorted line sets, and `state/**.json` objects that both sides have
+/// with a `ts`, where the newer one wins.
 fn merge_personal<'a>(base: &'a FileSet, local: &'a FileSet, remote: &'a FileSet) -> MergeResult {
-    let not_index = |p: &str| !lines::is_index(p);
+    let newer: BTreeMap<&String, &[u8]> = local
+        .iter()
+        .filter(|(p, _)| state::is_json(p))
+        .filter_map(|(p, l)| Some((p, state::newer(l, remote.get(p)?)?)))
+        .collect();
+    let by_lines = |p: &str| lines::is_index(p) || state::is_jsonl(p);
+    let three = |p: &str| !by_lines(p) && !newer.keys().any(|k| k.as_str() == p);
     let mut out = merge::three_way(
-        &only(base, not_index),
-        &only(local, not_index),
-        &only(remote, not_index),
+        &only(base, three),
+        &only(local, three),
+        &only(remote, three),
     );
+    for (path, bytes) in &newer {
+        if Some(*bytes) != remote.get(*path).map(Vec::as_slice) {
+            out.to_push.insert((*path).clone(), Some(bytes.to_vec()));
+        }
+        out.merged.insert((*path).clone(), bytes.to_vec());
+    }
     let indexes: BTreeSet<&String> = base
         .keys()
         .chain(local.keys())
         .chain(remote.keys())
-        .filter(|p| lines::is_index(p))
+        .filter(|p| by_lines(p))
         .collect();
     for path in indexes {
         let get = |f: &'a FileSet| f.get(path).map(Vec::as_slice);
-        let merged = lines::merge(get(base), get(local), get(remote));
+        let merged = if state::is_jsonl(path) {
+            state::merge_log(get(base), get(local), get(remote))
+        } else {
+            lines::merge(get(base), get(local), get(remote))
+        };
         if merged.as_deref() != get(remote) {
             out.to_push.insert(path.clone(), merged.clone());
         }
@@ -1232,6 +1328,8 @@ fn readme(login: &str) -> String {
          the app manages for groups)\n\
          - `memory/<project>/`: Claude Code's auto-memory of each project, keyed by its path \
          under your home folder\n\
+         - `state/`: small settings your mods save in `~/.claude/personal-state/`, such as \
+         opus-only mode\n\
          - `devices.json`: the devices that sync this repo\n\n\
          Keep this repo private. Turn syncing off in the app's Settings.\n"
     )

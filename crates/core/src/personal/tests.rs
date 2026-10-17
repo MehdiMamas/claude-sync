@@ -855,6 +855,7 @@ async fn kinds_choose_what_syncs() {
     pc.personal_set_kinds(Kinds {
         claude_md: true,
         memory: false,
+        state: true,
     })
     .await
     .unwrap();
@@ -874,6 +875,7 @@ async fn kinds_choose_what_syncs() {
     pc.personal_set_kinds(Kinds {
         claude_md: false,
         memory: true,
+        state: true,
     })
     .await
     .unwrap();
@@ -1114,4 +1116,182 @@ fn newer_formats_are_refused() {
     let pf = PersonalFile::parse(br#"{"format": 1, "later": [1]}"#).unwrap();
     assert!(pf.new_devices_join);
     assert!(String::from_utf8(pf.to_bytes()).unwrap().contains("later"));
+}
+
+// ---------------------------------------------------------------- personal-state
+
+const MODE_OLD: &str = r#"{"mode":"default","ts":"2026-10-17T04:00:00Z"}"#;
+const MODE_NEW: &str = r#"{"mode":"opus-only","ts":"2026-10-17T05:00:00Z"}"#;
+const MODE_PATH: &str = "state/routing-mode.json";
+const LOG_PATH: &str = "state/routing-mode.jsonl";
+
+fn set(pairs: &[(&str, &str)]) -> FileSet {
+    pairs
+        .iter()
+        .map(|(p, t)| (p.to_string(), t.as_bytes().to_vec()))
+        .collect()
+}
+
+impl Dev {
+    fn state_path(&self, rel: &str) -> PathBuf {
+        self.home().join("personal-state").join(rel)
+    }
+    fn state(&self, rel: &str) -> Option<String> {
+        std::fs::read_to_string(self.state_path(rel)).ok()
+    }
+    fn set_state(&self, rel: &str, text: &str) {
+        write_atomic(&self.state_path(rel), text.as_bytes()).unwrap();
+    }
+}
+
+#[test]
+fn state_paths_are_personal() {
+    for ok in [MODE_PATH, LOG_PATH, "state/router/x.json"] {
+        assert!(is_personal_path(ok), "{ok}");
+    }
+    for bad in ["state", "state/", "state/.hidden", "state/../x.json"] {
+        assert!(!is_personal_path(bad), "{bad}");
+    }
+}
+
+#[test]
+fn state_json_newer_ts_wins_both_ways_without_conflict() {
+    let base = set(&[(MODE_PATH, r#"{"mode":"x","ts":"2026-10-17T03:00:00Z"}"#)]);
+    // Local newer: pushed.
+    let r = merge_personal(
+        &base,
+        &set(&[(MODE_PATH, MODE_NEW)]),
+        &set(&[(MODE_PATH, MODE_OLD)]),
+    );
+    assert!(r.conflicts.is_empty());
+    assert_eq!(r.merged[MODE_PATH], MODE_NEW.as_bytes());
+    assert_eq!(r.to_push[MODE_PATH].as_deref(), Some(MODE_NEW.as_bytes()));
+    // Remote newer: written locally, nothing pushed.
+    let r = merge_personal(
+        &base,
+        &set(&[(MODE_PATH, MODE_OLD)]),
+        &set(&[(MODE_PATH, MODE_NEW)]),
+    );
+    assert!(r.conflicts.is_empty());
+    assert_eq!(r.merged[MODE_PATH], MODE_NEW.as_bytes());
+    assert!(r.to_push.is_empty());
+    // Equal ts keeps the remote.
+    let same = r#"{"mode":"other","ts":"2026-10-17T05:00:00.000+00:00"}"#;
+    let r = merge_personal(
+        &base,
+        &set(&[(MODE_PATH, same)]),
+        &set(&[(MODE_PATH, MODE_NEW)]),
+    );
+    assert!(r.conflicts.is_empty());
+    assert_eq!(r.merged[MODE_PATH], MODE_NEW.as_bytes());
+    // Offsets are compared as times, not text.
+    assert!(state::parse_ts("2026-10-17T06:30:00+02:00") < state::parse_ts("2026-10-17T05:00:00Z"));
+}
+
+#[test]
+fn state_json_without_ts_is_a_conflict() {
+    let base = set(&[(MODE_PATH, r#"{"mode":"a"}"#)]);
+    let r = merge_personal(
+        &base,
+        &set(&[(MODE_PATH, r#"{"mode":"b"}"#)]),
+        &set(&[(MODE_PATH, MODE_NEW)]),
+    );
+    assert_eq!(r.conflicts.len(), 1);
+    let r = merge_personal(
+        &base,
+        &set(&[(MODE_PATH, "not json")]),
+        &set(&[(MODE_PATH, MODE_NEW)]),
+    );
+    assert_eq!(r.conflicts.len(), 1);
+}
+
+#[test]
+fn state_jsonl_is_a_sorted_union() {
+    let a = r#"{"ts":"2026-10-17T01:00:00Z","mode":"opus-only","host":"pc"}"#;
+    let b = r#"{"ts":"2026-10-17T02:00:00Z","mode":"default","host":"mac"}"#;
+    let c = r#"{"ts":"2026-10-17T03:00:00Z","mode":"opus-only","host":"pc"}"#;
+    let local = format!("{a}\n{c}\n\n");
+    let remote = format!("{b}\n{a}\nno ts here\n");
+    let r = merge_personal(
+        &set(&[(LOG_PATH, &format!("{a}\n"))]),
+        &set(&[(LOG_PATH, &local)]),
+        &set(&[(LOG_PATH, &remote)]),
+    );
+    assert!(r.conflicts.is_empty());
+    let want = format!("no ts here\n{a}\n{b}\n{c}\n");
+    assert_eq!(String::from_utf8_lossy(&r.merged[LOG_PATH]), want);
+    assert_eq!(r.to_push[LOG_PATH].as_deref(), Some(want.as_bytes()));
+}
+
+#[tokio::test]
+async fn personal_state_syncs_between_devices() {
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.set_state("routing-mode.json", MODE_OLD);
+    pc.personal_enable().await.unwrap();
+    let repo = personal_repo(&world, "ana");
+    assert_eq!(repo.file(MODE_PATH).as_deref(), Some(MODE_OLD));
+
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    mac.personal_enable().await.unwrap();
+    assert_eq!(mac.state("routing-mode.json").as_deref(), Some(MODE_OLD));
+
+    // Both change it; the newer ts wins on both devices, with no conflict.
+    mac.set_state("routing-mode.json", MODE_NEW);
+    pc.set_state(
+        "routing-mode.json",
+        r#"{"mode":"x","ts":"2026-10-17T04:30:00Z"}"#,
+    );
+    mac.sync().await;
+    pc.sync().await;
+    assert_eq!(pc.state("routing-mode.json").as_deref(), Some(MODE_NEW));
+    assert_eq!(repo.file(MODE_PATH).as_deref(), Some(MODE_NEW));
+    assert!(pc.personal_status().conflicts.is_empty());
+
+    // The overwritten copy is kept.
+    assert!(personal_backups(&pc)
+        .iter()
+        .any(|(p, t)| p == MODE_PATH && t.contains("04:30")));
+    // A deletion syncs too, and the deleted copy is kept.
+    std::fs::remove_file(mac.state_path("routing-mode.json")).unwrap();
+    mac.sync().await;
+    pc.sync().await;
+    assert_eq!(pc.state("routing-mode.json"), None);
+    assert!(personal_backups(&pc)
+        .iter()
+        .any(|(p, t)| p == MODE_PATH && (t == MODE_NEW || t.contains("04:30"))));
+}
+
+#[test]
+fn kinds_default_includes_state() {
+    assert!(Kinds::default().state);
+    let old: Kinds = serde_json::from_str(r#"{"claudeMd":true,"memory":false}"#).unwrap();
+    assert_eq!(
+        old,
+        Kinds {
+            claude_md: true,
+            memory: false,
+            state: true
+        }
+    );
+}
+
+#[tokio::test]
+async fn state_off_keeps_state_local() {
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.personal_set_kinds(Kinds {
+        claude_md: true,
+        memory: true,
+        state: false,
+    })
+    .await
+    .unwrap();
+    pc.set_state("routing-mode.json", MODE_NEW);
+    pc.personal_enable().await.unwrap();
+    let repo = personal_repo(&world, "ana");
+    assert_eq!(repo.file(MODE_PATH), None);
+    repo.set_file("state/other.json", MODE_OLD);
+    pc.sync().await;
+    assert_eq!(pc.state("other.json"), None);
 }

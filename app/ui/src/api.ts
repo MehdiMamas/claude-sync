@@ -319,6 +319,8 @@ export interface AuthStatus {
 export interface Kinds {
   claudeMd: boolean;
   memory: boolean;
+  /** `~/.claude/personal-state`: small settings mods save. */
+  state: boolean;
 }
 export interface DeviceStatus {
   id: string;
