@@ -64,8 +64,8 @@ pub fn merge_log(
             lines.push((ts, line.to_string()));
         }
     }
-    // `None` sorts before every `Some`; `sort_by` is stable.
-    lines.sort_by(|a, b| a.0.cmp(&b.0));
+    // `None` sorts before every `Some`; `sort_by_key` is stable.
+    lines.sort_by_key(|a| a.0);
     let mut out = String::new();
     for (_, line) in lines {
         out.push_str(&line);

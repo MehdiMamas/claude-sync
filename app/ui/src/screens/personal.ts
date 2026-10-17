@@ -114,6 +114,13 @@ function body(st: PersonalStatus, show: (st: PersonalStatus) => void): (HTMLElem
     master,
     check("p-claude-md", "My CLAUDE.md", st.kinds.claudeMd, (b) => setKinds({ claudeMd: b.checked }), "(without the groups' part)"),
     check("p-memory", "Claude's memories", st.kinds.memory, (b) => setKinds({ memory: b.checked }), "(the memory folder of each project)"),
+    check(
+      "p-state",
+      "Mod settings (~/.claude/personal-state)",
+      st.kinds.state,
+      (b) => setKinds({ state: b.checked }),
+      "Small settings your mods save, such as opus-only mode.",
+    ),
     st.newDevicesJoin !== null &&
       check("p-join", "New devices of mine join automatically", st.newDevicesJoin, async (b) => {
         show(await api.personalSetNewDevicesJoin(b.checked));

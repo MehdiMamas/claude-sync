@@ -119,7 +119,7 @@ let personal: PersonalStatus = {
   enabled: !q.has("personalOffer") && !q.has("personalOff"),
   decided: q.has("personalOff"),
   offer: q.has("personalOffer"),
-  kinds: { claudeMd: true, memory: true },
+  kinds: { claudeMd: true, memory: true, state: true },
   repo: "mehdimamas/claude-sync-personal",
   repoUrl: "https://github.com/mehdimamas/claude-sync-personal",
   deviceId: "d1",

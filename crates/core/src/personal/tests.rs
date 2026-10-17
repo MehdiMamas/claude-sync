@@ -1158,18 +1158,30 @@ fn state_paths_are_personal() {
 fn state_json_newer_ts_wins_both_ways_without_conflict() {
     let base = set(&[(MODE_PATH, r#"{"mode":"x","ts":"2026-10-17T03:00:00Z"}"#)]);
     // Local newer: pushed.
-    let r = merge_personal(&base, &set(&[(MODE_PATH, MODE_NEW)]), &set(&[(MODE_PATH, MODE_OLD)]));
+    let r = merge_personal(
+        &base,
+        &set(&[(MODE_PATH, MODE_NEW)]),
+        &set(&[(MODE_PATH, MODE_OLD)]),
+    );
     assert!(r.conflicts.is_empty());
     assert_eq!(r.merged[MODE_PATH], MODE_NEW.as_bytes());
     assert_eq!(r.to_push[MODE_PATH].as_deref(), Some(MODE_NEW.as_bytes()));
     // Remote newer: written locally, nothing pushed.
-    let r = merge_personal(&base, &set(&[(MODE_PATH, MODE_OLD)]), &set(&[(MODE_PATH, MODE_NEW)]));
+    let r = merge_personal(
+        &base,
+        &set(&[(MODE_PATH, MODE_OLD)]),
+        &set(&[(MODE_PATH, MODE_NEW)]),
+    );
     assert!(r.conflicts.is_empty());
     assert_eq!(r.merged[MODE_PATH], MODE_NEW.as_bytes());
     assert!(r.to_push.is_empty());
     // Equal ts keeps the remote.
     let same = r#"{"mode":"other","ts":"2026-10-17T05:00:00.000+00:00"}"#;
-    let r = merge_personal(&base, &set(&[(MODE_PATH, same)]), &set(&[(MODE_PATH, MODE_NEW)]));
+    let r = merge_personal(
+        &base,
+        &set(&[(MODE_PATH, same)]),
+        &set(&[(MODE_PATH, MODE_NEW)]),
+    );
     assert!(r.conflicts.is_empty());
     assert_eq!(r.merged[MODE_PATH], MODE_NEW.as_bytes());
     // Offsets are compared as times, not text.

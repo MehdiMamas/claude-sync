@@ -92,9 +92,7 @@ impl Default for Kinds {
 
 impl Kinds {
     fn syncs(&self, path: &str) -> bool {
-        Kind::ALL
-            .into_iter()
-            .any(|k| k.covers(path) && k.on(self))
+        Kind::ALL.into_iter().any(|k| k.covers(path) && k.on(self))
     }
 }
 
@@ -974,8 +972,7 @@ impl Engine {
                     None,
                 )
             } else {
-                let Some((key, rel)) =
-                    path.strip_prefix("memory/").and_then(|r| r.split_once('/'))
+                let Some((key, rel)) = path.strip_prefix("memory/").and_then(|r| r.split_once('/'))
                 else {
                     continue;
                 };
@@ -1243,7 +1240,11 @@ fn merge_personal<'a>(base: &'a FileSet, local: &'a FileSet, remote: &'a FileSet
         .collect();
     let by_lines = |p: &str| lines::is_index(p) || state::is_jsonl(p);
     let three = |p: &str| !by_lines(p) && !newer.keys().any(|k| k.as_str() == p);
-    let mut out = merge::three_way(&only(base, three), &only(local, three), &only(remote, three));
+    let mut out = merge::three_way(
+        &only(base, three),
+        &only(local, three),
+        &only(remote, three),
+    );
     for (path, bytes) in &newer {
         if Some(*bytes) != remote.get(*path).map(Vec::as_slice) {
             out.to_push.insert((*path).clone(), Some(bytes.to_vec()));
