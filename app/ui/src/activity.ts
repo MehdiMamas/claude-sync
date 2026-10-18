@@ -49,6 +49,10 @@ export interface Activity {
   atUnix: number;
   /** Oldest commit time when several were folded together. */
   firstAtUnix: number;
+  /** The newest commit's full message. */
+  message: string;
+  /** Each folded commit as its own entry, newest first; a single entry holds itself. */
+  members: Activity[];
 }
 
 const PREFIX = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))@([^\s:]+):\s*([\s\S]*)$/;
@@ -196,14 +200,20 @@ export function parseCommit(c: CommitInfo, ctx: FeedContext = {}): Activity {
     device,
     atUnix: c.atUnix,
     firstAtUnix: c.atUnix,
+    message: c.message,
   };
-  const out = (kind: Kind, title: string, chips: string[] = [], detail = ""): Activity => ({
-    ...base,
-    kind,
-    title,
-    chips,
-    detail: [cap(detail.trim()), body].filter(Boolean).join("\n"),
-  });
+  const out = (kind: Kind, title: string, chips: string[] = [], detail = ""): Activity => {
+    const a: Activity = {
+      ...base,
+      kind,
+      title,
+      chips,
+      detail: [cap(detail.trim()), body].filter(Boolean).join("\n"),
+      members: [],
+    };
+    a.members = [a];
+    return a;
+  };
 
   const created = /^create group\b\s*(.*)$/i.exec(text);
   if (created) return out("created", "Created the group", [], created[1].replace(/^\((.*)\)$/, "$1"));
@@ -259,12 +269,117 @@ export function collapse(items: Activity[], windowSecs = 600): Activity[] {
         ...prev,
         shas: [...prev.shas, ...a.shas],
         firstAtUnix: a.firstAtUnix,
+        members: [...prev.members, ...a.members],
         detail: [prev.detail, ...extra].filter(Boolean).join("\n"),
       };
     } else {
       out.push(a);
     }
   }
+  return out;
+}
+
+export interface ChangeParts {
+  subject: string;
+  /** Issue numbers named in the message, in order, without duplicates. */
+  issues: number[];
+  bullets: string[];
+  before: string | null;
+  now: string | null;
+}
+
+const BEFORE = /^(?:before|was)\s*:\s*(.+)$/i;
+const NOW = /^(?:now|after)\s*:\s*(.+)$/i;
+
+/** `#12`, `Fixes #182/#183`, `closes #4, #5`: every issue number in the text. */
+function issueRefs(text: string): number[] {
+  const out: number[] = [];
+  const add = (n: string) => {
+    const v = Number(n);
+    if (!out.includes(v)) out.push(v);
+  };
+  for (const m of text.matchAll(/(?<![\w&/])#(\d+)((?:\s*(?:\/|,|&|and)\s*#?\d+)*)/g)) {
+    add(m[1]);
+    for (const x of m[2].matchAll(/\d+/g)) add(x[0]);
+  }
+  return out;
+}
+
+/** Before/Now for a commit: its own body lines first, else the group's notes entry for its sha, else nothing. */
+export function beforeNowFor(
+  parts: Pick<ChangeParts, "before" | "now">,
+  sha: string,
+  notes: Record<string, { before?: string | null; now?: string | null }>,
+): { before: string | null; now: string | null } {
+  if (parts.before || parts.now) return { before: parts.before, now: parts.now };
+  const n = notes[sha];
+  return { before: n?.before || null, now: n?.now || null };
+}
+
+/**
+ * A raw commit message split for display. Before/Now come only from `Before:`/`Now:` lines
+ * (or `Was:`/`After:`) or a body line `X → Y`; nothing is made up when they are absent.
+ */
+export function changeParts(message: string): ChangeParts {
+  const [first, ...rest] = message.replace(/\r\n/g, "\n").split("\n");
+  let subject = first.trim();
+  const p = PREFIX.exec(subject);
+  if (p) subject = p[3].trim();
+  const area = /^([^:\n]{1,40}):\s+([\s\S]+)$/.exec(subject);
+  if (area && !CONVENTIONAL.has(area[1].trim().toLowerCase()) && area[1].trim().split(/\s+/).length <= 4) subject = area[2].trim();
+  const issues = issueRefs(message);
+  // A trailing "(Fixes #1/#2)" is shown as chips instead.
+  subject = cap(subject.replace(/\s*\((?:(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?|refs?|see)\s+)?#\d+[^)]*\)\s*$/i, "").trim());
+
+  let before: string | null = null;
+  let now: string | null = null;
+  const bullets: string[] = [];
+  for (const raw of rest) {
+    const line = raw.trim().replace(/^[-*•]\s+/, "").trim();
+    if (!line) continue;
+    const b = BEFORE.exec(line);
+    const n = NOW.exec(line);
+    if (b && before === null) before = b[1].trim();
+    else if (n && now === null) now = n[1].trim();
+    else bullets.push(line);
+  }
+  if (before === null && now === null) {
+    const i = bullets.findIndex((l) => /\S\s*(?:→|->)\s*\S/.test(l));
+    if (i >= 0) {
+      const [x, y] = bullets[i].split(/\s*(?:→|->)\s*/, 2);
+      const b = x.replace(/^.*?:\s+/, "").trim();
+      const n = y.trim().replace(/[.;]$/, "");
+      if (b && n) {
+        before = b;
+        now = n;
+        bullets.splice(i, 1);
+      }
+    }
+  }
+  return { subject, issues, bullets, before, now };
+}
+
+export interface Segment {
+  text: string;
+  strong?: boolean;
+  code?: boolean;
+}
+
+const HIGHLIGHT =
+  /`([^`\n]+)`|\b(\d+(?:[.,]\d+)?\s?(?:k|m|ms|s|sec|secs|seconds?|min|mins|minutes?|h|hrs?|hours?|days?|d|kb|mb|gb|tb|x)\b|\d+(?:[.,]\d+)?%)|\b(no longer|now|instead|never|always)\b/gi;
+
+/** Splits text into plain, bold (numbers with units, key words) and code (`backticked`) runs. */
+export function highlight(text: string): Segment[] {
+  const out: Segment[] = [];
+  let at = 0;
+  for (const m of text.matchAll(HIGHLIGHT)) {
+    const i = m.index ?? 0;
+    if (i > at) out.push({ text: text.slice(at, i) });
+    if (m[1] !== undefined) out.push({ text: m[1], code: true });
+    else out.push({ text: m[0], strong: true });
+    at = i + m[0].length;
+  }
+  if (at < text.length) out.push({ text: text.slice(at) });
   return out;
 }
 

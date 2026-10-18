@@ -152,6 +152,7 @@ fn main() {
             commands::claude_md_preview,
             commands::share_claude_md,
             commands::recent_commits,
+            commands::change_notes,
             commands::revert_preview,
             commands::revert_commit,
             commands::claude_md_review,

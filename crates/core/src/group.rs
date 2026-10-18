@@ -259,6 +259,10 @@ pub fn readme(name: &str, host: &str) -> String {
 mod tests {
     use super::*;
     #[test]
+    fn change_notes_file_never_syncs() {
+        assert!(!is_allowlisted("changes/before-now.json"));
+    }
+    #[test]
     fn proposal_mode_defaults_off_round_trips_and_is_omitted_when_off() {
         let g = GroupFile::parse(br#"{"schema":1,"name":"G","members":["a"]}"#).unwrap();
         assert!(!g.proposal_mode);

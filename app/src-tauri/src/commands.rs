@@ -374,6 +374,18 @@ pub async fn recent_commits(
         .map_err(guard::logged("recent changes"))
 }
 
+/// Before/Now notes for past commits, by commit sha. Empty when the group has none; never fails.
+#[tauri::command]
+pub async fn change_notes(
+    ctx: CtxState<'_>,
+    group: GroupId,
+) -> Res<std::collections::BTreeMap<String, claude_sync_core::engine::ChangeNote>> {
+    Ok(match ctx.engine() {
+        Ok(e) => e.change_notes(&group).await,
+        Err(_) => Default::default(),
+    })
+}
+
 /// Changes others made to the group's CLAUDE.md that wait for this user (§7a).
 #[tauri::command]
 pub fn claude_md_review(ctx: CtxState, group: GroupId) -> Res<ClaudeMdReview> {
