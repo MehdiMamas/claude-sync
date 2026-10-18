@@ -371,20 +371,22 @@ devices.json                {"devices": [{"id", "name", "os", "lastSeenUnix"}]}
 README.md                   what this is (generated)
 CLAUDE.md                   the user's own text of ~/.claude/CLAUDE.md
 memory/<key>/**             ~/.claude/projects/<folder>/memory/**
+state/**                    ~/.claude/personal-state/**
 ```
 
-**What syncs.** Two kinds, each on its own switch, both on by default:
+**What syncs.** Three kinds, each on its own switch, all on by default:
 
 - `CLAUDE.md`: everything outside the managed block (§7), without stray group import lines. On the way back in, this device's block and imports stay where they are; the synced text goes under them, in the file's line ends. A file with only the block in it syncs nothing.
 - Memory: `~/.claude/projects/<folder>/memory/**`. Claude Code names `<folder>` after the project path, with every character that is not an ASCII letter or digit turned into `-`. That cannot be decoded, so the app never decodes it. A folder under the home folder gets the key `home<rest>` (`C--Users-ana-Projects-app` and `-Users-ana-Projects-app` are both `home-Projects-app`); another device maps the key to its own `<encoded home><rest>`, and reuses an existing folder whose name differs only in case (Windows has both `C--Users-…` and `c--Users-…`). Folders outside the home folder (`/tmp`, `/private/var/folders`), temp and app-data folders, background job folders and worktree folders are per machine and never sync.
+- Mod settings: `~/.claude/personal-state/**` as `state/**`. Small state that mods save for the user, such as model-router's opus-only mode. Dotfiles and unsafe names are skipped; a linked `personal-state` folder is not synced.
 
 Never synced, and reported in Settings as "stays on this device": a file over 256 KiB (or past 16 MiB in all), a symlink, a file the secret scan (§9) flags, and a path that is not a safe file name. These are never written over on this device either.
 
-**Merge.** The same three-way merge as a group (§6), with its own base in `<state>/personal/base/`. `MEMORY.md` is an index of one line per memory, and two devices adding memories at the same time is normal, so it merges as a set of lines: a line one side removed is dropped, every other line of either side is kept, and the remote's new lines go after the line that precedes them on the remote. It never conflicts. Any other file both devices changed is a conflict: the other device's version wins and this device's is saved to `<state>/conflicts/personal/<UTC time>/`. Before a sync changes or deletes `CLAUDE.md` or a memory file on this device, the app saves the old copy to `<state>/backups/personal/<UTC time>/` (under its repo path, such as `memory/<key>/<file>`).
+**Merge.** The same three-way merge as a group (§6), with its own base in `<state>/personal/base/`. `MEMORY.md` is an index of one line per memory, and two devices adding memories at the same time is normal, so it merges as a set of lines: a line one side removed is dropped, every other line of either side is kept, and the remote's new lines go after the line that precedes them on the remote. It never conflicts. Under `state/`, a `*.json` file that both sides have, each a JSON object with a top-level ISO-8601 `ts`, is not merged: the newer `ts` wins (equal keeps the remote), with no conflict; without a valid `ts` on both sides it takes the normal merge. A `*.jsonl` log is the union of both sides' lines: empty lines and exact duplicates dropped, stably sorted by each line's `ts` (lines without one first), ending in a newline. It never conflicts. Any other file both devices changed is a conflict: the other device's version wins and this device's is saved to `<state>/conflicts/personal/<UTC time>/`. Before a sync changes or deletes `CLAUDE.md`, a memory file or a `state/` file on this device, the app saves the old copy to `<state>/backups/personal/<UTC time>/` (under its repo path, such as `memory/<key>/<file>`).
 
 **When it runs.** After each group sync: a conditional `GET` of the head (`304` costs nothing), and a pass only when the remote moved, the local files changed, this device was renamed, or a day passed (to refresh `lastSeenUnix`). Sync now always runs a pass.
 
-**Turning it on and off.** Settings → Personal memory has the master switch "Sync my personal memory between my devices", the two kinds, the device list (this device marked; rename it with the Device name field; remove an old one), "New devices of mine join automatically", the last sync and "Open repo". Turning it off on a device stops syncing there and leaves its files and the repo alone. A kind turned off is remembered as it was; turned back on, it merges against that, so nothing is lost or re-added by mistake.
+**Turning it on and off.** Settings → Personal memory has the master switch "Sync my personal memory between my devices", the three kinds, the device list (this device marked; rename it with the Device name field; remove an old one), "New devices of mine join automatically", the last sync and "Open repo". Turning it off on a device stops syncing there and leaves its files and the repo alone. A kind turned off is remembered as it was; turned back on, it merges against that, so nothing is lost or re-added by mistake.
 
 **A new device.** After sign-in, a device that never decided checks for `<login>/claude-sync-personal`. If the repo says `newDevicesJoin: true`, personal memory turns on by itself, the repo and the local files are merged (never overwriting either side's memories), and the app says: "Personal memory from your other devices is on. Turn off in Settings." If it says `false`, the app shows a notice offering to turn it on; "Not now" stops asking on that device. Another account on the same computer starts over with its own repo.
 
@@ -395,6 +397,7 @@ Never synced, and reported in Settings as "stays on this device": a file over 25
 <state>/personal/base/             base snapshot
 <state>/personal/off-claude-md/    a kind as it was when it was turned off
 <state>/personal/off-memory/
+<state>/personal/off-state/
 ```
 
 A v0 clone of the personal repo is moved aside by the migration in §10; its CLAUDE.md and memories are not imported, the user turns this feature on instead.
