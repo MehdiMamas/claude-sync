@@ -801,6 +801,83 @@ button.act-more {
 .act-meta button.link:focus-visible {
   color: var(--accent);
 }
+.act-subs {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0;
+}
+.act-sub,
+.act-single {
+  padding: 0.45rem 0;
+}
+.act-sub + .act-sub {
+  border-top: 1px solid var(--line);
+}
+.act-sub-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.act-sub-title {
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+button.issue-chip {
+  cursor: pointer;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
+  font: inherit;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  font-size: 0.75rem;
+}
+button.issue-chip:hover,
+button.issue-chip:focus-visible {
+  text-decoration: underline;
+}
+.act-body strong:not(.act-sub-title) {
+  font-weight: 650;
+  color: var(--text);
+}
+.act-body code {
+  font-size: 0.85em;
+  padding: 0 0.25rem;
+  border-radius: 4px;
+  background: var(--bg);
+}
+.before-now {
+  margin: 0.3rem 0;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--line);
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.9rem;
+}
+.bn-line {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.bn-label {
+  flex: none;
+  min-width: 3.2rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.bn-value {
+  overflow-wrap: anywhere;
+}
+.bn-now .bn-label {
+  color: var(--ok);
+}
+.act-bullets {
+  margin: 0.2rem 0 0;
+  padding-left: 1.1rem;
+  overflow-wrap: anywhere;
+}
 .revert-panel {
   margin-top: 0.4rem;
   padding: 0.5rem 0.7rem;

@@ -274,6 +274,11 @@ const D = 86400;
 const commits: CommitInfo[] = (
   [
     ["MehdiMamas@DESKTOP-MEHDI: setup-scout: read X and LinkedIn through Chrome on scheduled runs too (read only); job passes --chrome so the scheduled run can use the browser extension when it is connected, and skips both sources quietly when it is not", "MehdiMamas", 600],
+    ["mehdi@desktop: session-manager: Show each worker's cost in the pane (#190)\n\n- The pane lists dollars per worker, rounded to the cent\n- Totals update when a report arrives", "mehdi", 15 * 60],
+    ["mehdi@desktop: session-manager: Leave finished workers warm (Fixes #182/#183)\n\nBefore: finished workers were stopped right after their report.\nNow: they stay warm for about 10 min so they can be reused.\n\n- Auto-stop only touches finished leaf workers\n- `stop_worker` is for stuck or wrong workers", "mehdi", 17 * 60],
+    ["mehdi@desktop: session-manager: Wake idle sessions every 30 min (#181)\n\n- The heartbeat checks workers, background tasks and CI\n- Skipped when the machine is paused", "mehdi", 19 * 60],
+    ["mehdi@desktop: session-manager: Refuse depth above 2 in delegate (#98)\n\n- A worker at the limit never starts workers\n- The error names `ci_wait` and `verify` instead", "mehdi", 21 * 60],
+    ["mehdi@desktop: session-manager: Fix pause leaving 3 managers running (#138)\n\n- Pause now records every session, so resume brings back 100% of them", "mehdi", 23 * 60],
     ["sara-dev@Saras-MacBook.local: update CLAUDE.md", "sara-dev", 50 * 60],
     ["sara-dev@Saras-MacBook.local: update CLAUDE.md", "sara-dev", 54 * 60],
     ["sara-dev@saras-macbook.local: update CLAUDE.md", "sara-dev", 58 * 60],

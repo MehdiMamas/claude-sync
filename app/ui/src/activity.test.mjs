@@ -1,7 +1,7 @@
 // `pnpm -C app/ui test`: Node runs activity.ts directly (type stripping, Node 23.6+).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { avatarUrl, collapse, dayLabel, deviceName, groupByDay, hue, initials, parseCommit, timeLabel } from "./activity.ts";
+import { avatarUrl, changeParts, collapse, dayLabel, deviceName, groupByDay, highlight, hue, initials, parseCommit, timeLabel } from "./activity.ts";
 
 const ctx = { me: "mehdimamas", mods: ["claude-mods", "session-manager", "model-router", "setup-scout"], skills: ["review"] };
 const commit = (message, atUnix = 1_000_000, author = "MehdiMamas", sha = "abc1234def") => ({ sha, message, author, atUnix });
@@ -160,3 +160,50 @@ test("avatars", () => {
 function pick(a) {
   return [a.kind, a.title, a.chips];
 }
+
+test("a folded entry keeps each commit as a member, newest first", () => {
+  const msg = (n) => `mehdi@desktop: session-manager: Change ${n} (#${n})`;
+  const items = [3, 2, 1].map((n) => parse(msg(n)));
+  items.forEach((a, i) => (a.sha = `sha${3 - i}`));
+  const [folded] = collapse(items.map((a, i) => ({ ...a, atUnix: 1_000_000 - i * 60, firstAtUnix: 1_000_000 - i * 60 })));
+  assert.equal(folded.members.length, 3);
+  assert.deepEqual(folded.members.map((m) => m.sha), ["sha3", "sha2", "sha1"]);
+  assert.equal(parse("sara-dev@laptop: add member bo").members.length, 1);
+});
+
+test("changeParts: subject, issues, bullets", () => {
+  const p = changeParts("mehdi@desktop: session-manager: leave finished workers warm (Fixes #182/#183)\n\n- Auto-stop is gentle\n* Second #182 mention");
+  assert.equal(p.subject, "Leave finished workers warm");
+  assert.deepEqual(p.issues, [182, 183]);
+  assert.deepEqual(p.bullets, ["Auto-stop is gentle", "Second #182 mention"]);
+  assert.equal(p.before, null);
+  assert.equal(p.now, null);
+});
+
+test("changeParts: Before/Now lines are removed from the bullets", () => {
+  const p = changeParts("x@y: Fix thing\n\nbefore: it stopped.\nNow: it stays.\n- other");
+  assert.equal(p.before, "it stopped.");
+  assert.equal(p.now, "it stays.");
+  assert.deepEqual(p.bullets, ["other"]);
+  const w = changeParts("x@y: Fix thing\n\nWas: a\nAfter: b");
+  assert.deepEqual([w.before, w.now], ["a", "b"]);
+});
+
+test("changeParts: an arrow line gives Before/Now, and nothing is invented", () => {
+  const p = changeParts("x@y: Tune\n\n- Timeout: 5 s → 10 s\n- keep");
+  assert.equal(p.before, "5 s");
+  assert.equal(p.now, "10 s");
+  assert.deepEqual(p.bullets, ["keep"]);
+  const a = changeParts("x@y: Tune\n\n- plain line");
+  assert.deepEqual([a.before, a.now], [null, null]);
+  assert.deepEqual(changeParts("x@y: update CLAUDE.md").issues, []);
+});
+
+test("highlight marks numbers with units, names and key words", () => {
+  const segs = highlight("Stays warm for 10 min, `stop_worker` is never used; 90% now, 3 GB, 200k");
+  const strong = segs.filter((s) => s.strong).map((s) => s.text);
+  assert.deepEqual(strong, ["10 min", "never", "90%", "now", "3 GB", "200k"]);
+  assert.deepEqual(segs.filter((s) => s.code).map((s) => s.text), ["stop_worker"]);
+  assert.equal(segs.map((s) => s.text).join(""), "Stays warm for 10 min, stop_worker is never used; 90% now, 3 GB, 200k");
+  assert.deepEqual(highlight("plain"), [{ text: "plain" }]);
+});

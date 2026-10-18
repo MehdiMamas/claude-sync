@@ -1,6 +1,6 @@
 // The group's "Recent changes" card: commits as an activity feed (see activity.ts).
 import { api, errorText, groupKey, type CommitInfo, type GroupContents, type GroupId, type RevertPlan } from "../api";
-import { collapse, groupByDay, parseCommit, timeLabel, type Activity, type FeedContext, type Kind } from "../activity";
+import { changeParts, collapse, groupByDay, highlight, parseCommit, timeLabel, type Activity, type FeedContext, type Kind } from "../activity";
 import { avatar } from "../avatar";
 import { errorBox, h, replace, spinner, toast } from "../dom";
 import { store } from "../store";
@@ -38,34 +38,124 @@ const fullTime = (unix: number) => new Date(unix * 1000).toLocaleString(undefine
 
 let seq = 0;
 
-/** `expanded` holds the entries whose text is open, so "Show more" keeps them open. */
-function entry(
-  a: Activity,
-  now: Date,
-  commitUrl: (sha: string) => string,
-  expanded: Set<string>,
-  /** Host only: reverts the commit and reloads the feed. Null for members. */
-  revert: ((sha: string) => Promise<void>) | null,
-  id: GroupId,
-): HTMLElement {
-  const who = a.isYou ? "You" : a.login;
-  const count = a.shas.length;
-  const time = h("time", { datetime: new Date(a.atUnix * 1000).toISOString(), title: fullTime(a.atUnix) }, timeLabel(a.atUnix, now));
-  const open = h("button", { class: "link act-link", type: "button", "aria-label": `View this change on GitHub: ${a.title}` }, "View on GitHub");
-  open.addEventListener("click", () => api.openUrl(commitUrl(a.sha)).catch((e) => toast(errorText(e), "error")));
+/** Text with numbers, units, `names` and key words marked up: <strong>/<code> elements, never innerHTML. */
+function rich(text: string): (Node | string)[] {
+  return highlight(text).map((s) => (s.code ? h("code", null, s.text) : s.strong ? h("strong", null, s.text) : s.text));
+}
 
-  let detail: HTMLElement | false = false;
-  let more: HTMLButtonElement | false = false;
-  if (a.detail) {
-    const id = `act-detail-${++seq}`;
-    const d = h("div", { class: "act-detail clamp", id }, a.detail);
-    const btn = h("button", { class: "link act-more", type: "button", "aria-expanded": "false", "aria-controls": id, hidden: true }, "more");
-    const show = (open: boolean) => {
-      d.classList.toggle("clamp", !open);
-      btn.setAttribute("aria-expanded", String(open));
-      btn.textContent = open ? "less" : "more";
-      if (open) expanded.add(a.sha);
-      else expanded.delete(a.sha);
+interface Ctx {
+  now: Date;
+  id: GroupId;
+  commitUrl: (sha: string) => string;
+  /** Host only: reverts the commit and reloads the feed. Null for members. */
+  revert: ((sha: string) => Promise<void>) | null;
+  /** Rows whose text is open, so "Show more" keeps them open. */
+  expanded: Set<string>;
+}
+
+/** Host only: a Revert button and the panel that previews and confirms it, for one commit. */
+function revertControls(sha: string, title: string, ctx: Ctx): { btn: HTMLButtonElement; panel: HTMLElement } | null {
+  const revert = ctx.revert;
+  if (!revert) return null;
+  const panel = h("div", { class: "revert-panel", hidden: true });
+  const btn = h("button", { class: "link act-link", type: "button", "aria-label": `Revert this change: ${title}` }, "Revert");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      showPlan(await api.revertPreview(ctx.id, sha));
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  const close = () => {
+    panel.hidden = true;
+    replace(panel);
+  };
+  const showPlan = (plan: RevertPlan) => {
+    const blocked = plan.files.filter((f) => f.blocked);
+    const verb = { restore: "restored to the older version", delete: "deleted (this change added it)", recreate: "brought back (this change deleted it)" };
+    const go = h("button", { type: "button", class: "danger" }, "Revert this change");
+    go.disabled = blocked.length > 0 || plan.files.length === 0;
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      go.textContent = "Reverting…";
+      try {
+        await revert(sha);
+      } catch (e) {
+        toast(errorText(e), "error");
+        go.disabled = false;
+        go.textContent = "Revert this change";
+      }
+    });
+    panel.hidden = false;
+    replace(
+      panel,
+      h("p", { class: "small" }, `Reverting makes a new change that undoes this one. These files will be:`),
+      plan.files.length === 0
+        ? h("p", { class: "muted small" }, "Nothing to revert: the files already match what they were before.")
+        : h(
+            "ul",
+            { class: "small" },
+            plan.files.map((f) =>
+              h("li", null, h("code", null, f.path), ` ${verb[f.action]}`, f.blocked && h("div", { class: "error", role: "alert" }, f.blocked)),
+            ),
+          ),
+      h("div", { class: "row" }, go, h("button", { type: "button", class: "link", onclick: close }, "Cancel")),
+    );
+  };
+  return { btn, panel };
+}
+
+/** One commit: bold subject (folded entries only), issue chips, Before/Now, collapsed details, time and actions. */
+function change(m: Activity, ctx: Ctx, showSubject: boolean): HTMLElement {
+  const parts = changeParts(m.message);
+  const title = parts.subject || m.title;
+  const time = h("time", { datetime: new Date(m.atUnix * 1000).toISOString(), title: fullTime(m.atUnix) }, timeLabel(m.atUnix, ctx.now));
+  const open = h("button", { class: "link act-link", type: "button", "aria-label": `View this change on GitHub: ${title}` }, "View on GitHub");
+  open.addEventListener("click", () => api.openUrl(ctx.commitUrl(m.sha)).catch((e) => toast(errorText(e), "error")));
+
+  const issues = parts.issues.map((n) => {
+    const b = h("button", { class: "chip issue-chip", type: "button", "aria-label": `Open issue ${n} on GitHub`, title: "Open on GitHub" }, `#${n}`);
+    const url = `https://github.com/${encodeURIComponent(ctx.id.owner)}/${encodeURIComponent(ctx.id.repo)}/issues/${n}`;
+    b.addEventListener("click", () => api.openUrl(url).catch((e) => toast(errorText(e), "error")));
+    return b;
+  });
+
+  const line = (label: string, value: string, cls: string) =>
+    h("div", { class: `bn-line ${cls}` }, h("span", { class: "bn-label" }, label), h("span", { class: "bn-value" }, rich(value)));
+  const beforeNow =
+    (parts.before || parts.now) &&
+    h("div", { class: "before-now" }, parts.before && line("Before", parts.before, "bn-before"), parts.now && line("Now", parts.now, "bn-now"));
+
+  // Bullets stay folded behind a toggle; text with no bullets (a skill's description) keeps the old clamp.
+  let details: HTMLElement | false = false;
+  let toggle: HTMLButtonElement | false = false;
+  if (parts.bullets.length) {
+    const did = `act-detail-${++seq}`;
+    const list = h("ul", { class: "act-bullets small", id: did, hidden: true }, parts.bullets.map((b) => h("li", null, rich(b))));
+    const btn = h("button", { class: "link act-more", type: "button", "aria-expanded": "false", "aria-controls": did }, `Details (${parts.bullets.length})`);
+    const show = (on: boolean) => {
+      list.hidden = !on;
+      btn.setAttribute("aria-expanded", String(on));
+      if (on) ctx.expanded.add(m.sha);
+      else ctx.expanded.delete(m.sha);
+    };
+    btn.addEventListener("click", () => show(btn.getAttribute("aria-expanded") !== "true"));
+    if (ctx.expanded.has(m.sha)) show(true);
+    details = list;
+    toggle = btn;
+  } else if (!showSubject && !parts.before && !parts.now && m.detail) {
+    const did = `act-detail-${++seq}`;
+    const d = h("div", { class: "act-detail clamp", id: did }, m.detail);
+    const btn = h("button", { class: "link act-more", type: "button", "aria-expanded": "false", "aria-controls": did, hidden: true }, "more");
+    const show = (on: boolean) => {
+      d.classList.toggle("clamp", !on);
+      btn.setAttribute("aria-expanded", String(on));
+      btn.textContent = on ? "less" : "more";
+      if (on) ctx.expanded.add(m.sha);
+      else ctx.expanded.delete(m.sha);
     };
     btn.addEventListener("click", () => show(btn.getAttribute("aria-expanded") !== "true"));
     // Offer "more" only when the text is cut off: compare its height with and without the clamp.
@@ -76,67 +166,38 @@ function entry(
       d.classList.add("clamp");
       if (full > clamped + 2) {
         btn.hidden = false;
-        if (expanded.has(a.sha)) show(true);
+        if (ctx.expanded.has(m.sha)) show(true);
       }
     });
-    detail = d;
-    more = btn;
+    details = d;
+    toggle = btn;
   }
 
-  // Host only, one commit per entry (a folded entry stands for several).
-  const panel = h("div", { class: "revert-panel", hidden: true });
-  let revertBtn: HTMLButtonElement | false = false;
-  if (revert && a.shas.length === 1) {
-    const btn = h("button", { class: "link act-link", type: "button", "aria-label": `Revert this change: ${a.title}` }, "Revert");
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      try {
-        showPlan(await api.revertPreview(id, a.sha));
-      } catch (e) {
-        toast(errorText(e), "error");
-      } finally {
-        btn.disabled = false;
-      }
-    });
-    const close = () => {
-      panel.hidden = true;
-      replace(panel);
-    };
-    const showPlan = (plan: RevertPlan) => {
-      const blocked = plan.files.filter((f) => f.blocked);
-      const verb = { restore: "restored to the older version", delete: "deleted (this change added it)", recreate: "brought back (this change deleted it)" };
-      const go = h("button", { type: "button", class: "danger" }, "Revert this change");
-      go.disabled = blocked.length > 0 || plan.files.length === 0;
-      go.addEventListener("click", async () => {
-        go.disabled = true;
-        go.textContent = "Reverting…";
-        try {
-          await revert(a.sha);
-        } catch (e) {
-          toast(errorText(e), "error");
-          go.disabled = false;
-          go.textContent = "Revert this change";
-        }
-      });
-      panel.hidden = false;
-      replace(
-        panel,
-        h("p", { class: "small" }, `Reverting makes a new change that undoes this one. These files will be:`),
-        plan.files.length === 0
-          ? h("p", { class: "muted small" }, "Nothing to revert: the files already match what they were before.")
-          : h(
-              "ul",
-              { class: "small" },
-              plan.files.map((f) =>
-                h("li", null, h("code", null, f.path), ` ${verb[f.action]}`, f.blocked && h("div", { class: "error", role: "alert" }, f.blocked)),
-              ),
-            ),
-        h("div", { class: "row" }, go, h("button", { type: "button", class: "link", onclick: close }, "Cancel")),
-      );
-    };
-    revertBtn = btn;
-  }
+  const rev = revertControls(m.sha, title, ctx);
+  return h(
+    "li",
+    { class: showSubject ? "act-sub" : "act-single" },
+    showSubject && h("div", { class: "act-sub-head" }, h("strong", { class: "act-sub-title" }, rich(title)), issues),
+    !showSubject && issues.length > 0 && h("div", { class: "act-sub-head" }, issues),
+    beforeNow,
+    toggle,
+    details,
+    h(
+      "div",
+      { class: "act-meta muted small" },
+      time,
+      h("span", { "aria-hidden": "true" }, "·"),
+      open,
+      rev && [h("span", { "aria-hidden": "true" }, "·"), rev.btn],
+    ),
+    rev && rev.panel,
+  );
+}
 
+function entry(a: Activity, ctx: Ctx): HTMLElement {
+  const who = a.isYou ? "You" : a.login;
+  const count = a.shas.length;
+  const folded = a.members.length > 1;
   return h(
     "li",
     { class: "act" },
@@ -158,20 +219,17 @@ function entry(
             `${count} changes`,
           ),
       ),
-      detail,
-      more,
       h(
         "div",
         { class: "act-meta muted small" },
         h("span", { class: "act-who" }, who),
         a.device && [h("span", { "aria-hidden": "true" }, "·"), h("span", { class: "device", title: "Device" }, a.device)],
-        h("span", { "aria-hidden": "true" }, "·"),
-        time,
-        h("span", { "aria-hidden": "true" }, "·"),
-        open,
-        revertBtn && [h("span", { "aria-hidden": "true" }, "·"), revertBtn],
       ),
-      panel,
+      h(
+        "ol",
+        { class: folded ? "act-subs" : "act-subs single", "aria-label": folded ? `${count} changes` : undefined },
+        a.members.map((m) => change(m, ctx, folded)),
+      ),
     ),
   );
 }
@@ -235,7 +293,7 @@ export function historyCard(id: GroupId, contents: Promise<GroupContents>, isHos
           "section",
           { class: "day", "aria-labelledby": hid },
           h("h3", { class: "day-label", id: hid }, day.label),
-          h("ol", { class: "feed", "aria-labelledby": hid }, day.items.map((a) => entry(a, now, commitUrl, expanded, isHost ? revertAndReload : null, id))),
+          h("ol", { class: "feed", "aria-labelledby": hid }, day.items.map((a) => entry(a, { now, id, commitUrl, revert: isHost ? revertAndReload : null, expanded }))),
         );
       }),
       h(
