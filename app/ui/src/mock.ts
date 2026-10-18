@@ -497,6 +497,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   },
   group_contents: (a) => ((a.group as GroupId).owner === "acme" ? acmeContents : mehdiContents),
   recent_commits: (a) => (q.has("noHistory") ? [] : commits.slice(0, Number(a.limit ?? 20))),
+  change_notes: () => ({ [commits[1].sha]: { before: "the pane showed only a running total", now: "it lists dollars per worker, rounded to the cent" } }),
   revert_preview: (a) => ({
     sha: a.sha as string,
     summary: "update CLAUDE.md",

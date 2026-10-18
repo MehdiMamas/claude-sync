@@ -223,6 +223,11 @@ export interface CommitInfo {
   author: string;
   atUnix: number;
 }
+/** Before/Now text the group kept in changes/before-now.json for a commit that had none in its body. */
+export interface ChangeNote {
+  before: string | null;
+  now: string | null;
+}
 export interface RevertFile {
   path: string;
   action: "restore" | "delete" | "recreate";
@@ -478,6 +483,8 @@ export const api = {
   claudeMdPreview: () => call<string>("claude_md_preview"),
   shareClaudeMd: (group: GroupId, share: ClaudeMdShare) => call<ClaudeMdShared>("share_claude_md", { group, share }),
   recentCommits: (group: GroupId, limit = 20) => call<CommitInfo[]>("recent_commits", { group, limit }),
+  /** Notes by full commit sha; empty when the group has none. Never rejects. */
+  changeNotes: (group: GroupId) => call<Record<string, ChangeNote>>("change_notes", { group }).catch(() => ({})),
   revertPreview: (group: GroupId, sha: string) => call<RevertPlan>("revert_preview", { group, sha }),
   revertCommit: (group: GroupId, sha: string) => call<RevertPlan>("revert_commit", { group, sha }),
   claudeMdReview: (group: GroupId) => call<ClaudeMdReview>("claude_md_review", { group }),

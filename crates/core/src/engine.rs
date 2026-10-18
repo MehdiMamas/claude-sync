@@ -18,7 +18,7 @@ use crate::state::{now_unix, utc_stamp, write_atomic, write_json, AppState};
 use crate::watch::{EditAction, LocalEdit};
 use crate::{Error, FileSet, GroupId, Paths};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -145,6 +145,39 @@ pub struct GroupSyncReport {
     pub lost_access: bool,
     /// Changes to the group's `CLAUDE.md` that this pass put up for review (§7a).
     pub review: Vec<review::Item>,
+}
+
+/// Where the group repo keeps Before/Now notes for commits that could not carry them.
+pub const CHANGE_NOTES_PATH: &str = "changes/before-now.json";
+
+/// What a change did before and what it does now, for the Groups feed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ChangeNote {
+    pub before: Option<String>,
+    pub now: Option<String>,
+}
+
+/// `{ "<commit sha>": { "before": "...", "now": "..." } }`. Anything else (bad JSON, wrong
+/// shapes, entries with neither text) is skipped: the feed never fails over its notes.
+pub fn parse_change_notes(bytes: &[u8]) -> BTreeMap<String, ChangeNote> {
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_slice(bytes) else {
+        return BTreeMap::new();
+    };
+    let text = |v: &serde_json::Value, k: &str| {
+        v.get(k)
+            .and_then(|t| t.as_str())
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+    };
+    map.iter()
+        .filter_map(|(sha, v)| {
+            let note = ChangeNote {
+                before: text(v, "before"),
+                now: text(v, "now"),
+            };
+            (note.before.is_some() || note.now.is_some()).then(|| (sha.clone(), note))
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -783,6 +816,22 @@ impl Engine {
         limit: usize,
     ) -> crate::Result<Vec<CommitInfo>> {
         self.remotes.open(id).recent_commits(limit).await
+    }
+
+    /// The group's Before/Now notes for past commits (`changes/before-now.json` on the default
+    /// branch). Empty when the file is missing, unreadable or invalid.
+    pub async fn change_notes(&self, id: &GroupId) -> BTreeMap<String, ChangeNote> {
+        let remote = self.remotes.open(id);
+        let Ok(head) = remote.recent_commits(1).await else {
+            return BTreeMap::new();
+        };
+        let Some(newest) = head.first() else {
+            return BTreeMap::new();
+        };
+        match remote.file_at(&newest.sha, CHANGE_NOTES_PATH).await {
+            Ok(Some(bytes)) => parse_change_notes(&bytes),
+            _ => BTreeMap::new(),
+        }
     }
 
     /// Changes to the groups' `CLAUDE.md` waiting for this user, over all groups (§7a).
@@ -2085,6 +2134,18 @@ pub(crate) fn remove_dir_if_exists(dir: &Path) -> crate::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn change_notes_parse_leniently() {
+        let got = parse_change_notes(
+            br#"{"a1": {"before": " old ", "now": "new"}, "b2": {"now": "x"}, "c3": {}, "d4": 5, "e5": {"before": ""}}"#,
+        );
+        assert_eq!(got.len(), 2);
+        assert_eq!(got["a1"].before.as_deref(), Some("old"));
+        assert_eq!(got["b2"].before, None);
+        assert!(parse_change_notes(b"not json").is_empty());
+        assert!(parse_change_notes(b"[1]").is_empty());
+    }
+
     use super::*;
     use crate::remote::fake::{FakeGitHub, FakeRepo};
     use std::collections::HashMap;

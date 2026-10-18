@@ -1,6 +1,6 @@
 // The group's "Recent changes" card: commits as an activity feed (see activity.ts).
-import { api, errorText, groupKey, type CommitInfo, type GroupContents, type GroupId, type RevertPlan } from "../api";
-import { changeParts, collapse, groupByDay, highlight, parseCommit, timeLabel, type Activity, type FeedContext, type Kind } from "../activity";
+import { api, errorText, groupKey, type ChangeNote, type CommitInfo, type GroupContents, type GroupId, type RevertPlan } from "../api";
+import { beforeNowFor, changeParts, collapse, groupByDay, highlight, parseCommit, timeLabel, type Activity, type FeedContext, type Kind } from "../activity";
 import { avatar } from "../avatar";
 import { errorBox, h, replace, spinner, toast } from "../dom";
 import { store } from "../store";
@@ -51,6 +51,8 @@ interface Ctx {
   revert: ((sha: string) => Promise<void>) | null;
   /** Rows whose text is open, so "Show more" keeps them open. */
   expanded: Set<string>;
+  /** Before/Now notes from the group repo, by commit sha. */
+  notes: Record<string, ChangeNote>;
 }
 
 /** Host only: a Revert button and the panel that previews and confirms it, for one commit. */
@@ -110,7 +112,8 @@ function revertControls(sha: string, title: string, ctx: Ctx): { btn: HTMLButton
 
 /** One commit: bold subject (folded entries only), issue chips, Before/Now, collapsed details, time and actions. */
 function change(m: Activity, ctx: Ctx, showSubject: boolean): HTMLElement {
-  const parts = changeParts(m.message);
+  const parsed = changeParts(m.message);
+  const parts = { ...parsed, ...beforeNowFor(parsed, m.sha, ctx.notes) };
   const title = parts.subject || m.title;
   const time = h("time", { datetime: new Date(m.atUnix * 1000).toISOString(), title: fullTime(m.atUnix) }, timeLabel(m.atUnix, ctx.now));
   const open = h("button", { class: "link act-link", type: "button", "aria-label": `View this change on GitHub: ${title}` }, "View on GitHub");
@@ -244,6 +247,7 @@ export function historyCard(id: GroupId, contents: Promise<GroupContents>, isHos
   const historyUrl = `https://github.com/${encodeURIComponent(id.owner)}/${encodeURIComponent(id.repo)}/commits`;
 
   let commits: CommitInfo[] = [];
+  let notes: Record<string, ChangeNote> = {};
   let fetched = 0;
   let shown = PAGE;
   const expanded = new Set<string>();
@@ -293,7 +297,7 @@ export function historyCard(id: GroupId, contents: Promise<GroupContents>, isHos
           "section",
           { class: "day", "aria-labelledby": hid },
           h("h3", { class: "day-label", id: hid }, day.label),
-          h("ol", { class: "feed", "aria-labelledby": hid }, day.items.map((a) => entry(a, { now, id, commitUrl, revert: isHost ? revertAndReload : null, expanded }))),
+          h("ol", { class: "feed", "aria-labelledby": hid }, day.items.map((a) => entry(a, { now, id, commitUrl, revert: isHost ? revertAndReload : null, expanded, notes }))),
         );
       }),
       h(
@@ -322,7 +326,7 @@ export function historyCard(id: GroupId, contents: Promise<GroupContents>, isHos
   };
 
   const fetchCommits = async (limit: number) => {
-    commits = await api.recentCommits(id, limit);
+    [commits, notes] = await Promise.all([api.recentCommits(id, limit), api.changeNotes(id)]);
     fetched = limit;
   };
 

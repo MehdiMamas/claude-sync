@@ -1,7 +1,7 @@
 // `pnpm -C app/ui test`: Node runs activity.ts directly (type stripping, Node 23.6+).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { avatarUrl, changeParts, collapse, dayLabel, deviceName, groupByDay, highlight, hue, initials, parseCommit, timeLabel } from "./activity.ts";
+import { avatarUrl, beforeNowFor, changeParts, collapse, dayLabel, deviceName, groupByDay, highlight, hue, initials, parseCommit, timeLabel } from "./activity.ts";
 
 const ctx = { me: "mehdimamas", mods: ["claude-mods", "session-manager", "model-router", "setup-scout"], skills: ["review"] };
 const commit = (message, atUnix = 1_000_000, author = "MehdiMamas", sha = "abc1234def") => ({ sha, message, author, atUnix });
@@ -206,4 +206,12 @@ test("highlight marks numbers with units, names and key words", () => {
   assert.deepEqual(segs.filter((s) => s.code).map((s) => s.text), ["stop_worker"]);
   assert.equal(segs.map((s) => s.text).join(""), "Stays warm for 10 min, stop_worker is never used; 90% now, 3 GB, 200k");
   assert.deepEqual(highlight("plain"), [{ text: "plain" }]);
+});
+
+test("beforeNowFor: own body first, then the notes entry, else nothing", () => {
+  const notes = { abc: { before: "old", now: "new" } };
+  assert.deepEqual(beforeNowFor({ before: "b", now: "n" }, "abc", notes), { before: "b", now: "n" });
+  assert.deepEqual(beforeNowFor({ before: null, now: null }, "abc", notes), { before: "old", now: "new" });
+  assert.deepEqual(beforeNowFor({ before: null, now: null }, "zzz", notes), { before: null, now: null });
+  assert.deepEqual(beforeNowFor({ before: null, now: null }, "abc", { abc: { now: "only" } }), { before: null, now: "only" });
 });

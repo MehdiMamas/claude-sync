@@ -305,6 +305,17 @@ function issueRefs(text: string): number[] {
   return out;
 }
 
+/** Before/Now for a commit: its own body lines first, else the group's notes entry for its sha, else nothing. */
+export function beforeNowFor(
+  parts: Pick<ChangeParts, "before" | "now">,
+  sha: string,
+  notes: Record<string, { before?: string | null; now?: string | null }>,
+): { before: string | null; now: string | null } {
+  if (parts.before || parts.now) return { before: parts.before, now: parts.now };
+  const n = notes[sha];
+  return { before: n?.before || null, now: n?.now || null };
+}
+
 /**
  * A raw commit message split for display. Before/Now come only from `Before:`/`Now:` lines
  * (or `Was:`/`After:`) or a body line `X → Y`; nothing is made up when they are absent.
