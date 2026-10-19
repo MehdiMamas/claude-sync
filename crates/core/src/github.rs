@@ -550,10 +550,7 @@ impl GitHub {
                 return Err(Error::RateLimited { reset_unix });
             }
         }
-        let message = serde_json::from_slice::<Value>(&body)
-            .ok()
-            .and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_string))
-            .unwrap_or_else(|| String::from_utf8_lossy(&body).chars().take(200).collect());
+        let message = error_message(&body);
         Err(Error::GitHub {
             status: status.as_u16(),
             message,
@@ -748,6 +745,51 @@ fn next_link(link: &str) -> Option<String> {
                     .to_string()
             })
     })
+}
+
+/// The text of a GitHub error body: `message`, plus the `errors` details when there are any.
+/// Not JSON: the first 200 characters of the raw body.
+fn error_message(body: &[u8]) -> String {
+    let Some(v) = serde_json::from_slice::<Value>(body)
+        .ok()
+        .filter(|v| v.get("message").and_then(Value::as_str).is_some())
+    else {
+        return String::from_utf8_lossy(body).chars().take(200).collect();
+    };
+    let message = v["message"].as_str().unwrap_or_default();
+    let one = |e: &Value| -> Option<String> {
+        if let Some(s) = e.as_str() {
+            return Some(s.to_string());
+        }
+        if let Some(m) = e.get("message").and_then(Value::as_str) {
+            return Some(m.to_string());
+        }
+        let field = |k: &str| e.get(k).and_then(Value::as_str).filter(|s| !s.is_empty());
+        let place = [field("resource"), field("field")]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(".");
+        let text = [
+            Some(place.as_str()).filter(|p| !p.is_empty()),
+            field("code"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+        (!text.is_empty()).then_some(text)
+    };
+    let details = match v.get("errors") {
+        Some(Value::Array(items)) => items.iter().filter_map(one).collect::<Vec<_>>().join("; "),
+        Some(e @ (Value::String(_) | Value::Object(_))) => one(e).unwrap_or_default(),
+        _ => String::new(),
+    };
+    if details.is_empty() {
+        message.to_string()
+    } else {
+        format!("{message}: {details}")
+    }
 }
 
 #[cfg(test)]
@@ -1011,6 +1053,53 @@ mod tests {
         assert!(
             matches!(clone.user().await, Err(Error::RateLimited { .. })),
             "no second request"
+        );
+    }
+
+    #[test]
+    fn error_message_shapes() {
+        let m = |v: Value| error_message(v.to_string().as_bytes());
+        assert_eq!(m(json!({"message": "Not Found"})), "Not Found");
+        assert_eq!(
+            m(
+                json!({"message": "Validation Failed", "errors": "Cannot assign X permission of read"})
+            ),
+            "Validation Failed: Cannot assign X permission of read"
+        );
+        assert_eq!(m(json!({"message": "V", "errors": ["a", "b"]})), "V: a; b");
+        assert_eq!(
+            m(
+                json!({"message": "V", "errors": [{"resource": "R", "code": "c", "message": "boom"}]})
+            ),
+            "V: boom"
+        );
+        assert_eq!(
+            m(json!({"message": "V", "errors": [
+                {"resource": "Repository", "field": "name", "code": "already_exists"},
+                {"code": "missing_field"}
+            ]})),
+            "V: Repository.name already_exists; missing_field"
+        );
+        assert_eq!(m(json!({"message": "V", "errors": []})), "V");
+        assert_eq!(
+            error_message(b"<html>bad gateway</html>"),
+            "<html>bad gateway</html>"
+        );
+    }
+
+    #[tokio::test]
+    async fn unprocessable_keeps_error_details() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(422).set_body_json(
+                json!({"message": "Validation Failed", "errors": "Cannot assign X permission of read"}),
+            ))
+            .mount(&server)
+            .await;
+        let err = gh(&server).user().await.unwrap_err();
+        assert!(
+            matches!(err, Error::GitHub { status: 422, ref message } if message.contains("Validation Failed") && message.contains("Cannot assign X permission of read")),
+            "{err:?}"
         );
     }
 

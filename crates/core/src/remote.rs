@@ -841,14 +841,19 @@ impl RemoteRepo for GitHubRepo {
     async fn invite(&self, login: &str) -> crate::Result<()> {
         // Members read; the ruleset (not this) is what stops personal repos from letting
         // collaborators push, since GitHub ignores the permission there.
+        let path = self.path(&format!("/collaborators/{login}"));
         let body = json!({ "permission": "pull" });
-        self.gh
-            .call(
-                Method::PUT,
-                &self.path(&format!("/collaborators/{login}")),
-                Some(&body),
-            )
-            .await
+        match self.gh.call(Method::PUT, &path, Some(&body)).await {
+            // User-owned repos refuse an explicit permission (422 "Cannot assign ... permission
+            // of read"); the same call without a body invites with the only role they have.
+            Err(Error::GitHub {
+                status: 422,
+                message,
+            }) if message.to_lowercase().contains("permission") => {
+                self.gh.call(Method::PUT, &path, None).await
+            }
+            other => other,
+        }
     }
 
     async fn remove_collaborator(&self, login: &str) -> crate::Result<()> {
@@ -1559,5 +1564,80 @@ mod tests {
             b"hello\n"
         );
         assert_eq!(repo.file_at("c2", "missing.md").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn invite_variants() {
+        for ok in [201u16, 204] {
+            let (server, repo) = setup().await;
+            Mock::given(method("PUT"))
+                .and(path("/repos/o/r/collaborators/q"))
+                .and(body_partial_json(json!({"permission": "pull"})))
+                .respond_with(ResponseTemplate::new(ok).set_body_json(json!({"id": 1})))
+                .expect(1)
+                .mount(&server)
+                .await;
+            repo.invite("q").await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn invite_retries_without_permission_on_personal_repos() {
+        let (server, repo) = setup().await;
+        Mock::given(method("PUT"))
+            .and(path("/repos/o/r/collaborators/q"))
+            .and(body_partial_json(json!({"permission": "pull"})))
+            .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+                "message": "Validation Failed",
+                "errors": "Cannot assign Q permission of read"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/repos/o/r/collaborators/q"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": 1})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        repo.invite("q").await.unwrap();
+        let puts: Vec<_> = server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.method.as_str() == "PUT")
+            .collect();
+        assert_eq!(puts.len(), 2);
+        assert!(puts[1].body.is_empty(), "retry has no body");
+    }
+
+    #[tokio::test]
+    async fn invite_other_errors_are_not_retried() {
+        let (server, repo) = setup().await;
+        Mock::given(method("PUT"))
+            .and(path("/repos/o/r/collaborators/o"))
+            .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+                "message": "Validation Failed",
+                "errors": [{"resource": "Repository", "code": "custom",
+                    "message": "Repository owner cannot be a collaborator"}]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let err = repo.invite("o").await.unwrap_err();
+        assert!(
+            matches!(err, Error::GitHub { status: 422, ref message } if message.contains("Repository owner cannot be a collaborator")),
+            "{err:?}"
+        );
+        Mock::given(method("PUT"))
+            .and(path("/repos/o/r/collaborators/nobody"))
+            .respond_with(ResponseTemplate::new(404).set_body_json(json!({"message": "Not Found"})))
+            .mount(&server)
+            .await;
+        assert!(matches!(
+            repo.invite("nobody").await,
+            Err(Error::GitHub { status: 404, .. })
+        ));
     }
 }
