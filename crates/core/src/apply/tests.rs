@@ -1782,22 +1782,19 @@ fn group_files() -> FileSet {
 
 fn seed_user(e: &Env) {
     put(&home(e, "CLAUDE.md"), b"my own line\n\nsecond line\n");
-    put(
-        &home(e, "settings.json"),
-        &serde_json::to_vec_pretty(&json!({
-            "theme": "dark",
-            "enabledPlugins": {"mine@other": true},
-            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]},
-        }))
-        .unwrap(),
-    );
+    // Written the way the app writes settings.json (pretty, trailing newline).
+    let mut settings = serde_json::to_vec_pretty(&json!({
+        "theme": "dark",
+        "enabledPlugins": {"mine@other": true},
+        "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]},
+    }))
+    .unwrap();
+    settings.push(b'\n');
+    put(&home(e, "settings.json"), &settings);
 }
 
 fn user_state(e: &Env) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
-    (
-        read(&home(e, "CLAUDE.md")),
-        read(&home(e, "settings.json")),
-    )
+    (read(&home(e, "CLAUDE.md")), read(&home(e, "settings.json")))
 }
 
 #[test]
@@ -1825,10 +1822,17 @@ fn off_on_off_restores_the_files_exactly() {
     let on = apply_group(&e.paths, &a, only(&a), &group_files()).unwrap();
     assert!(on.collisions.is_empty(), "{on:?}");
     assert!(on.kept.is_empty(), "{on:?}");
-    assert_eq!(user_state(&e), applied, "on must give the first applied state back");
+    assert_eq!(
+        user_state(&e),
+        applied,
+        "on must give the first applied state back"
+    );
     assert!(!is_disabled(&e.paths, &a).unwrap());
     assert_eq!(read(&plugin).unwrap(), b"{}");
-    assert!(Manifest::load(&e.paths).unwrap().files.contains_key("plugins/mp/p/plugin.json"));
+    assert!(Manifest::load(&e.paths)
+        .unwrap()
+        .files
+        .contains_key("plugins/mp/p/plugin.json"));
 
     disable_group(&e.paths, &a).unwrap();
     assert_eq!(user_state(&e), pre);
@@ -1842,7 +1846,11 @@ fn keep_local_survives_off_and_on() {
     apply_group(&e.paths, &a, only(&a), &group_files()).unwrap();
     keep_local(&e.paths, &a, "agents/reviewer.md").unwrap();
     keep_local(&e.paths, &a, "settings.shared.json#/model").unwrap();
-    let kept = |e: &Env| Manifest::load(&e.paths).unwrap().groups["owner/a"].keep_local.clone();
+    let kept = |e: &Env| {
+        Manifest::load(&e.paths).unwrap().groups["owner/a"]
+            .keep_local
+            .clone()
+    };
     let before = kept(&e);
     assert_eq!(before.len(), 2);
 
@@ -1850,5 +1858,6 @@ fn keep_local_survives_off_and_on() {
     assert_eq!(kept(&e), before);
     apply_group(&e.paths, &a, only(&a), &group_files()).unwrap();
     assert_eq!(kept(&e), before);
-    assert!(settings_json(&e).get("model").is_none());
+    // A kept setting is the user's own value now: off and on leave it be.
+    assert_eq!(settings_json(&e)["model"], "opus");
 }

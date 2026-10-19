@@ -701,10 +701,7 @@ pub fn disable_group(paths: &Paths, group: &GroupId) -> crate::Result<ApplyRepor
     let mut backups = Backups::new(paths);
 
     unapply_files(paths, group, &mut m, &mut backups, &mut report, true)?;
-    m.groups
-        .entry(group.to_string())
-        .or_default()
-        .disabled = true;
+    m.groups.entry(group.to_string()).or_default().disabled = true;
     unapply_settings(paths, group, &mut m, &mut backups, &mut report)?;
 
     if m != before {

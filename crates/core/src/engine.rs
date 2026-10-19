@@ -698,7 +698,11 @@ impl Engine {
     /// Turn a joined group off or back on on this device. Off takes everything it applied
     /// away (membership, Keep-local choices and the group's folder stay); on applies the last
     /// synced version again and syncs. Nothing is pushed while off.
-    pub async fn set_group_enabled(&self, id: &GroupId, enabled: bool) -> crate::Result<ApplyReport> {
+    pub async fn set_group_enabled(
+        &self,
+        id: &GroupId,
+        enabled: bool,
+    ) -> crate::Result<ApplyReport> {
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
         let mut state = AppState::load(&self.paths)?;
@@ -720,11 +724,15 @@ impl Engine {
             files = only(&base.files, |p| {
                 group::is_allowlisted(p) && gf.syncs(p) && !group::is_repo_only(p)
             });
-            if let Some(copy) = read_file_if_exists(&self.paths.group_dir(id).join(group::CLAUDE_MD))? {
+            if let Some(copy) =
+                read_file_if_exists(&self.paths.group_dir(id).join(group::CLAUDE_MD))?
+            {
                 files.insert(group::CLAUDE_MD.into(), copy);
             }
         }
-        let applied = self.apply.apply_group(&self.paths, id, &state.groups, &files)?;
+        let applied = self
+            .apply
+            .apply_group(&self.paths, id, &state.groups, &files)?;
         state.disabled.remove(id);
         state.save(&self.paths)?;
         self.sync_group(id, None).await;
@@ -2678,22 +2686,38 @@ mod tests {
         bo.engine.set_group_enabled(&id, false).await.unwrap();
         assert!(bo.engine.groups().await.unwrap()[0].disabled);
         assert_eq!(bo.apply.file(&id, "agents/a.md"), None);
-        repo.set_file("agents/b.md", "from the group
-");
+        repo.set_file(
+            "agents/b.md",
+            "from the group
+",
+        );
         let before = commit_count(&repo);
         let report = bo.engine.sync_all().await.unwrap();
         assert!(!report.groups[0].pushed && !report.groups[0].pulled);
         assert_eq!(commit_count(&repo), before);
-        assert_eq!(bo.apply.file(&id, "agents/b.md"), None, "nothing applied while off");
+        assert_eq!(
+            bo.apply.file(&id, "agents/b.md"),
+            None,
+            "nothing applied while off"
+        );
 
         bo.engine.set_group_enabled(&id, true).await.unwrap();
         assert!(!bo.engine.groups().await.unwrap()[0].disabled);
-        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "base
-");
-        assert_eq!(bo.apply.file(&id, "agents/b.md").unwrap(), "from the group
-");
-        assert_eq!(repo.file("agents/a.md").unwrap(), "base
-");
+        assert_eq!(
+            bo.apply.file(&id, "agents/a.md").unwrap(),
+            "base
+"
+        );
+        assert_eq!(
+            bo.apply.file(&id, "agents/b.md").unwrap(),
+            "from the group
+"
+        );
+        assert_eq!(
+            repo.file("agents/a.md").unwrap(),
+            "base
+"
+        );
         assert_eq!(commit_count(&repo), before, "re-enabling pushed a deletion");
     }
 

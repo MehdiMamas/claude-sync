@@ -35,6 +35,7 @@ const groups: GroupStatus[] = q.has("empty")
         isHost: true,
         proposalMode: q.has("proposals"),
         hostLock: q.has("noLock") ? "unavailable" : "on",
+        disabled: q.has("groupOff"),
       },
       {
         id: { owner: "acme", repo: "claude-team" },
@@ -52,6 +53,7 @@ const groups: GroupStatus[] = q.has("empty")
         isHost: false,
         proposalMode: false,
         hostLock: null,
+        disabled: false,
       },
     ];
 
@@ -454,6 +456,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
       isHost: true,
       proposalMode: false,
       hostLock: "on",
+      disabled: false,
     };
     groups.push(g);
     return g;
