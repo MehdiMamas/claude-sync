@@ -138,6 +138,8 @@ pub struct Invocation {
     pub args: Vec<String>,
     pub cwd: PathBuf,
     pub timeout: Duration,
+    /// `PATH` for the session; `None` keeps the inherited one.
+    pub path: Option<std::ffi::OsString>,
 }
 
 /// Runs an invocation with its stdout and stderr going to `log`. `Ok(None)`: it timed out
@@ -157,6 +159,9 @@ impl Exec for RealExec {
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log.try_clone()?);
+        if let Some(path) = &inv.path {
+            cmd.env("PATH", path);
+        }
         let mut child = claude_cli::quiet(&mut cmd).spawn()?;
         claude_cli::wait_until(&mut child, Instant::now() + inv.timeout)
     }
@@ -245,7 +250,20 @@ impl Jobs<'_> {
             .open(&log_path)?;
         rotate(&dir, KEEP_LOGS)?;
         last.log = Some(log_path);
+        // launchd hands jobs only /usr/bin:/bin:...; give the session the user's PATH.
+        let path = if cfg!(windows) {
+            None
+        } else {
+            Some(claude_cli::session_path(
+                &self.home,
+                &claude,
+                std::env::var_os("PATH").as_deref(),
+                claude_cli::login_shell_path().as_deref(),
+                &|p| p.is_dir(),
+            ))
+        };
         let inv = Invocation {
+            path,
             program: claude,
             args: ["-p".to_string(), job.prompt.clone()]
                 .into_iter()
@@ -267,6 +285,9 @@ impl Jobs<'_> {
             job.permission_mode,
             job.cwd_path.display(),
         );
+        if let Some(path) = &inv.path {
+            let _ = writeln!(log, "[claude-sync] PATH: {}", path.to_string_lossy());
+        }
         let result = exec.exec(&inv, &log);
         let status = match &result {
             Ok(Some(0)) => "ok".to_string(),
@@ -515,6 +536,7 @@ mod tests {
             args: vec!["-p".into(), "hello world".into()],
             cwd: e.home.clone(),
             timeout: Duration::from_secs(60),
+            path: None,
         };
         let log_path = e.home.join("out.log");
         let log = File::create(&log_path).unwrap();

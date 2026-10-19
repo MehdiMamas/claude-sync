@@ -3,7 +3,9 @@
 //! Neither the tray app nor a scheduled task gets a login shell's `PATH` (launchd has almost
 //! none), so the path is resolved here: `where.exe` on Windows (an `.exe` before a `.cmd`),
 //! the usual install locations elsewhere, then the login shell. Every child runs without a
-//! console window and is killed with its whole process tree when it runs too long.
+//! console window and is killed with its whole process tree when it runs too long. A job
+//! session gets a full user `PATH` ([`session_path`]) so hooks find `node`, `gh` and `claude`.
+use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -35,6 +37,55 @@ pub fn pick(found: &[PathBuf]) -> Option<PathBuf> {
     } else {
         found.first().cloned()
     }
+}
+
+/// The `PATH` for a scheduled session: the login shell's entries, then the current ones, then
+/// `claude`'s own directory and the usual user bin directories that exist; first one wins.
+pub fn session_path(
+    home: &Path,
+    claude: &Path,
+    current: Option<&OsStr>,
+    login: Option<&OsStr>,
+    exists: &dyn Fn(&Path) -> bool,
+) -> OsString {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for list in [login, current].into_iter().flatten() {
+        dirs.extend(std::env::split_paths(list));
+    }
+    dirs.extend(claude.parent().map(Path::to_path_buf));
+    dirs.extend(
+        [
+            home.join(".local/bin"),
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+            home.join(".cargo/bin"),
+            home.join(".bun/bin"),
+            home.join(".npm-global/bin"),
+        ]
+        .into_iter()
+        .filter(|d| exists(d)),
+    );
+    let mut seen = std::collections::HashSet::new();
+    dirs.retain(|d| !d.as_os_str().is_empty() && seen.insert(d.clone()));
+    std::env::join_paths(dirs).unwrap_or_default()
+}
+
+/// The `PATH` an interactive login shell builds (nvm, asdf, brew, ...). Windows tasks already
+/// run with the user's environment.
+#[cfg(not(windows))]
+pub fn login_shell_path() -> Option<OsString> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let mut cmd = Command::new(shell);
+    cmd.args(["-ilc", "printf %s \"$PATH\""]);
+    let out = run_command(cmd, Duration::from_secs(10)).ok()?;
+    // Interactive rc files may print noise first; the PATH is the last line.
+    let last = out.stdout.lines().map(str::trim).rfind(|l| !l.is_empty())?;
+    last.contains('/').then(|| OsString::from(last))
+}
+
+#[cfg(windows)]
+pub fn login_shell_path() -> Option<OsString> {
+    None
 }
 
 #[cfg(windows)]
@@ -246,6 +297,56 @@ impl Drain {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(windows))]
+    fn sp(login: Option<&str>, current: Option<&str>, have: &[&str]) -> String {
+        let have: Vec<PathBuf> = have.iter().map(PathBuf::from).collect();
+        let exists = |p: &Path| have.iter().any(|h| h == p);
+        let out = session_path(
+            Path::new("/h"),
+            Path::new("/n/bin/claude"),
+            current.map(OsStr::new),
+            login.map(OsStr::new),
+            &exists,
+        );
+        out.to_string_lossy().into_owned()
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn session_path_puts_login_entries_first() {
+        let p = sp(Some("/l/bin:/x"), Some("/usr/bin:/bin"), &[]);
+        assert!(p.starts_with("/l/bin:/x:/usr/bin:/bin"), "{p}");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn session_path_adds_only_existing_standard_dirs() {
+        let p = sp(
+            None,
+            Some("/usr/bin"),
+            &["/h/.local/bin", "/opt/homebrew/bin"],
+        );
+        assert_eq!(p, "/usr/bin:/n/bin:/h/.local/bin:/opt/homebrew/bin");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn session_path_has_no_duplicates() {
+        let p = sp(
+            Some("/n/bin:/usr/bin"),
+            Some("/usr/bin:/n/bin"),
+            &["/usr/bin"],
+        );
+        assert_eq!(p, "/n/bin:/usr/bin");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn session_path_with_empty_inputs_keeps_claude_and_standard_dirs() {
+        let p = sp(None, None, &["/usr/local/bin", "/h/.cargo/bin"]);
+        assert_eq!(p, "/n/bin:/usr/local/bin:/h/.cargo/bin");
+    }
 
     #[test]
     fn picks_an_exe_before_a_cmd_on_windows() {
