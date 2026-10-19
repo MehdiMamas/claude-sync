@@ -57,6 +57,8 @@ pub struct GroupStatus {
     /// `"on"`: GitHub enforces host-only pushes. `"unavailable"`: it can't on this plan.
     /// `None`: not known yet, or this user is not the host.
     pub host_lock: Option<String>,
+    /// Turned off on this device: joined, but nothing of it is applied or synced here.
+    pub disabled: bool,
 }
 
 /// What a change to a group came to.
@@ -206,6 +208,9 @@ pub trait ApplyLayer: Send + Sync {
         files: &FileSet,
     ) -> crate::Result<ApplyReport>;
     fn remove_group(&self, paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport>;
+    /// Take everything the group applied away again, keeping what a re-apply needs
+    /// (Keep-local choices, bundled plugin folders).
+    fn disable_group(&self, paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport>;
     fn keep_local(&self, paths: &Paths, group: &GroupId, path: &str) -> crate::Result<()>;
     /// Put the group's version (`None`: the group does not have it) of `path` back.
     fn undo(
@@ -255,6 +260,9 @@ impl ApplyLayer for FsApply {
     }
     fn remove_group(&self, paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport> {
         crate::apply::remove_group(paths, group)
+    }
+    fn disable_group(&self, paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport> {
+        crate::apply::disable_group(paths, group)
     }
     fn keep_local(&self, paths: &Paths, group: &GroupId, path: &str) -> crate::Result<()> {
         crate::apply::keep_local(paths, group, path)
@@ -685,6 +693,50 @@ impl Engine {
             self.sync_group(id, None).await;
         }
         Ok(())
+    }
+
+    /// Turn a joined group off or back on on this device. Off takes everything it applied
+    /// away (membership, Keep-local choices and the group's folder stay); on applies the last
+    /// synced version again and syncs. Nothing is pushed while off.
+    pub async fn set_group_enabled(
+        &self,
+        id: &GroupId,
+        enabled: bool,
+    ) -> crate::Result<ApplyReport> {
+        let _busy = self.busy.lock().await;
+        self.require_joined(id)?;
+        let mut state = AppState::load(&self.paths)?;
+        if state.disabled.contains(id) == !enabled {
+            return Ok(ApplyReport::default());
+        }
+        if !enabled {
+            let applied = self.apply.disable_group(&self.paths, id)?;
+            state.disabled.insert(id.clone());
+            state.save(&self.paths)?;
+            return Ok(applied);
+        }
+        // The first pass applies what was last synced and treats it as the local side, so
+        // the files that were taken away do not read as local deletions.
+        let base = self.load_base(id)?;
+        let mut files = FileSet::new();
+        if base.files.contains_key(group::FILE) {
+            let (gf, _) = read_group_file(id, &base.files)?;
+            files = only(&base.files, |p| {
+                group::is_allowlisted(p) && gf.syncs(p) && !group::is_repo_only(p)
+            });
+            if let Some(copy) =
+                read_file_if_exists(&self.paths.group_dir(id).join(group::CLAUDE_MD))?
+            {
+                files.insert(group::CLAUDE_MD.into(), copy);
+            }
+        }
+        let applied = self
+            .apply
+            .apply_group(&self.paths, id, &state.groups, &files)?;
+        state.disabled.remove(id);
+        state.save(&self.paths)?;
+        self.sync_group(id, None).await;
+        Ok(applied)
     }
 
     /// Leave on this device: remove managed content. Does not change membership.
@@ -1243,6 +1295,9 @@ impl Engine {
             lost_access: false,
             review: Vec::new(),
         };
+        if AppState::load(&self.paths).is_ok_and(|s| s.disabled.contains(id)) {
+            return (report, None);
+        }
         let remote = self.remotes.open(id);
         let head = match head {
             Some(h) => Ok(h),
@@ -1637,6 +1692,7 @@ impl Engine {
         let applied = self.apply.remove_group(&self.paths, id)?;
         let mut state = AppState::load(&self.paths)?;
         state.groups.retain(|g| g != id);
+        state.disabled.remove(id);
         state.save(&self.paths)?;
         remove_dir_if_exists(&self.paths.group_dir(id))?;
         Ok(applied)
@@ -1686,6 +1742,7 @@ impl Engine {
             is_host,
             proposal_mode: self.group_proposal_mode(id),
             host_lock: s.host_lock,
+            disabled: AppState::load(&self.paths).is_ok_and(|s| s.disabled.contains(id)),
         }
     }
 
@@ -1945,6 +2002,14 @@ fn unknown_step(text: &str, head: &Head) -> review::Step {
     }
 }
 
+fn read_file_if_exists(file: &Path) -> crate::Result<Option<Vec<u8>>> {
+    match std::fs::read(file) {
+        Ok(b) => Ok(Some(b)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
 fn remove_file_if_exists(file: &Path) -> crate::Result<()> {
     match std::fs::remove_file(file) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
@@ -2169,6 +2234,7 @@ mod tests {
         kept_in: HashMap<GroupId, BTreeSet<String>>,
         collide: BTreeSet<String>,
         removed: Vec<GroupId>,
+        disabled: Vec<GroupId>,
         /// The group order each `apply_group` call was given.
         orders: Vec<Vec<GroupId>>,
     }
@@ -2254,6 +2320,16 @@ mod tests {
             }
             st.local.insert(group.clone(), new);
             Ok(report)
+        }
+        fn disable_group(&self, _: &Paths, group: &GroupId) -> crate::Result<ApplyReport> {
+            let mut st = self.st.lock().unwrap();
+            st.disabled.push(group.clone());
+            st.applied.remove(group);
+            let removed = st.local.remove(group).unwrap_or_default();
+            Ok(ApplyReport {
+                removed: removed.into_keys().collect(),
+                ..Default::default()
+            })
         }
         fn remove_group(&self, _: &Paths, group: &GroupId) -> crate::Result<ApplyReport> {
             let mut st = self.st.lock().unwrap();
@@ -2601,6 +2677,48 @@ mod tests {
         assert_eq!(commit_count(&repo), before + 1);
         assert_eq!(repo.file("agents/a.md").unwrap(), "mine\n");
         assert!(bo.engine.groups().await.unwrap()[0].is_host);
+    }
+
+    #[tokio::test]
+    async fn off_group_pushes_nothing_and_on_deletes_nothing() {
+        let (_, id, repo, bo) = joined_host().await;
+
+        bo.engine.set_group_enabled(&id, false).await.unwrap();
+        assert!(bo.engine.groups().await.unwrap()[0].disabled);
+        assert_eq!(bo.apply.file(&id, "agents/a.md"), None);
+        repo.set_file(
+            "agents/b.md",
+            "from the group
+",
+        );
+        let before = commit_count(&repo);
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(!report.groups[0].pushed && !report.groups[0].pulled);
+        assert_eq!(commit_count(&repo), before);
+        assert_eq!(
+            bo.apply.file(&id, "agents/b.md"),
+            None,
+            "nothing applied while off"
+        );
+
+        bo.engine.set_group_enabled(&id, true).await.unwrap();
+        assert!(!bo.engine.groups().await.unwrap()[0].disabled);
+        assert_eq!(
+            bo.apply.file(&id, "agents/a.md").unwrap(),
+            "base
+"
+        );
+        assert_eq!(
+            bo.apply.file(&id, "agents/b.md").unwrap(),
+            "from the group
+"
+        );
+        assert_eq!(
+            repo.file("agents/a.md").unwrap(),
+            "base
+"
+        );
+        assert_eq!(commit_count(&repo), before, "re-enabling pushed a deletion");
     }
 
     #[tokio::test]

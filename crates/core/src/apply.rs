@@ -125,6 +125,9 @@ pub struct GroupEntry {
     /// (collisions, unsafe or unknown paths).
     #[serde(default)]
     pub excluded: BTreeSet<String>,
+    /// The group is turned off on this device ([`disable_group`]): nothing of it is applied.
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 impl Manifest {
@@ -161,6 +164,7 @@ pub fn apply_group(
     let mut backups = Backups::new(paths);
     m.order = order.to_vec();
     entry.excluded.clear();
+    entry.disabled = false;
     // A kept path the group no longer ships is forgotten; settings pointers stay, and so do
     // new plugin files kept on this device while they exist.
     entry.keep_local.retain(|k| {
@@ -659,6 +663,72 @@ pub fn remove_group(paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport
     let mut backups = Backups::new(paths);
     let dir = group.dir_name();
 
+    unapply_files(paths, group, &mut m, &mut backups, &mut report, false)?;
+
+    let gdir = paths.group_dir(group);
+    let copy = gdir.join(CLAUDE_MD);
+    if let Some(cur) = read_file(&copy)? {
+        backups.save(&format!("{dir}/{CLAUDE_MD}"), &cur)?;
+        remove_counted(&copy)?;
+        push_unique(&mut report.removed, CLAUDE_MD);
+    }
+    m.groups.remove(&gkey);
+    m.order.retain(|g| g != group);
+    unapply_settings(paths, group, &mut m, &mut backups, &mut report)?;
+    let settings_copy = gdir.join(SHARED_SETTINGS);
+    if exists_any(&settings_copy) {
+        remove_counted(&settings_copy)?;
+    }
+    // The folder goes too if nothing else (the engine's base snapshot) is in it.
+    let _ = fs::remove_dir(&gdir);
+
+    if m != before {
+        m.save(paths)?;
+    }
+    Ok(report)
+}
+
+/// Turn a joined group off on this device: everything it applied is taken away again
+/// (managed files, the `CLAUDE.md` import line, the settings it set, the marketplace
+/// registrations) exactly as [`remove_group`] does, but the membership stays: Keep-local
+/// choices, the group folder and the group's copies are kept, and bundled marketplace
+/// folders stay on disk so running Claude Code sessions keep their loaded plugin code.
+/// [`apply_group`] turns it back on.
+pub fn disable_group(paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport> {
+    let mut m = Manifest::load(paths)?;
+    let before = m.clone();
+    let mut report = ApplyReport::default();
+    let mut backups = Backups::new(paths);
+
+    unapply_files(paths, group, &mut m, &mut backups, &mut report, true)?;
+    m.groups.entry(group.to_string()).or_default().disabled = true;
+    unapply_settings(paths, group, &mut m, &mut backups, &mut report)?;
+
+    if m != before {
+        m.save(paths)?;
+    }
+    Ok(report)
+}
+
+/// Whether the group is turned off on this device (see [`disable_group`]).
+pub fn is_disabled(paths: &Paths, group: &GroupId) -> crate::Result<bool> {
+    Ok(Manifest::load(paths)?
+        .groups
+        .get(&group.to_string())
+        .is_some_and(|e| e.disabled))
+}
+
+/// Take the group's managed files out of `~/.claude` (those still as the app wrote them)
+/// and out of the manifest. With `keep_plugins`, files of bundled marketplaces stay on disk.
+fn unapply_files(
+    paths: &Paths,
+    group: &GroupId,
+    m: &mut Manifest,
+    backups: &mut Backups,
+    report: &mut ApplyReport,
+    keep_plugins: bool,
+) -> crate::Result<()> {
+    let dir = group.dir_name();
     let ours: Vec<(String, ManagedFile)> = m
         .files
         .iter()
@@ -667,6 +737,9 @@ pub fn remove_group(paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport
         .collect();
     for (rel, mf) in ours {
         m.files.remove(&rel);
+        if keep_plugins && group::marketplace_of(&rel).is_some() {
+            continue;
+        }
         let (root, sub) = locate(paths, &rel);
         if blocked_by_user(root, &sub) {
             continue;
@@ -683,27 +756,22 @@ pub fn remove_group(paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport
             push_unique(&mut report.kept, &rel);
         }
     }
-    prune_dirs(paths, &mut m)?;
+    prune_dirs(paths, m)?;
+    Ok(())
+}
 
-    let gdir = paths.group_dir(group);
-    let copy = gdir.join(CLAUDE_MD);
-    if let Some(cur) = read_file(&copy)? {
-        backups.save(&format!("{dir}/{CLAUDE_MD}"), &cur)?;
-        remove_counted(&copy)?;
-        push_unique(&mut report.removed, CLAUDE_MD);
-    }
-    m.groups.remove(&gkey);
-    m.order.retain(|g| g != group);
-    update_claude_md_block(paths, &mut m, &mut backups, &mut report)?;
-    marketplaces::register(
-        paths,
-        group,
-        &BTreeSet::new(),
-        &mut m,
-        &mut backups,
-        &mut report,
-    )?;
-    report.plugins_changed |= touches_plugins(&report);
+/// Drop the group's import line, its marketplace registrations and the settings it owns.
+fn unapply_settings(
+    paths: &Paths,
+    group: &GroupId,
+    m: &mut Manifest,
+    backups: &mut Backups,
+    report: &mut ApplyReport,
+) -> crate::Result<()> {
+    let gkey = group.to_string();
+    update_claude_md_block(paths, m, backups, report)?;
+    marketplaces::register(paths, group, &BTreeSet::new(), m, backups, report)?;
+    report.plugins_changed |= touches_plugins(report);
 
     let mut owned_all = load_owned(paths)?;
     if let Some(prev) = owned_all.remove(&gkey) {
@@ -723,17 +791,7 @@ pub fn remove_group(paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport
         }
         save_owned(paths, &owned_all)?;
     }
-    let settings_copy = gdir.join(SHARED_SETTINGS);
-    if exists_any(&settings_copy) {
-        remove_counted(&settings_copy)?;
-    }
-    // The folder goes too if nothing else (the engine's base snapshot) is in it.
-    let _ = fs::remove_dir(&gdir);
-
-    if m != before {
-        m.save(paths)?;
-    }
-    Ok(report)
+    Ok(())
 }
 
 /// Stop managing `path` on this device (the "Keep local" action, §7).
@@ -925,6 +983,7 @@ fn update_claude_md_block(
     }
     let lines: Vec<String> = groups
         .iter()
+        .filter(|g| !m.groups.get(&g.to_string()).is_some_and(|e| e.disabled))
         .filter(|g| {
             m.groups
                 .get(&g.to_string())

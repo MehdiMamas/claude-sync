@@ -11,6 +11,9 @@ pub struct AppState {
     pub groups: Vec<crate::GroupId>,
     pub poll_seconds: Option<u64>,
     pub paused: bool,
+    /// Joined groups turned off on this device: nothing of them is applied or synced.
+    #[serde(default)]
+    pub disabled: std::collections::BTreeSet<crate::GroupId>,
 }
 
 impl AppState {

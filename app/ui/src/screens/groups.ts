@@ -42,7 +42,7 @@ function groupRow(g: GroupStatus, pos: number, all: GroupStatus[], move: (from: 
         g.reviewPending > 0 &&
           h("span", { class: "tag warn" }, `${g.reviewPending} CLAUDE.md change${g.reviewPending === 1 ? "" : "s"} to review`),
         problems > 0 && h("span", { class: "tag warn" }, `${problems} to review`),
-        h("div", { class: "muted small" }, `Synced ${relTime(g.lastSyncUnix)}`),
+        h("div", { class: "muted small" }, g.disabled ? "Group off — not applied" : `Synced ${relTime(g.lastSyncUnix)}`),
       ),
     ),
   );

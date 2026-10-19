@@ -1749,3 +1749,115 @@ fn reorder_moves_a_marketplace_to_the_new_winner() {
     );
     assert!(!mp_dir(&e).join("only-in-b.txt").exists());
 }
+
+// ---------------------------------------------------------------- turning a group off
+
+fn marketplace_files() -> [(&'static str, Vec<u8>); 2] {
+    [
+        (
+            "plugins/mp/.claude-plugin/marketplace.json",
+            br#"{"name":"mp","plugins":[]}"#.to_vec(),
+        ),
+        ("plugins/mp/p/plugin.json", b"{}".to_vec()),
+    ]
+}
+
+fn group_files() -> FileSet {
+    let mut f = tree();
+    f.insert("CLAUDE.md".into(), b"# group rules\n".to_vec());
+    f.insert(
+        "settings.shared.json".into(),
+        serde_json::to_vec(&json!({
+            "enabledPlugins": {"tool@mp": true},
+            "model": "opus",
+            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo group"}]}]},
+        }))
+        .unwrap(),
+    );
+    for (p, b) in marketplace_files() {
+        f.insert(p.into(), b);
+    }
+    f
+}
+
+fn seed_user(e: &Env) {
+    put(&home(e, "CLAUDE.md"), b"my own line\n\nsecond line\n");
+    // Written the way the app writes settings.json (pretty, trailing newline).
+    let mut settings = serde_json::to_vec_pretty(&json!({
+        "theme": "dark",
+        "enabledPlugins": {"mine@other": true},
+        "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]},
+    }))
+    .unwrap();
+    settings.push(b'\n');
+    put(&home(e, "settings.json"), &settings);
+}
+
+fn user_state(e: &Env) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+    (read(&home(e, "CLAUDE.md")), read(&home(e, "settings.json")))
+}
+
+#[test]
+fn off_on_off_restores_the_files_exactly() {
+    let e = env();
+    let a = g("a");
+    seed_user(&e);
+    let pre = user_state(&e);
+
+    let r = apply_group(&e.paths, &a, only(&a), &group_files()).unwrap();
+    assert!(r.collisions.is_empty(), "{r:?}");
+    let applied = user_state(&e);
+    assert_ne!(applied, pre);
+    assert!(home(&e, "skills/alpha/SKILL.md").exists());
+
+    let off = disable_group(&e.paths, &a).unwrap();
+    assert!(off.removed.contains(&"skills/alpha/SKILL.md".to_string()));
+    assert_eq!(user_state(&e), pre, "off must restore the user's files");
+    assert!(!home(&e, "skills/alpha/SKILL.md").exists());
+    assert!(!home(&e, "agents/reviewer.md").exists());
+    let plugin = e.paths.state_dir.join("marketplaces/mp/p/plugin.json");
+    assert!(plugin.exists(), "plugin files stay for running sessions");
+    assert!(is_disabled(&e.paths, &a).unwrap());
+
+    let on = apply_group(&e.paths, &a, only(&a), &group_files()).unwrap();
+    assert!(on.collisions.is_empty(), "{on:?}");
+    assert!(on.kept.is_empty(), "{on:?}");
+    assert_eq!(
+        user_state(&e),
+        applied,
+        "on must give the first applied state back"
+    );
+    assert!(!is_disabled(&e.paths, &a).unwrap());
+    assert_eq!(read(&plugin).unwrap(), b"{}");
+    assert!(Manifest::load(&e.paths)
+        .unwrap()
+        .files
+        .contains_key("plugins/mp/p/plugin.json"));
+
+    disable_group(&e.paths, &a).unwrap();
+    assert_eq!(user_state(&e), pre);
+}
+
+#[test]
+fn keep_local_survives_off_and_on() {
+    let e = env();
+    let a = g("a");
+    seed_user(&e);
+    apply_group(&e.paths, &a, only(&a), &group_files()).unwrap();
+    keep_local(&e.paths, &a, "agents/reviewer.md").unwrap();
+    keep_local(&e.paths, &a, "settings.shared.json#/model").unwrap();
+    let kept = |e: &Env| {
+        Manifest::load(&e.paths).unwrap().groups["owner/a"]
+            .keep_local
+            .clone()
+    };
+    let before = kept(&e);
+    assert_eq!(before.len(), 2);
+
+    disable_group(&e.paths, &a).unwrap();
+    assert_eq!(kept(&e), before);
+    apply_group(&e.paths, &a, only(&a), &group_files()).unwrap();
+    assert_eq!(kept(&e), before);
+    // A kept setting is the user's own value now: off and on leave it be.
+    assert_eq!(settings_json(&e)["model"], "opus");
+}

@@ -26,6 +26,13 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let notifications =
         MenuItem::with_id(app, "notifications", "Notifications", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", pause_label(ctx.paused()), true, None::<&str>)?;
+    let groups_off = MenuItem::with_id(
+        app,
+        "groups_off",
+        "Turn groups off / on",
+        true,
+        None::<&str>,
+    )?;
     let feedback = MenuItem::with_id(app, "feedback", "Send feedback…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let sep = || PredefinedMenuItem::separator(app);
@@ -37,6 +44,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             &sync,
             &open,
             &pause,
+            &groups_off,
             &sep()?,
             &feedback,
             &quit,
@@ -60,6 +68,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 background::refresh_status(app);
                 ctx.wake.notify_one();
             }
+            "groups_off" => toggle_groups(app),
             "feedback" => window::open(app, Some("feedback")),
             "quit" => updates::quit(app),
             _ => {}
@@ -85,6 +94,34 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         notifications,
     });
     Ok(())
+}
+
+/// Turn every joined group off on this device, or back on when all of them are already off.
+fn toggle_groups(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let ctx = app.state::<Arc<Ctx>>();
+        let result = async {
+            let e = ctx.engine().map_err(|e| e.to_string())?;
+            let groups = e.groups().await.map_err(|e| e.to_string())?;
+            let enable = !groups.is_empty() && groups.iter().all(|g| g.disabled);
+            for g in &groups {
+                let report = e
+                    .set_group_enabled(&g.id, enable)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if report.plugins_changed {
+                    background::plugins_changed(&app, Some(&g.id));
+                }
+            }
+            Ok::<_, String>(())
+        }
+        .await;
+        if let Err(e) = result {
+            tracing::warn!("turn groups off/on failed: {e}");
+        }
+        background::refresh_status(&app);
+    });
 }
 
 fn pause_label(paused: bool) -> &'static str {
