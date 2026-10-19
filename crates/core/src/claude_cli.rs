@@ -298,6 +298,7 @@ impl Drain {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     fn sp(login: Option<&str>, current: Option<&str>, have: &[&str]) -> String {
         let have: Vec<PathBuf> = have.iter().map(PathBuf::from).collect();
         let exists = |p: &Path| have.iter().any(|h| h == p);
