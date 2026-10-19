@@ -852,6 +852,14 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
           go("groups");
         }),
       );
+      const toggle = h("button", { type: "button" }, g.disabled ? "Turn on group" : "Turn off group");
+      toggle.addEventListener("click", () =>
+        busy(toggle, g.disabled ? "Turning on…" : "Turning off…", async () => {
+          await api.setGroupEnabled(id, g.disabled);
+          toast(g.disabled ? `${g.name} is on again.` : `${g.name} is off. Nothing from it applies on this device.`);
+          await load();
+        }),
+      );
       replace(
         head,
         h(
@@ -860,8 +868,9 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
           h("a", { href: "#/groups", class: "back" }, "← Groups"),
           h("h1", null, g.name),
           h("div", { class: "muted small" }, `${groupKey(g.id)} · synced ${relTime(g.lastSyncUnix)}`),
+          g.disabled && h("div", { class: "muted small", role: "status" }, "Group off — not applied"),
         ),
-        h("div", { class: "actions" }, leave),
+        h("div", { class: "actions" }, toggle, leave),
       );
       // Read once: the contents card lists it and the history card names mods and skills by it.
       const contents = api.groupContents(g.id);

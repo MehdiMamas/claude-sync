@@ -37,6 +37,8 @@ export interface GroupStatus {
   proposalMode: boolean;
   /** The ruleset that stops others writing to the group: "on", "unavailable" (GitHub refused), or null for members. */
   hostLock: "on" | "unavailable" | null;
+  /** Turned off on this device: nothing from the group is applied. */
+  disabled: boolean;
 }
 /** One block of lines another member added to or removed from the group's CLAUDE.md. */
 export interface ReviewItem {
@@ -477,6 +479,8 @@ export const api = {
   removeMember: (group: GroupId, login: string) => call<void>("remove_member", { group, login }),
   reorderGroups: (order: GroupId[]) => call<SyncReport>("reorder_groups", { order }),
   leaveGroup: (group: GroupId) => call<void>("leave_group", { group }),
+  setGroupEnabled: (group: GroupId, enabled: boolean) =>
+    call<void>("set_group_enabled", { group, enabled }),
   localEdits: () => call<LocalEdit[]>("local_edits"),
   resolveEdit: (edit: LocalEdit, action: EditAction) => call<void>("resolve_edit", { edit, action }),
   groupContents: (group: GroupId) => call<GroupContents>("group_contents", { group }),

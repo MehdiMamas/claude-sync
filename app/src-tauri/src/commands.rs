@@ -235,6 +235,26 @@ pub async fn leave_group(app: AppHandle, ctx: CtxState<'_>, group: GroupId) -> R
     Ok(())
 }
 
+/// Turn a group off (nothing from it applies on this machine) or back on.
+#[tauri::command]
+pub async fn set_group_enabled(
+    app: AppHandle,
+    ctx: CtxState<'_>,
+    group: GroupId,
+    enabled: bool,
+) -> Res<()> {
+    let e = ctx.engine()?;
+    let report = e
+        .set_group_enabled(&group, enabled)
+        .await
+        .map_err(guard::logged("turn group on/off"))?;
+    if report.plugins_changed {
+        background::plugins_changed(&app, Some(&group));
+    }
+    background::refresh_status(&app);
+    Ok(())
+}
+
 /// Put the joined groups in a new order (first wins collisions, §7) and apply them again.
 #[tauri::command]
 pub async fn reorder_groups(

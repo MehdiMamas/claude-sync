@@ -2672,6 +2672,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn off_group_pushes_nothing_and_on_deletes_nothing() {
+        let (_, id, repo, bo) = joined_host().await;
+
+        bo.engine.set_group_enabled(&id, false).await.unwrap();
+        assert!(bo.engine.groups().await.unwrap()[0].disabled);
+        assert_eq!(bo.apply.file(&id, "agents/a.md"), None);
+        repo.set_file("agents/b.md", "from the group
+");
+        let before = commit_count(&repo);
+        let report = bo.engine.sync_all().await.unwrap();
+        assert!(!report.groups[0].pushed && !report.groups[0].pulled);
+        assert_eq!(commit_count(&repo), before);
+        assert_eq!(bo.apply.file(&id, "agents/b.md"), None, "nothing applied while off");
+
+        bo.engine.set_group_enabled(&id, true).await.unwrap();
+        assert!(!bo.engine.groups().await.unwrap()[0].disabled);
+        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "base
+");
+        assert_eq!(bo.apply.file(&id, "agents/b.md").unwrap(), "from the group
+");
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base
+");
+        assert_eq!(commit_count(&repo), before, "re-enabling pushed a deletion");
+    }
+
+    #[tokio::test]
     async fn host_lock_is_ensured_once_per_run() {
         let (_, _, repo, bo) = joined_host().await;
         bo.engine.sync_all().await.unwrap();

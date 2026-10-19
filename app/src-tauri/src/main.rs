@@ -143,6 +143,7 @@ fn main() {
             commands::remove_member,
             commands::transfer_group,
             commands::leave_group,
+            commands::set_group_enabled,
             commands::reorder_groups,
             commands::local_edits,
             commands::resolve_edit,
