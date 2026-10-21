@@ -70,8 +70,7 @@ let notifications: Notification[] = q.has("noNotifications")
 let nextNotification = 7;
 let desktopNotifications = true;
 let githubApp = false;
-let helperKey = q.has("helper") ? "sk-ant-mock-1234" : "";
-const helperStatus = () => ({ saved: helperKey !== "", hint: helperKey.slice(-4) });
+const helperStatus = () => ({ available: q.has("helper") });
 const notificationListeners: ((p: Events["notifications-changed"]) => void)[] = [];
 function notificationsChanged(): void {
   const unread = notifications.filter((n) => !n.read).length;
@@ -561,17 +560,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     return { deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false, desktopNotifications, githubApp, ...s };
   },
   helper_status: helperStatus,
-  helper_save_key: (a) => {
-    const k = String(a.key).trim();
-    if (!k.startsWith("sk-ant-")) throw "That does not look like an Anthropic API key. It starts with sk-ant-.";
-    helperKey = k;
-    return helperStatus();
-  },
-  helper_remove_key: () => {
-    helperKey = "";
-    return helperStatus();
-  },
-  helper_test_key: () => undefined,
   helper_explain: () => "- The two sides say nearly the same thing.\n- Keep the newer one and drop the other.",
   notifications: () => notifications.map((n) => ({ ...n })),
   mark_notification_read: (a) => {

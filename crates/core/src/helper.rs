@@ -1,22 +1,21 @@
 //! Optional Claude helper (§19): explains a collision or a CLAUDE.md change and summarises
-//! incoming group changes, with the user's own Anthropic API key. The key lives only in the
-//! OS keychain (account `@anthropic-key`, next to the GitHub token), is sent only to
-//! `https://api.anthropic.com`, and is never logged. Every call is on demand: it costs the
-//! user money, so nothing here runs by itself.
+//! incoming group changes with the user's own Claude Code login: it runs the local `claude -p`
+//! command. No API key is stored or sent anywhere by this app. Every call is on demand.
 use crate::github::token_store::Store;
-use crate::{secrets, Error, Result};
-use async_trait::async_trait;
-use serde_json::{json, Value};
+use crate::{claude_cli, secrets, Error, Result};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-pub const ACCOUNT: &str = "@anthropic-key";
-pub const API_URL: &str = "https://api.anthropic.com/v1/messages";
-pub const MODEL: &str = "claude-haiku-5-5";
-pub const VERSION: &str = "2023-06-01";
-pub const MAX_TOKENS: u32 = 600;
+/// The keychain account an older version saved a pasted API key under. It is only deleted.
+const LEGACY_KEY_ACCOUNT: &str = "@anthropic-key";
+pub const MODEL: &str = "sonnet";
 /// Text longer than this is cut, with a note, before it is sent.
 pub const MAX_INPUT: usize = 40 * 1024;
+pub const TIMEOUT: Duration = Duration::from_secs(120);
+pub const MISSING: &str =
+    "Claude Code isn't installed or signed in. Install it and run `claude` once to sign in.";
 
-const SYSTEM: &str = "You help a user of claude-sync, an app that shares Claude Code settings in groups. Explain plainly in a few short bullets what changed and what the user should decide. Do not repeat the text back. No preamble.";
+const SYSTEM: &str = "You help a user of claude-sync, an app that shares Claude Code settings in groups. Explain plainly in a few short bullets what changed and what the user should decide. Do not repeat the text back. No preamble. Answer from the text below only; do not use tools.";
 
 /// What the user is asking about; it only changes the first line of the prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
@@ -40,69 +39,85 @@ impl Task {
     }
 }
 
-#[derive(Clone)]
-pub struct Reply {
-    pub status: u16,
-    pub body: String,
+/// Finds and runs `claude`. The app uses [`LocalClaude`]; tests use a fake, so they never
+/// start the real CLI.
+pub trait Runner: Send + Sync {
+    /// The `claude` command, if installed.
+    fn find(&self) -> Option<PathBuf>;
+    /// Run it with `args`, `prompt` on stdin.
+    fn run(
+        &self,
+        claude: &Path,
+        args: &[String],
+        prompt: &str,
+    ) -> std::io::Result<claude_cli::Output>;
 }
 
-/// The one network call. The app uses reqwest; tests use a fake.
-#[async_trait]
-pub trait Http: Send + Sync {
-    /// `Err` means the request never got an answer (offline, DNS, timeout).
-    async fn post(
-        &self,
-        url: &str,
-        headers: &[(&str, &str)],
-        body: String,
-    ) -> Result<Reply, String>;
-}
+pub struct LocalClaude;
 
-pub struct ReqwestHttp;
-
-#[async_trait]
-impl Http for ReqwestHttp {
-    async fn post(
+impl Runner for LocalClaude {
+    fn find(&self) -> Option<PathBuf> {
+        claude_cli::resolve(&std::env::home_dir()?)
+    }
+    fn run(
         &self,
-        url: &str,
-        headers: &[(&str, &str)],
-        body: String,
-    ) -> Result<Reply, String> {
-        let mut req = crate::github::http_client().post(url).body(body);
-        for (k, v) in headers {
-            req = req.header(*k, *v);
-        }
-        let res = req.send().await.map_err(|e| e.without_url().to_string())?;
-        let status = res.status().as_u16();
-        let body = res.text().await.map_err(|e| e.without_url().to_string())?;
-        Ok(Reply { status, body })
+        claude: &Path,
+        args: &[String],
+        prompt: &str,
+    ) -> std::io::Result<claude_cli::Output> {
+        let mut cmd = std::process::Command::new(claude);
+        cmd.args(args)
+            // Not a project folder, so no project CLAUDE.md or settings are read.
+            .current_dir(std::env::temp_dir())
+            .env("DISABLE_AUTOUPDATER", "1")
+            .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
+        claude_cli::run_command_input(cmd, Some(prompt.to_string()), TIMEOUT)
     }
 }
 
-/// The saved key, if any.
-pub fn load_key(store: &impl Store) -> Result<Option<String>> {
-    Ok(store.get(ACCOUNT)?.filter(|k| !k.is_empty()))
+/// Whether the helper can run: `claude` is installed.
+pub fn available(runner: &dyn Runner) -> bool {
+    runner.find().is_some()
 }
 
-/// Check and store a key. Only the shape is checked here; "Test key" asks Anthropic.
-pub fn save_key(store: &impl Store, key: &str) -> Result<()> {
-    let key = key.trim();
-    if !key.starts_with("sk-ant-") || key.chars().any(char::is_whitespace) {
-        return Err(Error::Invalid(
-            "That does not look like an Anthropic API key. It starts with sk-ant-.".into(),
-        ));
+/// Delete the API key an older version saved, once. True when there was one.
+pub fn remove_legacy_key(store: &impl Store) -> Result<bool> {
+    let had = store.get(LEGACY_KEY_ACCOUNT)?.is_some();
+    if had {
+        store.delete(LEGACY_KEY_ACCOUNT)?;
     }
-    store.set(ACCOUNT, key)
+    Ok(had)
 }
 
-pub fn remove_key(store: &impl Store) -> Result<()> {
-    store.delete(ACCOUNT)
+/// The arguments of one call: no tools, one turn, JSON output.
+pub fn build_args() -> Vec<String> {
+    [
+        "-p",
+        "--model",
+        MODEL,
+        "--output-format",
+        "json",
+        "--max-turns",
+        "1",
+        "--disallowedTools",
+        "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,Agent,Read,Grep,Glob",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
 }
 
-/// The last four characters, for "saved key ending in …".
-pub fn key_hint(key: &str) -> String {
-    let n = key.chars().count();
-    key.chars().skip(n.saturating_sub(4)).collect()
+/// The answer text of `claude --output-format json`.
+pub fn parse_output(stdout: &str) -> Result<String> {
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).map_err(|_| {
+        Error::Invalid("Claude answered in a form this app does not understand.".into())
+    })?;
+    match v["result"].as_str() {
+        Some(r) if v["is_error"] != true && !r.trim().is_empty() => Ok(r.trim().to_string()),
+        _ => Err(Error::Invalid(
+            "Claude could not answer. Open `claude` once to check you are signed in, then try again.".into(),
+        )),
+    }
 }
 
 /// Cut `text` to `MAX_INPUT` bytes on a char boundary, with a note.
@@ -121,61 +136,31 @@ fn cap(text: &str) -> String {
     )
 }
 
-fn request_body(prompt: &str, max_tokens: u32) -> String {
-    json!({
-        "model": MODEL,
-        "max_tokens": max_tokens,
-        "system": SYSTEM,
-        "messages": [{ "role": "user", "content": prompt }],
-    })
-    .to_string()
-}
-
-async fn send(http: &dyn Http, key: &str, body: String) -> Result<String> {
-    let headers = [
-        ("x-api-key", key),
-        ("anthropic-version", VERSION),
-        ("content-type", "application/json"),
-    ];
-    let reply = http.post(API_URL, &headers, body).await.map_err(|_| {
-        Error::Invalid(
-            "Could not reach Anthropic. Check your internet connection and try again.".into(),
-        )
-    })?;
-    if reply.status == 200 {
-        let v: Value = serde_json::from_str(&reply.body)?;
-        let text: String = v["content"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|b| b["text"].as_str())
-            .collect();
-        return Ok(text.trim().to_string());
+fn run_claude(runner: &dyn Runner, prompt: &str) -> Result<String> {
+    let claude = runner
+        .find()
+        .ok_or_else(|| Error::Invalid(MISSING.into()))?;
+    let out = runner
+        .run(&claude, &build_args(), prompt)
+        .map_err(|_| Error::Invalid(MISSING.into()))?;
+    match out.code {
+        None => Err(Error::Invalid(
+            "Claude took too long to answer. Try again.".into(),
+        )),
+        // A non-zero exit still prints JSON when Claude itself failed; parse it for the reason.
+        Some(_) => parse_output(&out.stdout),
     }
-    Err(Error::Invalid(match reply.status {
-        401 | 403 => "Anthropic did not accept your API key. Check it in Settings.".to_string(),
-        429 => "Anthropic says you are sending too many requests or are out of credit. Wait a bit or check your balance.".to_string(),
-        529 => "Anthropic is overloaded right now. Try again in a minute.".to_string(),
-        s => format!("Anthropic returned an error ({s})."),
-    }))
 }
 
 /// Explain or summarise `text`. Refuses, without sending, when the text holds a secret (§9).
-pub async fn explain(http: &dyn Http, key: &str, task: Task, text: &str) -> Result<String> {
+pub fn explain(runner: &dyn Runner, task: Task, text: &str) -> Result<String> {
     if let Some(pattern) = secrets::first_hit(text) {
         return Err(Error::Invalid(format!(
             "This text looks like it contains a secret ({pattern}), so it was not sent to Claude. Remove the secret first."
         )));
     }
-    let prompt = format!("{}\n\n{}", task.intro(), cap(text));
-    send(http, key, request_body(&prompt, MAX_TOKENS)).await
-}
-
-/// Ask Anthropic whether the key works (one tiny request).
-pub async fn test_key(http: &dyn Http, key: &str) -> Result<()> {
-    send(http, key, request_body("Reply with: ok", 5))
-        .await
-        .map(|_| ())
+    let prompt = format!("{SYSTEM}\n\n{}\n\n{}", task.intro(), cap(text));
+    run_claude(runner, &prompt)
 }
 
 #[cfg(test)]
@@ -201,101 +186,117 @@ mod tests {
         }
     }
 
-    type Seen = Vec<(String, Vec<(String, String)>, String)>;
     struct Fake {
-        reply: Option<(u16, String)>,
-        seen: Mutex<Seen>,
+        installed: bool,
+        out: Option<(Option<i32>, String)>,
+        seen: Mutex<Vec<(Vec<String>, String)>>,
     }
     impl Fake {
-        fn new(status: u16, body: &str) -> Self {
+        fn new(code: i32, stdout: &str) -> Self {
             Fake {
-                reply: Some((status, body.into())),
+                installed: true,
+                out: Some((Some(code), stdout.into())),
                 seen: Mutex::default(),
             }
         }
-        fn offline() -> Self {
+        fn missing() -> Self {
             Fake {
-                reply: None,
+                installed: false,
+                out: None,
                 seen: Mutex::default(),
             }
         }
     }
-    #[async_trait]
-    impl Http for Fake {
-        async fn post(
+    impl Runner for Fake {
+        fn find(&self) -> Option<PathBuf> {
+            self.installed.then(|| PathBuf::from("/fake/claude"))
+        }
+        fn run(
             &self,
-            url: &str,
-            headers: &[(&str, &str)],
-            body: String,
-        ) -> Result<Reply, String> {
-            let h = headers
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect();
-            self.seen.lock().unwrap().push((url.into(), h, body));
-            self.reply
-                .clone()
-                .map(|(status, body)| Reply { status, body })
-                .ok_or("offline".into())
+            _: &Path,
+            args: &[String],
+            prompt: &str,
+        ) -> std::io::Result<claude_cli::Output> {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((args.to_vec(), prompt.into()));
+            let (code, stdout) = self.out.clone().unwrap();
+            Ok(claude_cli::Output {
+                code,
+                stdout,
+                stderr: String::new(),
+            })
         }
     }
 
-    const KEY: &str = "sk-ant-api03-abcdefghijWXYZ";
-    const OK: &str = r#"{"content":[{"type":"text","text":"- one\n- two"}]}"#;
+    const OK: &str = r#"{"type":"result","is_error":false,"result":"- one\n- two\n"}"#;
 
-    fn run<T>(f: impl std::future::Future<Output = T>) -> T {
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap()
-            .block_on(f)
+    #[test]
+    fn args_use_sonnet_json_and_no_tools() {
+        let a = build_args();
+        assert_eq!(
+            &a[..5],
+            ["-p", "--model", "sonnet", "--output-format", "json"]
+        );
+        let dis = &a[a.iter().position(|x| x == "--disallowedTools").unwrap() + 1];
+        assert!(dis.contains("Bash") && dis.contains("Write") && dis.contains("WebFetch"));
     }
 
     #[test]
-    fn key_is_stored_and_removed() {
-        let s = MemStore::default();
-        assert_eq!(load_key(&s).unwrap(), None);
-        save_key(&s, &format!("  {KEY}\n")).unwrap();
-        assert_eq!(load_key(&s).unwrap().as_deref(), Some(KEY));
-        assert_eq!(key_hint(KEY), "WXYZ");
-        remove_key(&s).unwrap();
-        assert_eq!(load_key(&s).unwrap(), None);
+    fn output_is_parsed() {
+        assert_eq!(parse_output(OK).unwrap(), "- one\n- two");
+        assert!(parse_output("not json").is_err());
+        assert!(parse_output(r#"{"is_error":true,"result":"x"}"#).is_err());
+        assert!(parse_output(r#"{"subtype":"error_max_turns"}"#).is_err());
+        assert!(parse_output(r#"{"result":"  "}"#).is_err());
     }
 
     #[test]
-    fn odd_keys_are_refused() {
-        let s = MemStore::default();
-        assert!(save_key(&s, "ghp_nope").is_err());
-        assert!(save_key(&s, "sk-ant-a b").is_err());
-        assert_eq!(load_key(&s).unwrap(), None);
-    }
-
-    #[test]
-    fn request_has_the_right_shape_and_no_key_in_body() {
-        let f = Fake::new(200, OK);
-        let out = run(explain(&f, KEY, Task::Collision, "use tabs\nuse spaces")).unwrap();
+    fn explain_sends_the_prompt_on_stdin_to_the_runner() {
+        let f = Fake::new(0, OK);
+        let out = explain(&f, Task::Collision, "use tabs\nuse spaces").unwrap();
         assert_eq!(out, "- one\n- two");
         let seen = f.seen.lock().unwrap();
-        let (url, headers, body) = &seen[0];
-        assert_eq!(url, "https://api.anthropic.com/v1/messages");
-        assert!(headers.contains(&("x-api-key".into(), KEY.into())));
-        assert!(headers.contains(&("anthropic-version".into(), "2023-06-01".into())));
-        assert!(!body.contains(KEY));
-        let v: Value = serde_json::from_str(body).unwrap();
-        assert_eq!(v["model"], "claude-haiku-5-5");
-        assert_eq!(v["max_tokens"], 600);
-        assert!(v["messages"][0]["content"]
-            .as_str()
-            .unwrap()
-            .contains("use spaces"));
+        assert!(seen[0].1.contains("use spaces") && seen[0].1.contains("clash"));
+        assert_eq!(seen[0].0, build_args());
+    }
+
+    #[test]
+    fn missing_claude_gives_the_plain_error() {
+        let f = Fake::missing();
+        assert!(!available(&f));
+        let err = explain(&f, Task::Activity, "x").unwrap_err().to_string();
+        assert!(err.contains("isn't installed or signed in"), "{err}");
+        assert!(f.seen.lock().unwrap().is_empty());
+        assert!(available(&Fake::new(0, OK)));
+    }
+
+    #[test]
+    fn timeout_and_failure_are_plain_words() {
+        let mut f = Fake::new(0, "");
+        f.out = Some((None, String::new()));
+        let err = explain(&f, Task::Activity, "x").unwrap_err().to_string();
+        assert!(err.contains("too long"), "{err}");
+        let err = explain(&Fake::new(1, "boom"), Task::Activity, "x")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not understand"), "{err}");
+        let err = explain(
+            &Fake::new(1, r#"{"is_error":true,"result":"Not logged in"}"#),
+            Task::Activity,
+            "x",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("signed in"), "{err}");
     }
 
     #[test]
     fn text_with_a_secret_is_not_sent() {
-        let f = Fake::new(200, OK);
+        let f = Fake::new(0, OK);
         let text = format!("token: ghp_{}", "a".repeat(36));
-        let err = run(explain(&f, KEY, Task::Activity, &text))
-            .unwrap_err()
-            .to_string();
+        let err = explain(&f, Task::Activity, &text).unwrap_err().to_string();
         assert!(err.contains("not sent"), "{err}");
         assert!(!err.contains("ghp_aaa"));
         assert!(f.seen.lock().unwrap().is_empty());
@@ -303,30 +304,21 @@ mod tests {
 
     #[test]
     fn long_text_is_cut_with_a_note() {
-        let f = Fake::new(200, OK);
-        run(explain(&f, KEY, Task::Activity, &"é".repeat(MAX_INPUT))).unwrap();
-        let body = f.seen.lock().unwrap()[0].2.clone();
-        assert!(body.contains("cut"));
-        assert!(body.len() < MAX_INPUT + 2048);
+        let f = Fake::new(0, OK);
+        explain(&f, Task::Activity, &"é".repeat(MAX_INPUT)).unwrap();
+        let prompt = f.seen.lock().unwrap()[0].1.clone();
+        assert!(prompt.contains("cut"));
+        assert!(prompt.len() < MAX_INPUT + 2048);
     }
 
     #[test]
-    fn errors_are_plain_words() {
-        let msg = |f: Fake| {
-            run(explain(&f, KEY, Task::Activity, "x"))
-                .unwrap_err()
-                .to_string()
-        };
-        assert!(msg(Fake::new(401, "{}")).contains("did not accept your API key"));
-        assert!(msg(Fake::new(429, "{}")).contains("credit"));
-        assert!(msg(Fake::new(529, "{}")).contains("overloaded"));
-        assert!(msg(Fake::offline()).contains("internet"));
-        assert!(!msg(Fake::new(401, "{}")).contains(KEY));
-    }
-
-    #[test]
-    fn test_key_maps_401() {
-        assert!(run(test_key(&Fake::new(200, OK), KEY)).is_ok());
-        assert!(run(test_key(&Fake::new(401, "{}"), KEY)).is_err());
+    fn an_old_api_key_is_deleted_once() {
+        let s = MemStore::default();
+        s.set(LEGACY_KEY_ACCOUNT, "old-key").unwrap();
+        s.set("@current", "gh-token").unwrap();
+        assert!(remove_legacy_key(&s).unwrap());
+        assert_eq!(s.get(LEGACY_KEY_ACCOUNT).unwrap(), None);
+        assert_eq!(s.get("@current").unwrap().as_deref(), Some("gh-token"));
+        assert!(!remove_legacy_key(&s).unwrap());
     }
 }
