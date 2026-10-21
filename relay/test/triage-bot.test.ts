@@ -53,7 +53,7 @@ describe("triage bot", () => {
     assert.equal(fm.calls.length, 0);
   });
 
-  it("refuses a key file that group or others can access", () => {
+  it("refuses a key file that group or others can access", { skip: process.platform === "win32" && "no POSIX modes on Windows" }, () => {
     chmodSync(keyFile, 0o640);
     assert.throws(() => readKeyFile(keyFile), /group or others/);
     chmodSync(keyFile, 0o604);

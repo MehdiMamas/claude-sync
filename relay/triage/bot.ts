@@ -28,11 +28,12 @@ export function botConfig(env: Record<string, string | undefined> = process.env)
   return { appId, installationId, keyFile };
 }
 
-/** Reads the private key; refuses a file that group or others can access. */
+/** Reads the private key; refuses a file that group or others can access. Windows has no
+ *  POSIX mode bits (every file reads as 0666), so the check runs only elsewhere. */
 export function readKeyFile(path: string): string {
   const st = statSync(path);
   if (!st.isFile()) throw new Error("TRIAGE_APP_KEY_FILE is not a file");
-  if ((st.mode & 0o077) !== 0) {
+  if (process.platform !== "win32" && (st.mode & 0o077) !== 0) {
     throw new Error(`TRIAGE_APP_KEY_FILE ${path} is accessible by group or others (mode ${(st.mode & 0o777).toString(8)}): run chmod 600 on it`);
   }
   return readFileSync(path, "utf8");
