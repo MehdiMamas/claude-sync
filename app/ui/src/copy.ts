@@ -83,3 +83,7 @@ export function clashTitle(c: Clash): string {
   if (c.kind === "duplicate") return `${c.b.name} says the same thing`;
   return `${c.b.name} says the opposite`;
 }
+export function coverageLines(c: { missing: { owner: string; repo: string }[]; noInstallation: boolean }): string[] {
+  if (c.noInstallation) return ["The App is not installed on any account yet. Install it to use it for sign-in."];
+  return c.missing.map((g) => `Not covered: ${g.owner}/${g.repo} — the host must install the App there`);
+}

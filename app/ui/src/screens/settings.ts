@@ -1,6 +1,7 @@
 // Settings: device name, how often to check, start at login, pause, personal memory,
 // notifications, account,
 // updates.
+import { coverageLines } from "../copy";
 import { api, errorText, type HelperStatus, type Settings } from "../api";
 import { busy, errorBox, h, replace, spinner, toast } from "../dom";
 import { onRefresh, store } from "../store";
@@ -119,6 +120,46 @@ function helperCard(): HTMLElement {
   );
 }
 
+function githubAppCard(s: Settings, save: (patch: Partial<Settings>, done?: string) => Promise<void>): HTMLElement {
+  const missing = store.info?.appClientIdMissing ?? false;
+  const toggle = h("input", { id: "s-ghapp", type: "checkbox", checked: s.githubApp && !missing, disabled: missing });
+  const install = h("button", { type: "button" }, "Install the App");
+  const list = h("ul", { class: "muted small", role: "status" });
+  const extra = h("div", null, h("div", { class: "actions" }, install), list);
+  const loadCoverage = async () => {
+    try {
+      const c = await api.appCoverage();
+      replace(list, ...coverageLines(c).map((t) => h("li", null, t)));
+    } catch (e) {
+      replace(list, h("li", null, errorText(e)));
+    }
+  };
+  const show = (on: boolean) => {
+    extra.hidden = !on;
+    if (on) void loadCoverage();
+  };
+  install.addEventListener("click", () => busy(install, "Opening…", () => api.openAppInstall(false)));
+  toggle.addEventListener("change", async () => {
+    await save({ githubApp: toggle.checked });
+    show(toggle.checked);
+  });
+  show(toggle.checked);
+  return h(
+    "section",
+    { class: "card", "aria-labelledby": "ghapp-h" },
+    h("h2", { id: "ghapp-h" }, "GitHub App (beta)"),
+    h("div", { class: "check" }, toggle, h("label", { for: "s-ghapp" }, "Sign in with the GitHub App (beta)")),
+    h(
+      "p",
+      { class: "muted small" },
+      missing
+        ? "This build has no GitHub App."
+        : "Takes effect at your next sign-in. The App only reaches repos it is installed on.",
+    ),
+    extra,
+  );
+}
+
 function form(s: Settings): HTMLElement[] {
   const save = async (patch: Partial<Settings>, done?: string) => {
     try {
@@ -222,6 +263,7 @@ function form(s: Settings): HTMLElement[] {
       h("p", { class: "muted small" }, "Signing out removes the token from this computer. Your groups stay on GitHub and the files stay on this device."),
       h("div", { class: "actions" }, signOut),
     ),
+    githubAppCard(s, save),
     helperCard(),
     updateCard(),
     h(

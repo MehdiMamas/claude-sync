@@ -60,3 +60,12 @@ test("clashes of a group put its side first", () => {
   assert.equal(warning(clash("contradiction", ours, theirs)), '"- use tabs" contradicts Acme: "Never use tabs"');
   assert.equal(warning(clash("duplicate", ours, own)), '"- use tabs" is already in Your CLAUDE.md: "Use tabs"');
 });
+
+import { coverageLines } from "./copy.ts";
+test("coverageLines names uncovered repos in plain words", () => {
+  assert.deepEqual(coverageLines({ missing: [{ owner: "a", repo: "b" }], noInstallation: false }), [
+    "Not covered: a/b — the host must install the App there",
+  ]);
+  assert.deepEqual(coverageLines({ missing: [], noInstallation: false }), []);
+  assert.equal(coverageLines({ missing: [], noInstallation: true }).length, 1);
+});

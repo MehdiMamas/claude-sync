@@ -69,6 +69,7 @@ let notifications: Notification[] = q.has("noNotifications")
     ];
 let nextNotification = 7;
 let desktopNotifications = true;
+let githubApp = false;
 let helperKey = q.has("helper") ? "sk-ant-mock-1234" : "";
 const helperStatus = () => ({ saved: helperKey !== "", hint: helperKey.slice(-4) });
 const notificationListeners: ((p: Events["notifications-changed"]) => void)[] = [];
@@ -427,7 +428,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   personal_dismiss_offer: () => {
     setPersonal({ decided: true, offer: false });
   },
-  app_info: () => ({ version: "0.1.0", os: "windows 11 (x86_64)", relayConfigured: true, clientIdMissing: false, stateDir: "C:/Users/me/.claude-sync/app" }),
+  app_info: () => ({ version: "0.1.0", os: "windows 11 (x86_64)", relayConfigured: true, clientIdMissing: false, appClientIdMissing: false, stateDir: "C:/Users/me/.claude-sync/app" }),
   auth_status: () => ({ signedIn, login: signedIn ? "mehdimamas" : null, expiredLogin, clientIdMissing: false }),
   start_sign_in: () => ({ userCode: "WDJB-MJHT", verificationUri: "https://github.com/login/device", expiresIn: 900 }),
   cancel_sign_in: () => null,
@@ -552,11 +553,12 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   open_url: (a) => {
     window.open(String(a.url), "_blank", "noopener");
   },
-  get_settings: () => ({ deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false, desktopNotifications }),
+  get_settings: () => ({ deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false, desktopNotifications, githubApp }),
   set_settings: (a) => {
-    const s = a.settings as { desktopNotifications?: boolean };
+    const s = a.settings as { desktopNotifications?: boolean; githubApp?: boolean };
+    if (s.githubApp !== undefined) githubApp = s.githubApp;
     if (s.desktopNotifications !== undefined) desktopNotifications = s.desktopNotifications;
-    return { deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false, desktopNotifications, ...s };
+    return { deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false, desktopNotifications, githubApp, ...s };
   },
   helper_status: helperStatus,
   helper_save_key: (a) => {
@@ -586,6 +588,8 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   },
   notification_permission: () => "granted",
   open_notification_settings: () => {},
+  app_coverage: () => ({ covered: [{ owner: "mehdimamas", repo: "claude-sync-data" }], missing: [{ owner: "friend-org", repo: "team-memory" }], noInstallation: false }),
+  open_app_install: () => {},
   test_notification: () => {
     notifications.unshift({ id: nextNotification++, time: Math.floor(Date.now() / 1000), title: "Test notification", body: "Notifications from claude-sync show up like this.", kind: "other", group: null, read: false });
     notificationsChanged();
