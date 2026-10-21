@@ -16,7 +16,7 @@ use claude_sync_core::engine::{
     GroupStatus, ProposalView, RevertPlan, SyncReport,
 };
 use claude_sync_core::github::token_store::Keychain;
-use claude_sync_core::github::Invitation;
+use claude_sync_core::github::{self, Invitation};
 use claude_sync_core::helper;
 use claude_sync_core::jobs::JobsOverview;
 use claude_sync_core::notifications::{self, Notification};
@@ -39,6 +39,7 @@ pub struct AppInfo {
     os: String,
     relay_configured: bool,
     client_id_missing: bool,
+    app_client_id_missing: bool,
     state_dir: String,
 }
 
@@ -49,6 +50,7 @@ pub fn app_info(ctx: CtxState) -> AppInfo {
         os: config::os_label(),
         relay_configured: config::relay_configured(),
         client_id_missing: config::GITHUB_CLIENT_ID.is_empty(),
+        app_client_id_missing: config::GITHUB_APP_CLIENT_ID.is_empty(),
         state_dir: ctx.paths.state_dir.display().to_string(),
     }
 }
@@ -70,7 +72,7 @@ pub fn auth_status(ctx: CtxState) -> AuthStatus {
         signed_in: login.is_some(),
         login,
         expired_login: ctx.expired_login(),
-        client_id_missing: config::GITHUB_CLIENT_ID.is_empty(),
+        client_id_missing: ctx.client_id().is_empty(),
     }
 }
 
@@ -655,6 +657,7 @@ pub struct Settings {
     autostart: bool,
     paused: bool,
     desktop_notifications: bool,
+    github_app: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -665,6 +668,7 @@ pub struct SettingsPatch {
     autostart: Option<bool>,
     paused: Option<bool>,
     desktop_notifications: Option<bool>,
+    github_app: Option<bool>,
 }
 
 fn settings_of(app: &AppHandle, ctx: &Ctx) -> Settings {
@@ -674,6 +678,7 @@ fn settings_of(app: &AppHandle, ctx: &Ctx) -> Settings {
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         paused: ctx.paused(),
         desktop_notifications: ctx.prefs().desktop_notifications,
+        github_app: ctx.github_app(),
     }
 }
 
@@ -712,6 +717,9 @@ pub fn set_settings(app: AppHandle, ctx: CtxState, settings: SettingsPatch) -> R
         if let Some(p) = settings.paused {
             s.paused = p;
         }
+        if let Some(g) = settings.github_app {
+            s.github_app = g;
+        }
     });
     if renamed {
         ctx.reset_engine();
@@ -726,6 +734,34 @@ pub fn set_settings(app: AppHandle, ctx: CtxState, settings: SettingsPatch) -> R
             .map_err(|e| format!("could not save the setting: {e}"))?;
     }
     Ok(settings_of(&app, &ctx))
+}
+
+/// Which of this device's group repos the GitHub App can reach (issue #39).
+#[tauri::command]
+pub async fn app_coverage(app: AppHandle) -> Res<claude_sync_core::github::Coverage> {
+    let ctx = tauri::Manager::state::<Arc<Ctx>>(&app).inner().clone();
+    let auth = ctx.auth().ok_or("Sign in first.")?;
+    let gh =
+        claude_sync_core::github::GitHub::with_session(auth.session, claude_sync_core::github::API);
+    let wanted = ctx.joined_groups();
+    gh.app_coverage(&wanted)
+        .await
+        .map_err(guard::logged("GitHub App coverage"))
+        .inspect(|_| background::refresh_status(&app))
+}
+
+/// Open the page where the user installs the GitHub App or changes its repos.
+#[tauri::command]
+pub fn open_app_install(app: AppHandle, manage: bool) -> Res<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = if manage {
+        github::manage_url(config::GITHUB_APP_SLUG)
+    } else {
+        github::install_url(config::GITHUB_APP_SLUG)
+    };
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 /// The notification history, newest first.

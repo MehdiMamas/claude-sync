@@ -1,5 +1,4 @@
 //! GitHub sign-in with the device flow (§3), token refresh and an expired sign-in.
-use crate::config;
 use crate::ctx::{Auth, Ctx};
 use crate::guard::{self, Error};
 use crate::{background, notify, window};
@@ -40,9 +39,9 @@ pub fn init(app: &AppHandle) {
 /// A session for `tokens`: it refreshes with this build's client ID, saves refreshed
 /// tokens to the keychain (when `keychain`), and signs the app out as "expired" when
 /// GitHub stops accepting it.
-pub fn new_session(tokens: Tokens, keychain: bool) -> Arc<Session> {
+pub fn new_session(tokens: Tokens, keychain: bool, client_id: &str) -> Arc<Session> {
     let s = Session::new(tokens)
-        .refreshable(config::GITHUB_CLIENT_ID, github::LOGIN)
+        .refreshable(client_id, github::LOGIN)
         .on_expired(move |s| expired(s, keychain));
     Arc::new(if keychain {
         s.on_refresh(save_refreshed)
@@ -93,12 +92,13 @@ fn expired(session: &Session, keychain: bool) {
 }
 
 pub async fn start(app: &AppHandle) -> Result<DeviceCodeView, Error> {
-    if config::GITHUB_CLIENT_ID.is_empty() {
+    let ctx = app.state::<Arc<Ctx>>().inner().clone();
+    let client_id = ctx.client_id();
+    if client_id.is_empty() {
         return Err("This copy of claude-sync was built without a GitHub client ID (CLAUDE_SYNC_GITHUB_CLIENT_ID), so it cannot sign in.".into());
     }
-    let ctx = app.state::<Arc<Ctx>>().inner().clone();
     let gen = ctx.next_sign_in_gen();
-    let code = github::start_device_flow(config::GITHUB_CLIENT_ID)
+    let code = github::start_device_flow(client_id)
         .await
         .map_err(guard::logged("start sign-in"))?;
     if let Err(e) = app.opener().open_url(&code.verification_uri, None::<&str>) {
@@ -111,7 +111,15 @@ pub async fn start(app: &AppHandle) -> Result<DeviceCodeView, Error> {
     };
     let a = app.clone();
     tauri::async_runtime::spawn(async move {
-        let result = poll(&ctx, gen, &code.device_code, code.interval, code.expires_in).await;
+        let result = poll(
+            &ctx,
+            gen,
+            client_id,
+            &code.device_code,
+            code.interval,
+            code.expires_in,
+        )
+        .await;
         if !ctx.sign_in_current(gen) {
             return;
         }
@@ -149,6 +157,7 @@ pub async fn start(app: &AppHandle) -> Result<DeviceCodeView, Error> {
 async fn poll(
     ctx: &Ctx,
     gen: u64,
+    client_id: &str,
     device_code: &str,
     interval: u64,
     expires_in: u64,
@@ -163,7 +172,7 @@ async fn poll(
         if Instant::now() > deadline {
             return Err("The code expired. Start again.".into());
         }
-        match github::poll_device_flow(config::GITHUB_CLIENT_ID, device_code)
+        match github::poll_device_flow(client_id, device_code)
             .await
             .map_err(guard::logged("sign-in"))?
         {
@@ -180,7 +189,7 @@ async fn poll(
                     .map_err(guard::logged("save token"))?;
                 ctx.set_auth(Some(Auth {
                     login: user.login.clone(),
-                    session: new_session(tokens, true),
+                    session: new_session(tokens, true, client_id),
                 }));
                 let login = user.login.clone();
                 if let Err(e) = ctx.update_state(|s| s.login = Some(login)) {
@@ -219,7 +228,7 @@ pub fn sign_in_with_dev_token(app: &AppHandle, token: String) {
         tracing::info!("signed in as {} with CLAUDE_SYNC_DEV_TOKEN", user.login);
         ctx.set_auth(Some(Auth {
             login: user.login.clone(),
-            session: new_session(Tokens::plain(token), false),
+            session: new_session(Tokens::plain(token), false, ctx.client_id()),
         }));
         let login = user.login.clone();
         let _ = ctx.update_state(|s| s.login = Some(login));

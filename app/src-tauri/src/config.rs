@@ -14,6 +14,29 @@ pub const GITHUB_CLIENT_ID: &str = match option_env!("CLAUDE_SYNC_GITHUB_CLIENT_
     None => "",
 };
 
+/// Client ID of the GitHub App (per-repo access, issue #39); empty until the App exists.
+/// Used when the "GitHub App" setting is on.
+pub const GITHUB_APP_CLIENT_ID: &str = match option_env!("CLAUDE_SYNC_GITHUB_APP_CLIENT_ID") {
+    Some(id) => id,
+    None => "",
+};
+
+/// Slug of the GitHub App, for `https://github.com/apps/<slug>`.
+pub const GITHUB_APP_SLUG: &str = match option_env!("CLAUDE_SYNC_GITHUB_APP_SLUG") {
+    Some(s) => s,
+    None => "claude-sync",
+};
+
+/// The client ID sign-in and token refresh use: the App's when `github_app` is on and the
+/// build has one, else the OAuth App's (the default).
+pub fn client_id(github_app: bool) -> &'static str {
+    if github_app && !GITHUB_APP_CLIENT_ID.is_empty() {
+        GITHUB_APP_CLIENT_ID
+    } else {
+        GITHUB_CLIENT_ID
+    }
+}
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// `identifier` in tauri.conf.json: the app id of notifications sent outside Tauri (the job
