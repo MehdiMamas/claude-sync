@@ -4,7 +4,7 @@ claude-sync is a small desktop app that shares a Claude Code setup with a group 
 
 The app sits in the tray and starts when you log in. When someone in the group changes a shared file, the change reaches everyone's machines within about a minute. When you edit a shared file yourself, the app asks whether to share the change with the group or keep it on your machine.
 
-It runs on Windows and macOS. Linux is not supported yet.
+It runs on Windows and macOS. Linux (x86_64, `.deb` and `.AppImage`) is in beta: it needs a desktop with a system tray (AppIndicator), a Secret Service keyring (GNOME Keyring or KWallet) and systemd for scheduled jobs. CI builds and tests it on Ubuntu, but nobody has run it on a desktop yet.
 
 ## Screenshots
 
@@ -56,11 +56,11 @@ A group can share Claude Code plugins. A plugin runs code on every member's mach
 
 ## Group scheduled jobs
 
-A group repo can hold a `schedules.json` that asks Claude Code to run a prompt on a schedule, for example a weekly refresh of everyone's setup. The tray app registers a job with Task Scheduler (Windows) or launchd (macOS) only after you accept it on the group's screen, which shows the prompt, its options, the permission mode and the schedule. Any change to the job needs your OK again, and each job has an on/off toggle. If you trust a group, you can let its jobs run without asking (off by default, per device); you then get a notification for each new or changed job instead. Linux is not supported yet. The app also installs the plugins a group turns on (`claude plugin install`) and shows on the group screen any it could not install. Details are in [docs/architecture.md](docs/architecture.md) §17 and §18.
+A group repo can hold a `schedules.json` that asks Claude Code to run a prompt on a schedule, for example a weekly refresh of everyone's setup. The tray app registers a job with Task Scheduler (Windows), launchd (macOS) or a systemd user timer (Linux) only after you accept it on the group's screen, which shows the prompt, its options, the permission mode and the schedule. Any change to the job needs your OK again, and each job has an on/off toggle. If you trust a group, you can let its jobs run without asking (off by default, per device); you then get a notification for each new or changed job instead. The app also installs the plugins a group turns on (`claude plugin install`) and shows on the group screen any it could not install. Details are in [docs/architecture.md](docs/architecture.md) §17 and §18.
 
 ## Privacy
 
-- Your GitHub token is kept in the operating system's keychain (Windows Credential Manager, macOS Keychain). It is never written to files or logs.
+- Your GitHub token is kept in the operating system's keychain (Windows Credential Manager, macOS Keychain, Linux Secret Service). It is never written to files or logs.
 - Your group's files stay in the private repo on GitHub and on the members' computers. There is no claude-sync server that stores them.
 - **Personal memory is only yours.** It goes to a private repo on your own GitHub account, and only your own computers read it. It never goes into a group repo, and group members are never added to it. The app refuses to use the repo if it is made public. The same secret check runs before anything is pushed, and memory files over 256 KB stay on their computer.
 - The app's update checks and the feedback form go through a small web service (the relay, in `relay/`). It uses your GitHub token to check who you are and, for feedback, to open the issue under your account. It does not save the token. If GitHub does not let your account open the issue, the app shows why; the report is never filed under anyone else's name.
