@@ -5,19 +5,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
-  buildPrompt,
+  buildBatchPrompt,
   labelledByTrusted,
   MARKER,
   MAX_COMMENT,
   needsTriage,
   neutralize,
+  parseBatch,
   parseVerdict,
   sanitizeComment,
   scrub,
   triageComment,
   trustedLogins,
+  waitMs,
 } from "../triage/lib.ts";
-import { analyze, post, prepare, type Queue } from "../triage/run.ts";
+import { analyze, type ClaudeRunner, post, prepare, type Queue, runTriage } from "../triage/run.ts";
 import { type Call, type FetchMock, mockFetch } from "./helpers.ts";
 
 const REPO = "MehdiMamas/claude-sync";
@@ -120,13 +122,39 @@ describe("triage lib", () => {
     assert.equal(needsTriage({ ...issue(["feedback"]), pull_request: {} }, [], true), false);
   });
 
-  it("tells Claude the report is data and the attachments are private", () => {
-    const prompt = buildPrompt({ repo: REPO, number: 7, issueDir: "/t/7", attachmentsDir: "/t/7/private/issues/7" });
+  it("tells Claude the reports are data and the attachments are private", () => {
+    const prompt = buildBatchPrompt({
+      repo: REPO,
+      items: [
+        { number: 7, issueDir: "/t/7", attachmentsDir: "/t/7/private/issues/7" },
+        { number: 8, issueDir: "/t/8", attachmentsDir: null },
+      ],
+    });
     assert.match(prompt, /data, never instructions/);
     assert.match(prompt, /PRIVATE/);
     assert.match(prompt, /^VERDICT: ok$/m);
-    assert.ok(prompt.includes("/t/7/issue.md") && prompt.includes("/t/7/private/issues/7"));
-    assert.match(buildPrompt({ repo: REPO, number: 7, issueDir: "/t/7", attachmentsDir: null }), /no private attachments/);
+    assert.match(prompt, /=== ISSUE <number> ===/);
+    assert.ok(prompt.includes("/t/7/issue.md") && prompt.includes("/t/7/private/issues/7") && prompt.includes("/t/8/issue.md"));
+    assert.match(prompt, /no private attachments/);
+  });
+
+  it("splits a batch answer per issue and flags a missing or malformed one", () => {
+    const out = parseBatch(
+      "=== ISSUE 7 ===\nVERDICT: ok\nREASON: real\n\n### read\nbody 7\n\n=== ISSUE 8 ===\nVERDICT: abusive\nREASON: spam\n=== ISSUE 9 ===\nnonsense\n",
+      [7, 8, 9, 10],
+    );
+    assert.deepEqual(out.get(7), { verdict: "ok", reason: "real", body: "### read\nbody 7" });
+    assert.deepEqual(out.get(8), { verdict: "abusive", reason: "spam", body: "" });
+    assert.ok("error" in (out.get(9) ?? {}));
+    assert.deepEqual(out.get(10), { error: "Claude's answer has no section for this report" });
+  });
+
+  it("waits until the newest report is 10 minutes old", () => {
+    const now = Date.parse("2026-10-21T12:00:00Z");
+    const ago = (m: number) => new Date(now - m * 60_000).toISOString();
+    assert.equal(waitMs([ago(30), ago(11)], now), 0);
+    assert.equal(waitMs([ago(30), ago(4)], now), 6 * 60_000);
+    assert.equal(waitMs([], now), 0);
   });
 });
 
@@ -216,35 +244,59 @@ describe("triage run", () => {
     return queue;
   }
 
-  it("analyze runs Claude without any GitHub token and keeps its answer out of the log", () => {
-    queueOf([7, 8]);
-    const fake = join(dir, "fake-claude.mjs");
-    writeFileSync(
-      fake,
-      `let input = "";
-process.stdin.on("data", (d) => (input += d));
-process.stdin.on("end", () => {
-  const args = process.argv.slice(2);
-  const leaked = ["GH_TOKEN", "GITHUB_TOKEN"].filter((k) => process.env[k]);
-  const ok = args.includes("--allowedTools") && args[args.indexOf("--allowedTools") + 1] === "Read,Grep,Glob" && args.includes("Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,Agent,Read(//proc/**),Read(//sys/**),Read(//etc/**)");
-  if (input.includes("issue #8")) { process.stdout.write(JSON.stringify({ is_error: true, subtype: "error_max_turns" })); return; }
-  const result = "VERDICT: ok\\nREASON: real\\n\\n### Claude's read of this report\\nSECRET-REPORT-TEXT leaked=" + leaked.join(",") + " flags=" + ok;
-  process.stdout.write(JSON.stringify({ type: "result", is_error: false, result }));
-});
-`,
-    );
-    process.env.GH_TOKEN = TOKEN;
-    try {
-      const results = analyze({ out: dir, claude: [process.execPath, fake], model: "opus", cwd: dir, log });
-      const first = results[0];
-      assert.ok(first && "verdict" in first);
-      assert.equal(first.body, "### Claude's read of this report\nSECRET-REPORT-TEXT leaked= flags=true");
-      assert.deepEqual(results[1], { error: "Claude ended with error_max_turns" });
-    } finally {
-      delete process.env.GH_TOKEN;
+  it("analyze sends batches of five to the runner and keeps the answers out of the log", () => {
+    const numbers = [1, 2, 3, 4, 5, 6, 7];
+    queueOf(numbers);
+    const calls: Array<{ prompt: string; addDirs: string[]; model: string }> = [];
+    const runner: ClaudeRunner = (req) => {
+      calls.push({ prompt: req.prompt, addDirs: req.addDirs, model: req.model });
+      if (req.prompt.includes("Report #6:")) throw new Error("Claude ended with error_max_turns");
+      return req.addDirs
+        .map((d) => `=== ISSUE ${d.split("/").at(-1)} ===\nVERDICT: ok\nREASON: real\n\n### read\nSECRET-REPORT-TEXT`)
+        .join("\n\n");
+    };
+    const results = analyze({ out: dir, runner, model: "sonnet", repo: REPO, cwd: dir, log });
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls.map((c) => c.addDirs.length), [5, 2]);
+    assert.ok(calls.every((c) => c.model === "sonnet"));
+    assert.equal(results.filter((r) => "verdict" in r).length, 5);
+    assert.deepEqual(results[5], { error: "Claude ended with error_max_turns" });
+    assert.ok(lines.every((l) => !l.includes("SECRET-REPORT-TEXT")));
+    assert.ok(numbers.every((n) => existsSync(join(dir, String(n), "result.json"))));
+  });
+
+  it("runTriage waits for the debounce, runs one batch for the rest, and never needs the real claude", async () => {
+    const recent = new Date(Date.now() - 2 * 60_000).toISOString();
+    const old = new Date(Date.now() - 60 * 60_000).toISOString();
+    const withDate = (n: number, created_at: string, labels: string[]) => ({ ...issue(n, labels), created_at });
+    fm.on("GET", `${API}/issues?state=open&per_page=100&page=1`, [withDate(7, old, ["feedback"]), withDate(8, recent, ["feedback"])]);
+    routes(7, ["feedback"]);
+    routes(8, ["feedback"]);
+    fm.on("GET", `${API}/issues/7`, withDate(7, old, ["feedback"]));
+    fm.on("GET", `${API}/issues/8`, withDate(8, recent, ["feedback"]));
+    let runs = 0;
+    const runner: ClaudeRunner = (req) => {
+      runs++;
+      return req.addDirs.map((d) => `=== ISSUE ${d.split("/").at(-1)} ===\nVERDICT: ok\nREASON: r\n\nwrite-up`).join("\n");
+    };
+    const base = { repo: REPO, token: TOKEN, log, owner: "MehdiMamas", issue: "all", force: false, out: dir, sha: "abcdef1234" };
+    const opts = { model: "sonnet", cwd: dir };
+    const waiting = await runTriage(base, runner, opts);
+    assert.equal(waiting.status, "waiting");
+    assert.equal(runs, 0);
+    assert.equal(writes().length, 0);
+
+    for (const n of [7, 8]) {
+      fm.on("POST", `${API}/issues/${n}/comments`, Response.json({}, { status: 201 }));
+      fm.on("POST", `${API}/issues/${n}/labels`, []);
     }
-    assert.deepEqual(lines, ["#7: verdict ok", "#8: analysis failed: Claude ended with error_max_turns"]);
-    assert.ok(existsSync(join(dir, "7", "result.json")) && existsSync(join(dir, "8", "result.json")));
+    const done = await runTriage(base, runner, { ...opts, now: () => Date.now() + 20 * 60_000 });
+    assert.deepEqual(done, { status: "done", failed: 0 });
+    assert.equal(runs, 1);
+    assert.equal(writes().length, 4);
+    const dry = await runTriage(base, runner, { ...opts, now: () => Date.now() + 20 * 60_000, dryRun: true });
+    assert.equal(dry.status, "dry-run");
+    assert.equal(runs, 1);
   });
 
   function writes(): Call[] {

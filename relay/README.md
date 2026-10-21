@@ -76,7 +76,7 @@ The screenshot type is checked by its magic bytes. The app should send at most t
 1. Title, description and logs are redacted again (the patterns of `crates/core/src/secrets.rs` plus `Bearer <token>`), then the logs are cut to their last 200 KB.
 2. The issue goes to `FEEDBACK_REPO`, opened with the caller's token, so GitHub shows the user as its author. It has the title and a body with the description, kind, app version and OS. Nothing from the user's disk goes into it, and no labels yet.
 3. The screenshot (`screenshot.png` or `.jpg`), the logs (`logs.txt`) and `report.json` (issue repo, number and URL, login, kind, app version, OS, time) are committed with the relay token to the private `FEEDBACK_ATTACHMENTS_REPO` at `issues/<number>/`, as one commit on its default branch (Git Data API: blobs, tree, commit, then the ref, retried when another post moved the ref first). Skipped when there is neither a screenshot nor logs. Best effort: on a failure the issue body says the attachments could not be stored. Because this runs after the create, a refused issue leaves no files behind.
-4. GitHub drops labels and milestone sent by someone without push access, so the relay then sets labels `feedback` and `type:bug` / `type:idea` and the milestone with its own token (`PATCH /issues/{n}`, which also rewrites the body when storing failed). This comes last because the `feedback` label starts the triage workflow (below), which reads the attachments. Best effort: a failure is logged and the post still answers 201.
+4. GitHub drops labels and milestone sent by someone without push access, so the relay then sets labels `feedback` and `type:bug` / `type:idea` and the milestone with its own token (`PATCH /issues/{n}`, which also rewrites the body when storing failed). This comes last because the triage script (below) reads the attachments. Best effort: a failure is logged and the post still answers 201.
 5. Milestone: the open milestone titled `Sprint N` with the earliest due date that is today (UTC) or later; else the open `Sprint N` with the latest due date; else none.
 6. Response `201 {"number": 42, "url": "https://github.com/MehdiMamas/claude-sync/issues/42"}`.
 
@@ -98,13 +98,24 @@ The issue is public when `FEEDBACK_REPO` is a public repo, and it shows the user
 
 ### Triage (`triage/`, not deployed)
 
-`triage/run.ts` is not part of the relay; the workflow `.github/workflows/feedback-triage.yml` runs it on GitHub Actions when the repo owner (the relay's token) adds the `feedback` label, or by hand with `gh workflow run feedback-triage.yml -f issue=<n|all> [-f force=true]`. Claude reads the issue, its private attachments and the code, and comments a write-up another agent can fix it from; spam and abuse are closed, locked and labelled `needs-moderation` instead. The steps and the checks on the comment are in `docs/architecture.md` §12. What keeps it safe:
+`triage/run.ts` is not part of the relay. It is a script the maintainer runs on their own computer: `cd relay && npm run triage` (options: `-- --issue <n|all> --force --dry-run --model sonnet --min-age-minutes 10`). It needs `gh auth login` (GitHub) and the `claude` command signed in with the maintainer's own Claude account (`claude`, then `/login`). It uses no Anthropic API key and no hosted runner. Run it from a checkout of `main`, because Claude reads the code in the current folder.
 
-- Only issues whose `feedback` label was added by the owner (or a login in the `TRIAGE_TRUSTED_LOGINS` variable) are read, checked from the issue's events, so a hand-made issue cannot get Claude to read another report's attachments.
-- The attachments repo is cloned with a read-only deploy key (`FEEDBACK_DEPLOY_KEY`), only `issues/<number>/` of the queued issues is checked out, and the key and the clone are deleted before Claude starts.
-- Claude gets Read, Grep and Glob and nothing else, and an environment without any GitHub token. Its answer is scrubbed of secrets, user names in paths and emails, its mentions, closing keywords, outside links and images are removed, and only then does the Actions token post it.
+What it does:
 
-Secrets on this repo: `FEEDBACK_DEPLOY_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`). Labels `feedback`, `triaged` and `needs-moderation` must exist.
+1. Collects the open `feedback` issues that have no triage yet. If the newest of them is less than 10 minutes old it stops and says how long to wait, so a burst of reports is handled together. (Asking for one issue with `--issue <n>` skips the wait.)
+2. Starts one `claude -p --model sonnet --output-format json` session per batch of 5 reports. Claude reads each issue, its private attachments and the code, and writes a write-up another agent can fix it from. Spam and abuse are closed, locked and labelled `needs-moderation` instead.
+3. Posts the comments with the maintainer's `gh` login (or `GH_TOKEN`). The steps and the checks on the comment are in `docs/architecture.md` §12.
+
+To run it on a schedule, use cron or launchd on that computer, for example every 15 minutes: `*/15 * * * * cd /path/to/claude-sync && git pull -q && (cd relay && npm run triage)`. A run that finds nothing, or reports that are too new, does nothing.
+
+What keeps it safe:
+
+- Only issues whose `feedback` label was added by the owner (or a login in the `TRIAGE_TRUSTED_LOGINS` environment variable) are read, checked from the issue's events, so a hand-made issue cannot get Claude to read another report's attachments.
+- The attachments repo is cloned with the maintainer's `gh` login without downloading files; only `issues/<number>/` of the queued issues is checked out, and the clone is deleted when the run ends.
+- Claude gets Read, Grep and Glob and nothing else, and an environment without any GitHub token. Its answer is scrubbed of secrets, user names in paths and emails, its mentions, closing keywords, outside links and images are removed, and only then is it posted.
+- Tests never start `claude`: the Claude call is a function passed in (`ClaudeRunner`).
+
+If you ever run it in CI instead, the runner must sign in with `CLAUDE_CODE_OAUTH_TOKEN` (made with `claude setup-token`), never an API key. The triage is not wired into any workflow today. Labels `feedback`, `triaged` and `needs-moderation` must exist.
 
 ## Install page
 
