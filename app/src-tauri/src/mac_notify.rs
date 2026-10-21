@@ -81,7 +81,13 @@ pub fn init(app: &AppHandle) {
     std::mem::forget(delegate);
     let done = RcBlock::new(|granted: Bool, err: *mut NSError| {
         if let Some(e) = unsafe { err.as_ref() } {
-            tracing::warn!("notification permission request failed: {e}");
+            // macOS answers this way, without a prompt, once the app was denied (or
+            // dismissed) before: the choice sticks to the bundle id until the user flips
+            // it in System Settings > Notifications.
+            tracing::warn!(
+                "notification permission request failed: {e}. If notifications were denied \
+                 earlier, turn them on in System Settings > Notifications > claude-sync"
+            );
         } else {
             tracing::info!(granted = granted.as_bool(), "notification permission");
         }
