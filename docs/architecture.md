@@ -437,7 +437,7 @@ Strict validation; a bad job is skipped and listed on the group screen, never ha
 
 - Windows: `schtasks /Create /F /TN "\claude-sync\<id>" /XML <file>`. Weekly calendar triggers, start when available, run on battery, `IgnoreNew` for overlapping runs, execution limit = timeout + 10 minutes, interactive token of the current user, hidden. `schtasks /Delete /F` to remove.
 - macOS: `~/Library/LaunchAgents/dev.claude-sync.job.<id>.plist` with `StartCalendarInterval`, then `launchctl bootout` / `bootstrap gui/<uid>`.
-- Linux: not supported yet (the Linux build is beta); the screen says so and Accept is disabled.
+- Linux: a systemd user timer. `~/.config/systemd/user/claude-sync-job-<id>.service` (oneshot, `ExecStart` = the app's `run-job`) and `.timer` (one `OnCalendar=[Mon,Thu ]*-*-* HH:MM:00` per time, `Persistent=true` so a missed run happens at the next start), enabled with `systemctl --user enable --now`. Without `systemctl --user` the screen says so and Accept is disabled. Debug builds use the prefix `claude-sync-dev-job-`. Beta: only the unit text is unit-tested; registering needs a runtime check on a Linux desktop.
 - Debug builds use `\claude-sync-dev\` and `dev.claude-sync.dev-job.`, so a dev run never touches the installed app's tasks. The ignored integration test uses `\claude-sync-test-<random hex>\`.
 
 **Uninstall.** The NSIS pre-uninstall hook (`app/src-tauri/windows/hooks.nsh`) runs `claude-sync.exe remove-jobs`, which deletes the tasks and keeps the acceptances, so a reinstall registers them again. Updates run no uninstaller, and the hook skips `/UPDATE` anyway. On macOS, deleting the app leaves the LaunchAgents; their runs fail until removed.

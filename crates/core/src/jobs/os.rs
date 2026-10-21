@@ -1,5 +1,5 @@
 //! The OS scheduler a job is registered with (§17): Task Scheduler on Windows, a launchd
-//! agent on macOS. Behind [`Scheduler`] so the rest is tested with a fake; normal tests never
+//! agent on macOS, a systemd user timer on Linux. Behind [`Scheduler`] so the rest is tested with a fake; normal tests never
 //! register real tasks.
 use super::cron::Schedule;
 use crate::claude_cli;
@@ -15,6 +15,9 @@ pub const LAUNCHD_PREFIX: &str = "dev.claude-sync.job.";
 /// the installed app.
 pub const TASK_FOLDER_DEV: &str = r"\claude-sync-dev\";
 pub const LAUNCHD_PREFIX_DEV: &str = "dev.claude-sync.dev-job.";
+/// systemd user units are `claude-sync-job-<id>.service` and `.timer`.
+pub const SYSTEMD_PREFIX: &str = "claude-sync-job-";
+pub const SYSTEMD_PREFIX_DEV: &str = "claude-sync-dev-job-";
 /// The task may run this much longer than the job's own timeout before the OS stops it.
 pub const OS_GRACE_MINUTES: u32 = 10;
 
@@ -86,9 +89,27 @@ pub fn system(home: &Path, dev: bool) -> Box<dyn Scheduler> {
                 LAUNCHD_PREFIX
             },
         })
+    } else if cfg!(target_os = "linux") {
+        Box::new(SystemdUser {
+            units_dir: systemd_units_dir(home),
+            prefix: if dev {
+                SYSTEMD_PREFIX_DEV
+            } else {
+                SYSTEMD_PREFIX
+            },
+        })
     } else {
         Box::new(Unsupported)
     }
+}
+
+/// `$XDG_CONFIG_HOME/systemd/user`, else `~/.config/systemd/user`.
+fn systemd_units_dir(home: &Path) -> PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home.join(".config"));
+    base.join("systemd").join("user")
 }
 
 pub struct Unsupported;
@@ -432,6 +453,135 @@ impl Scheduler for Launchd {
     }
 }
 
+const SYSTEMD_DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/// Quote one `ExecStart=` word: double quotes, with `\`, `"`, `%` and `$` escaped.
+fn systemd_quote(arg: &str) -> String {
+    let mut out = String::from('"');
+    for c in arg.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '%' => out.push_str("%%"),
+            '$' => out.push_str("$$"),
+            '\n' => out.push_str("\\n"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// The `.service` unit of `task` (run once per timer firing).
+pub fn systemd_service(task: &TaskSpec) -> String {
+    let exec: Vec<String> = std::iter::once(task.program.to_string_lossy().into_owned())
+        .chain(task.args.clone())
+        .map(|a| systemd_quote(&a))
+        .collect();
+    let title: String = task.title.chars().filter(|c| !c.is_control()).collect();
+    format!(
+        "[Unit]\nDescription={title} (claude-sync group job {id})\n\n[Service]\nType=oneshot\nExecStart={exec}\nTimeoutStartSec={secs}\n",
+        id = task.id,
+        exec = exec.join(" "),
+        secs = (task.timeout_minutes + OS_GRACE_MINUTES) * 60,
+    )
+}
+
+/// The `.timer` unit: one `OnCalendar=` per weekday set and time. `Persistent=true` runs a
+/// missed firing when the machine comes back.
+pub fn systemd_timer(task: &TaskSpec) -> String {
+    let days = match &task.days {
+        None => String::new(),
+        Some(d) => {
+            let names: Vec<&str> = d.iter().map(|&n| SYSTEMD_DAYS[(n % 7) as usize]).collect();
+            format!("{} ", names.join(","))
+        }
+    };
+    let mut lines = String::new();
+    for (h, m) in &task.times {
+        lines.push_str(&format!("OnCalendar={days}*-*-* {h:02}:{m:02}:00\n"));
+    }
+    format!(
+        "[Unit]\nDescription={} (claude-sync group job {})\n\n[Timer]\n{lines}Persistent=true\n\n[Install]\nWantedBy=timers.target\n",
+        task.title.chars().filter(|c| !c.is_control()).collect::<String>(),
+        task.id,
+    )
+}
+
+/// systemd user units in `~/.config/systemd/user`, enabled with `systemctl --user`.
+pub struct SystemdUser {
+    pub units_dir: PathBuf,
+    /// [`SYSTEMD_PREFIX`], or [`SYSTEMD_PREFIX_DEV`].
+    pub prefix: &'static str,
+}
+
+impl SystemdUser {
+    fn unit(&self, id: &str, ext: &str) -> PathBuf {
+        self.units_dir.join(format!("{}{id}.{ext}", self.prefix))
+    }
+
+    fn systemctl(args: &[&str]) -> crate::Result<claude_cli::Output> {
+        let mut full = vec!["--user"];
+        full.extend_from_slice(args);
+        Ok(claude_cli::run(
+            Path::new("systemctl"),
+            &full,
+            Duration::from_secs(60),
+        )?)
+    }
+}
+
+impl Scheduler for SystemdUser {
+    fn supported(&self) -> Result<(), String> {
+        match Self::systemctl(&["--version"]) {
+            Ok(o) if o.ok() => Ok(()),
+            _ => Err("Scheduled jobs on Linux need systemd (systemctl --user)".into()),
+        }
+    }
+
+    fn register(&self, task: &TaskSpec) -> crate::Result<()> {
+        crate::state::write_atomic(
+            &self.unit(&task.id, "service"),
+            systemd_service(task).as_bytes(),
+        )?;
+        crate::state::write_atomic(
+            &self.unit(&task.id, "timer"),
+            systemd_timer(task).as_bytes(),
+        )?;
+        let out = Self::systemctl(&["daemon-reload"])?;
+        if !out.ok() {
+            return Err(failed("systemctl daemon-reload", &out));
+        }
+        let timer = format!("{}{}.timer", self.prefix, task.id);
+        let out = Self::systemctl(&["enable", "--now", &timer])?;
+        if !out.ok() {
+            return Err(failed("systemctl enable", &out));
+        }
+        // A running timer keeps its old schedule until it is restarted.
+        let out = Self::systemctl(&["restart", &timer])?;
+        if !out.ok() {
+            return Err(failed("systemctl restart", &out));
+        }
+        Ok(())
+    }
+
+    fn unregister(&self, id: &str) -> crate::Result<()> {
+        let _ = Self::systemctl(&["disable", "--now", &format!("{}{id}.timer", self.prefix)]);
+        for ext in ["timer", "service"] {
+            match std::fs::remove_file(self.unit(id, ext)) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                _ => {}
+            }
+        }
+        let _ = Self::systemctl(&["daemon-reload"]);
+        Ok(())
+    }
+
+    fn exists(&self, id: &str) -> crate::Result<bool> {
+        Ok(self.unit(id, "timer").is_file() && self.unit(id, "service").is_file())
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -445,6 +595,25 @@ pub(crate) mod tests {
             vec!["run-job".into(), "acme/team".into(), "setup-scout".into()],
             60,
         )
+    }
+
+    #[test]
+    fn systemd_units() {
+        let t = TaskSpec::new(
+            "setup-scout",
+            "Refresh",
+            &Schedule::parse("17 10 * * 1,4").unwrap(),
+            Path::new("/opt/claude sync/claude-sync"),
+            vec!["run-job".into(), "acme/team".into(), "a\"b%".into()],
+            60,
+        );
+        assert_eq!(
+            systemd_service(&t),
+            "[Unit]\nDescription=Refresh (claude-sync group job setup-scout)\n\n[Service]\nType=oneshot\nExecStart=\"/opt/claude sync/claude-sync\" \"run-job\" \"acme/team\" \"a\\\"b%%\"\nTimeoutStartSec=4200\n"
+        );
+        assert!(systemd_timer(&t).contains("OnCalendar=Mon,Thu *-*-* 10:17:00\n"));
+        let daily = TaskSpec { days: None, ..t };
+        assert!(systemd_timer(&daily).contains("OnCalendar=*-*-* 10:17:00\n"));
     }
 
     #[test]
