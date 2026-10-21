@@ -276,9 +276,8 @@ export interface Coverage {
 }
 export type HelperTask = "collision" | "claudeMdReview" | "activity";
 export interface HelperStatus {
-  saved: boolean;
-  /** Last four characters of the saved key. */
-  hint: string;
+  /** The local `claude` command is installed. */
+  available: boolean;
 }
 export type NotificationKind = "update" | "group" | "plugins" | "local-edit" | "job" | "personal" | "other";
 /** One entry of the notification history (crates/core/src/notifications.rs). */
@@ -527,9 +526,6 @@ export const api = {
   getSettings: () => call<Settings>("get_settings"),
   setSettings: (settings: Partial<Settings>) => call<Settings>("set_settings", { settings }),
   helperStatus: () => call<HelperStatus>("helper_status"),
-  helperSaveKey: (key: string) => call<HelperStatus>("helper_save_key", { key }),
-  helperRemoveKey: () => call<HelperStatus>("helper_remove_key"),
-  helperTestKey: () => call<void>("helper_test_key"),
   helperExplain: (task: HelperTask, text: string) => call<string>("helper_explain", { task, text }),
   notifications: () => call<Notification[]>("notifications"),
   markNotificationRead: (id: number) => call<void>("mark_notification_read", { id }),

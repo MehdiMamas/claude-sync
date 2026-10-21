@@ -1,14 +1,15 @@
 // Optional Claude helper (docs/architecture.md §19): on-demand "Explain" and "Summarise"
-// buttons that appear only when the user saved an Anthropic API key in Settings.
+// buttons that appear only when the local `claude` command is found. They use the user's
+// Claude Code login; no API key.
 import { api, errorText, type HelperTask } from "../api";
 import { busy, h, replace } from "../dom";
 
 let saved: Promise<boolean> | null = null;
 
-/** Whether a key is saved. Cached; Settings calls `forgetHelperState` after a change. */
+/** Whether `claude` is found. Cached; Settings calls `forgetHelperState` after a change. */
 export function helperSaved(): Promise<boolean> {
   return (saved ??= api.helperStatus().then(
-    (s) => s.saved,
+    (s) => s.available,
     () => false,
   ));
 }
@@ -17,7 +18,7 @@ export function forgetHelperState(): void {
   saved = null;
 }
 
-/** A button that sends `text()` to Claude and shows the answer under it. Hidden without a key.
+/** A button that sends `text()` to Claude and shows the answer under it. Hidden without Claude Code.
  * Nothing is sent until the user clicks. */
 export function explainButton(task: HelperTask, label: string, text: () => string): HTMLElement {
   const button = h("button", { type: "button" }, label);

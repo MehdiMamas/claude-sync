@@ -235,13 +235,33 @@ pub fn run(program: &Path, args: &[&str], timeout: Duration) -> std::io::Result<
 const PIPE_GRACE: Duration = Duration::from_secs(2);
 
 /// [`run`] for a prepared command (arguments, environment).
-pub fn run_command(mut cmd: Command, timeout: Duration) -> std::io::Result<Output> {
+pub fn run_command(cmd: Command, timeout: Duration) -> std::io::Result<Output> {
+    run_command_input(cmd, None, timeout)
+}
+
+/// [`run_command`] with `input` written to the child's stdin (then closed).
+pub fn run_command_input(
+    mut cmd: Command,
+    input: Option<String>,
+    timeout: Duration,
+) -> std::io::Result<Output> {
     quiet(&mut cmd)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let deadline = Instant::now() + timeout;
     let mut child = cmd.spawn()?;
+    if let (Some(text), Some(mut stdin)) = (input, child.stdin.take()) {
+        // On its own thread: a child that does not read must not block the timeout.
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = stdin.write_all(text.as_bytes());
+        });
+    }
     let out = drain(child.stdout.take());
     let err = drain(child.stderr.take());
     let code = wait_until(&mut child, deadline)?;

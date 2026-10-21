@@ -463,13 +463,13 @@ Each command has a 2-minute timeout and no console window; its output goes to th
 
 ## 19. Claude helper (optional)
 
-Explains a collision (§7), a pending CLAUDE.md change (§7a) and incoming group activity, using the user's own Anthropic API key. Off until a key is saved in Settings → "Claude helper (optional)".
+Explains a collision (§7), a pending CLAUDE.md change (§7a) and incoming group activity with the user's own Claude Code login: the app runs the local `claude` command. There is no API key and nothing is stored.
 
-- **Key:** stored only in the OS keychain, service `claude-sync`, account `@anthropic-key` (the GitHub token uses `@current` and the login). Never in `state.json`, never logged; the UI shows its last four characters. "Test key" sends one 5-token request.
-- **On demand only:** "Explain" (collisions, CLAUDE.md review) and "Summarise" (activity feed) call `POST https://api.anthropic.com/v1/messages` (`x-api-key`, `anthropic-version: 2023-06-01`, model `claude-haiku-5-5`, `max_tokens` 600) when clicked. The buttons are hidden without a key. Each click costs the user money, so nothing runs automatically.
+- **Availability:** the buttons show only when `claude` is found (same lookup as §17/§18; on Windows `claude.exe` or `claude.cmd`). Settings → "Claude helper" says "Uses your Claude Code login on this computer." and whether Claude Code was found. Without it, a click gives: "Claude Code isn't installed or signed in. Install it and run `claude` once to sign in."
+- **On demand only:** "Explain" (collisions, CLAUDE.md review) and "Summarise" (activity feed) run `claude -p --model sonnet --output-format json --max-turns 1` with all tools disallowed, from the temp folder (so no project files are read), the prompt on stdin and the `result` field as the answer, with a 2-minute timeout. Nothing runs automatically. It counts against the user's own Claude plan.
 - **Before sending:** the §9 secret scan runs on the text; a hit refuses with a message that names the pattern, not the text. Input over 40 KB is cut with a note.
-- **Errors in plain words:** 401/403 key rejected, 429 too many requests or no credit, 529 overloaded, no answer means offline.
-- **Code:** `crates/core/src/helper.rs` (an `Http` trait so tests use a fake; the keychain goes through `token_store::Store`), commands `helper_*` in `app/src-tauri/src/commands.rs`, `app/ui/src/screens/helper.ts`.
+- **Old key:** earlier versions kept a pasted API key in the keychain (account `@anthropic-key`). On every start the app deletes that entry if present.
+- **Code:** `crates/core/src/helper.rs` (a `Runner` trait so tests use a fake and never start `claude`), commands `helper_status` and `helper_explain` in `app/src-tauri/src/commands.rs`, `app/ui/src/screens/helper.ts`.
 
 ## 20. Creating the GitHub App (owner checklist, issue #39)
 

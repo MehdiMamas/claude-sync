@@ -2,7 +2,7 @@
 // notifications, account,
 // updates.
 import { coverageLines } from "../copy";
-import { api, errorText, type HelperStatus, type Settings } from "../api";
+import { api, errorText, type Settings } from "../api";
 import { busy, errorBox, h, replace, spinner, toast } from "../dom";
 import { onRefresh, store } from "../store";
 import { forgetHelperState } from "./helper";
@@ -57,66 +57,23 @@ function updateCard(): HTMLElement {
 
 function helperCard(): HTMLElement {
   const status = h("p", { role: "status" }, "Checking…");
-  const key = h("input", { id: "s-key", type: "password", autocomplete: "off", spellcheck: "false", placeholder: "sk-ant-…" });
-  const save = h("button", { type: "submit" }, "Save");
-  const test = h("button", { type: "button" }, "Test key");
-  const remove = h("button", { type: "button", class: "danger" }, "Remove");
-  const show = (s: HelperStatus) => {
-    forgetHelperState();
-    status.textContent = s.saved ? `Key saved, ending in ${s.hint}.` : "No key saved. The helper is off.";
-    test.hidden = remove.hidden = !s.saved;
-  };
-  api.helperStatus().then(show, (e) => (status.textContent = errorText(e)));
-  const form = h(
-    "form",
-    { class: "form" },
-    h("label", { for: "s-key" }, "Anthropic API key"),
-    h("div", { class: "inline-form" }, key, save),
-  );
-  form.addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    busy(save, "Saving…", async () => {
-      try {
-        show(await api.helperSaveKey(key.value));
-        key.value = "";
-        toast("Key saved in your keychain");
-      } catch (e) {
-        toast(errorText(e), "error");
-      }
-    });
-  });
-  test.addEventListener("click", () =>
-    busy(test, "Testing…", async () => {
-      try {
-        await api.helperTestKey();
-        toast("The key works");
-      } catch (e) {
-        toast(errorText(e), "error");
-      }
-    }),
-  );
-  remove.addEventListener("click", () =>
-    busy(remove, "Removing…", async () => {
-      try {
-        show(await api.helperRemoveKey());
-        toast("Key removed");
-      } catch (e) {
-        toast(errorText(e), "error");
-      }
-    }),
+  api.helperStatus().then(
+    (s) => {
+      forgetHelperState();
+      status.textContent = s.available ? "Claude Code found. The helper is on." : "Claude Code isn't installed or signed in. Install it and run `claude` once to sign in.";
+    },
+    (e) => (status.textContent = errorText(e)),
   );
   return h(
     "section",
     { class: "card", "aria-labelledby": "helper-h" },
-    h("h2", { id: "helper-h" }, "Claude helper (optional)"),
+    h("h2", { id: "helper-h" }, "Claude helper"),
     h(
       "p",
       { class: "muted small" },
-      "Paste your own Anthropic API key to get Explain and Summarise buttons for conflicts, CLAUDE.md changes and group activity. Nothing is sent until you click one, and each click costs a little on your Anthropic account. The key stays in your computer's keychain and is only sent to api.anthropic.com. Text with a secret in it is never sent.",
+      "Uses your Claude Code login on this computer. It adds Explain and Summarise buttons for conflicts, CLAUDE.md changes and group activity. Nothing is sent until you click one. Text with a secret in it is never sent.",
     ),
     status,
-    form,
-    h("div", { class: "actions" }, test, remove),
   );
 }
 

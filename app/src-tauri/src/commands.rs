@@ -960,60 +960,27 @@ pub async fn retry_plugins(app: AppHandle, group: GroupId) -> Res<Vec<String>> {
     app_jobs::retry_plugins(app, group).await
 }
 
-/// Whether an Anthropic API key is saved for the Claude helper, and its last four characters.
+/// Whether the Claude helper can run: the local `claude` command is installed.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HelperStatus {
-    saved: bool,
-    hint: String,
-}
-
-fn helper_status_now() -> Res<HelperStatus> {
-    let key = helper::load_key(&Keychain).map_err(guard::logged("helper key"))?;
-    Ok(HelperStatus {
-        saved: key.is_some(),
-        hint: key.as_deref().map(helper::key_hint).unwrap_or_default(),
-    })
-}
-
-fn helper_key() -> Res<String> {
-    helper::load_key(&Keychain)
-        .map_err(guard::logged("helper key"))?
-        .ok_or_else(|| "Add your Anthropic API key in Settings first.".to_string())
+    available: bool,
 }
 
 #[tauri::command]
-pub fn helper_status() -> Res<HelperStatus> {
-    helper_status_now()
-}
-
-#[tauri::command]
-pub fn helper_save_key(key: String) -> Res<HelperStatus> {
-    helper::save_key(&Keychain, &key).map_err(guard::logged("helper key"))?;
-    helper_status_now()
-}
-
-#[tauri::command]
-pub fn helper_remove_key() -> Res<HelperStatus> {
-    helper::remove_key(&Keychain).map_err(guard::logged("helper key"))?;
-    helper_status_now()
-}
-
-/// Ask Anthropic whether the saved key works.
-#[tauri::command]
-pub async fn helper_test_key() -> Res<()> {
-    let key = helper_key()?;
-    helper::test_key(&helper::ReqwestHttp, &key)
+pub async fn helper_status() -> Res<HelperStatus> {
+    let available = tokio::task::spawn_blocking(|| helper::available(&helper::LocalClaude))
         .await
-        .map_err(guard::logged("helper test"))
+        .unwrap_or(false);
+    Ok(HelperStatus { available })
 }
 
-/// Explain or summarise `text` with the user's key. On demand only.
+/// Explain or summarise `text` with the local Claude Code login. On demand only.
 #[tauri::command]
 pub async fn helper_explain(task: helper::Task, text: String) -> Res<String> {
-    let key = helper_key()?;
-    helper::explain(&helper::ReqwestHttp, &key, task, &text)
+    tokio::task::spawn_blocking(move || helper::explain(&helper::LocalClaude, task, &text))
         .await
+        .map_err(|e| e.to_string())?
         .map_err(guard::logged("helper explain"))
 }
 

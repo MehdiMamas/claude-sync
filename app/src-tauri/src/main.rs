@@ -210,14 +210,17 @@ fn main() {
             commands::plugin_warnings,
             commands::retry_plugins,
             commands::helper_status,
-            commands::helper_save_key,
-            commands::helper_remove_key,
-            commands::helper_test_key,
             commands::helper_explain,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
             auth::init(&handle);
+            // An older version kept a pasted API key; the helper uses the Claude login now.
+            if let Err(e) = claude_sync_core::helper::remove_legacy_key(
+                &claude_sync_core::github::token_store::Keychain,
+            ) {
+                tracing::warn!("could not remove the old helper key: {e}");
+            }
             first_run_autostart(&handle, &ctx);
             #[cfg(debug_assertions)]
             if let Some(token) = auth::dev_token() {
