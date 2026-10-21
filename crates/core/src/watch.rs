@@ -416,6 +416,41 @@ mod tests {
     }
 
     #[test]
+    fn a_mods_canary_is_no_alert_but_a_real_edit_is() {
+        let (_t, paths) = env();
+        let a = g("a");
+        let shared = br#"{"enabledPlugins": {"tab-title@claude-mods": true}}"#;
+        let fs_: FileSet = [(SHARED_SETTINGS.to_string(), shared.to_vec())].into();
+        apply_group(&paths, &a, std::slice::from_ref(&a), &fs_).unwrap();
+        let dirs = "/h/.claude-sync/marketplaces/claude-mods/mods/tab-title";
+        set_settings(
+            &paths,
+            json!({"enabledPlugins": {"tab-title@claude-mods": false},
+                   "env": {"CLAUDE_CODE_PLUGIN_DIRS": dirs}}),
+        );
+        assert_eq!(local_edits(&paths).unwrap(), vec![]);
+        // A re-apply does not overwrite the trial.
+        apply_group(&paths, &a, std::slice::from_ref(&a), &fs_).unwrap();
+        let now: serde_json::Value =
+            serde_json::from_slice(&fs::read(paths.claude_home.join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(now["enabledPlugins"]["tab-title@claude-mods"], json!(false));
+        // The trial ends (env path removed): the normal alert is back.
+        set_settings(
+            &paths,
+            json!({"enabledPlugins": {"tab-title@claude-mods": false}}),
+        );
+        assert_eq!(
+            local_edits(&paths).unwrap(),
+            vec![edit(
+                &a,
+                "settings.shared.json#/enabledPlugins/tab-title@claude-mods",
+                false
+            )]
+        );
+    }
+
+    #[test]
     fn keep_local_removes_the_edit_and_keeps_the_content() {
         let (_t, paths, a) = setup();
         let p = paths.claude_home.join("agents/reviewer.md");

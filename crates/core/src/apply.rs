@@ -487,6 +487,10 @@ fn apply_settings(
         merged.owned.values.remove(p);
     }
     skipped.extend(merged.skipped);
+    // A mods-canary trial stays a local-only override: the group's value does not replace it.
+    if !settings::canary_pointers(&local).is_empty() {
+        merged.changed = settings::keep_canaries(&local, &mut merged.settings);
+    }
     if merged.changed {
         if let Some(old) = &existing {
             backups.save("settings.json", old)?;

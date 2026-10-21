@@ -210,6 +210,8 @@ A person can be in several groups, and a line from one group's `CLAUDE.md` may b
 
 **Scope.** Only `CLAUDE.md` is reviewed. Skills, agents, commands and output styles still follow §6 and §7 (the group's version applies; a local edit gets the Share / Keep local / Undo notice). Settings merge per key (§8).
 
+**Mods-canary trials.** A mods-canary trial sets `enabledPlugins["<mod>@claude-mods"]` to `false` and adds a path ending in `mods/<mod>` to `env.CLAUDE_CODE_PLUGIN_DIRS` (split on `:` or `;`). While both hold (`settings::canary_mods`), the app treats that one `enabledPlugins` value as a local-only override: it is not listed as a local edit, not pushed to the group (`settings::reconstruct` leaves it out), and not overwritten when the group's settings are applied. When the path is removed from the env, the normal rules apply again.
+
 ## 7b. Groups that must not conflict
 
 Claude reads every group's `CLAUDE.md` and the user's own text together, and every group's settings are merged into one `settings.json`. Two groups, or a group and the user, can say the same thing twice or the opposite. The app finds these clashes and lets the user settle each one on this device.
