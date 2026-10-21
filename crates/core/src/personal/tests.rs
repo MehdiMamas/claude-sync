@@ -556,6 +556,34 @@ async fn enable_refuses_a_repo_that_is_not_a_personal_repo() {
 }
 
 #[tokio::test]
+async fn enable_names_the_personal_rules_mod_when_it_owns_the_repo() {
+    let world = FakeGitHub::new();
+    let mod_repo = FakeRepo::with_files(
+        GroupId::new("ana", REPO),
+        &[
+            ("README.md", "# Rules\n\nKept by the personal-rules mod.\n"),
+            ("owners/ana.md", "rule\n"),
+            ("projects/x/rules.md", "rule\n"),
+        ],
+    );
+    world.add(&mod_repo);
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    let Err(Error::Invalid(m)) = pc.personal_enable().await else {
+        panic!("expected Invalid")
+    };
+    assert!(m.contains("used by the personal-rules mod"), "{m}");
+
+    let world = FakeGitHub::new();
+    let other = FakeRepo::with_files(GroupId::new("ana", REPO), &[("notes.md", "mine\n")]);
+    world.add(&other);
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    let Err(Error::Invalid(m)) = pc.personal_enable().await else {
+        panic!("expected Invalid")
+    };
+    assert!(m.contains("wasn't made by claude-sync"), "{m}");
+}
+
+#[tokio::test]
 async fn two_devices_share_memory_across_windows_and_macos() {
     let world = FakeGitHub::new();
     let pc = dev(&world, "ana", "pc", WIN_HOME);
