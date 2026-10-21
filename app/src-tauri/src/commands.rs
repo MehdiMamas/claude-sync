@@ -15,7 +15,6 @@ use claude_sync_core::engine::{
     ClaudeMdReview, ClaudeMdShare, ClaudeMdShared, CommitInfo, Copied, CopyPreview, CopyRequest,
     GroupStatus, ProposalView, RevertPlan, SyncReport,
 };
-use claude_sync_core::github::token_store::Keychain;
 use claude_sync_core::github::{self, Invitation};
 use claude_sync_core::helper;
 use claude_sync_core::jobs::JobsOverview;
