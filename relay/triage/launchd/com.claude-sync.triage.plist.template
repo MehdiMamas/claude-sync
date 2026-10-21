@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.claude-sync.triage</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>cd "@RELAY_DIR@" &amp;&amp; npm run triage</string>
+  </array>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>@HOME@/Library/Logs/claude-sync-triage.log</string>
+  <key>StandardErrorPath</key><string>@HOME@/Library/Logs/claude-sync-triage.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>@PATH@</string>
+    <key>HOME</key><string>@HOME@</string>
+    <key>TRIAGE_APP_ID</key><string>@TRIAGE_APP_ID@</string>
+    <key>TRIAGE_APP_INSTALLATION_ID</key><string>@TRIAGE_APP_INSTALLATION_ID@</string>
+    <key>TRIAGE_APP_KEY_FILE</key><string>@TRIAGE_APP_KEY_FILE@</string>
+  </dict>
+</dict>
+</plist>

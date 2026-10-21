@@ -8,7 +8,8 @@
 //            reports is handled together.
 //   analyze  ONE `claude -p --model sonnet` session per batch of 5 reports, read-only tools,
 //            no GitHub token in its environment. Prints no report content.
-//   post     Sanitizes each answer, comments and labels; or moderates.
+//   post     Sanitizes each answer, comments and labels; or moderates. Writes only as the
+//            triage GitHub App bot (installation token, see bot.ts), never as the maintainer.
 //
 // node relay/triage/run.ts [--issue <n|all>] [--force] [--dry-run] [--model sonnet]
 //                          [--out <dir>] [--attachments <clone>] [--min-age-minutes 10]
@@ -17,6 +18,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { botConfig, botToken, NOT_CONFIGURED } from "./bot.ts";
 import { discard, github, githubJson, repoPath } from "../lib/github.ts";
 import {
   BATCH_SIZE,
@@ -224,6 +226,8 @@ async function call(ctx: Ctx, what: string, path: string, method: string, body?:
 
 /** Posts every result. Returns how many issues failed, so the job can fail. */
 export async function post(ctx: Ctx & { out: string; sha: string }): Promise<number> {
+  // Writes only ever use the bot's installation token; there is no other source for it.
+  if (!ctx.token) throw new Error(NOT_CONFIGURED);
   const queue = JSON.parse(readFileSync(join(ctx.out, "queue.json"), "utf8")) as Queue;
   const base = repoPath(ctx.repo);
   let failed = 0;
@@ -303,17 +307,18 @@ function sh(cmd: string, args: string[]): string {
   return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 }
 
-/** GH_TOKEN, GITHUB_TOKEN, or the token of the maintainer's `gh` login. */
-function githubToken(): string {
-  const env = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
-  if (env) return env;
-  try {
-    const t = sh("gh", ["auth", "token"]);
-    if (t) return t;
-  } catch {
-    // fall through
-  }
-  throw new Error("no GitHub token: run `gh auth login` or set GH_TOKEN");
+/**
+ * The token for this run. A real run needs the bot (throws when it is not configured); a
+ * dry run reads with the bot when configured and otherwise unauthenticated. Never `gh auth
+ * token`, GH_TOKEN or GITHUB_TOKEN.
+ */
+export async function runToken(
+  dryRun: boolean,
+  env: Record<string, string | undefined> = process.env,
+  fetchFn: typeof fetch = fetch,
+): Promise<string> {
+  if (!dryRun || botConfig(env)) return botToken(env, fetchFn);
+  return "";
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -337,11 +342,13 @@ async function main(argv: string[]): Promise<number> {
     }
   }
   try {
+    const dryRun = args.includes("--dry-run");
+    const token = await runToken(dryRun);
     const minutes = Number.parseFloat(flag(args, "min-age-minutes") ?? "10");
     const outcome = await runTriage(
       {
         repo,
-        token: githubToken(),
+        token,
         log,
         owner: repo.split("/")[0] ?? "",
         trusted: process.env.TRIAGE_TRUSTED_LOGINS,
@@ -352,7 +359,7 @@ async function main(argv: string[]): Promise<number> {
         sha: sh("git", ["rev-parse", "HEAD"]),
       },
       localClaude(process.env.CLAUDE_BIN || "claude"),
-      { model: flag(args, "model") ?? "sonnet", cwd: process.cwd(), minAgeMs: minutes * 60_000, dryRun: args.includes("--dry-run") },
+      { model: flag(args, "model") ?? "sonnet", cwd: process.cwd(), minAgeMs: minutes * 60_000, dryRun },
     );
     return outcome.failed ? 1 : 0;
   } finally {

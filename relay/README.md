@@ -98,7 +98,7 @@ The issue is public when `FEEDBACK_REPO` is a public repo, and it shows the user
 
 ### Triage (`triage/`, not deployed)
 
-`triage/run.ts` is not part of the relay. It is a script the maintainer runs on their own computer: `cd relay && npm run triage` (options: `-- --issue <n|all> --force --dry-run --model sonnet --min-age-minutes 10`). It needs `gh auth login` (GitHub) and the `claude` command signed in with the maintainer's own Claude account (`claude`, then `/login`). It uses no Anthropic API key and no hosted runner. Run it from a checkout of `main`, because Claude reads the code in the current folder.
+`triage/run.ts` is not part of the relay. It is a script the maintainer runs on their own computer: `cd relay && npm run triage` (options: `-- --issue <n|all> --force --dry-run --model sonnet --min-age-minutes 10`). It posts comments, labels and moderation only as a GitHub App bot, never as the maintainer: create a GitHub App with Issues read and write on the claude-sync repo, install it there, and set `TRIAGE_APP_ID`, `TRIAGE_APP_INSTALLATION_ID` and `TRIAGE_APP_KEY_FILE`. The private key (PEM) is a file with mode 0600 outside the repo and is never committed; the script refuses a key file that group or others can read. Without these, a real run refuses to post (there is no fallback to `gh auth token`, `GH_TOKEN` or `GITHUB_TOKEN`); `--dry-run` still works. It also needs the `claude` command signed in with the maintainer's own Claude account (`claude`, then `/login`). It uses no Anthropic API key and no hosted runner. Run it from a checkout of `main`, because Claude reads the code in the current folder.
 
 What it does:
 
@@ -106,7 +106,7 @@ What it does:
 2. Starts one `claude -p --model sonnet --output-format json` session per batch of 5 reports. Claude reads each issue, its private attachments and the code, and writes a write-up another agent can fix it from. Spam and abuse are closed, locked and labelled `needs-moderation` instead.
 3. Posts the comments with the maintainer's `gh` login (or `GH_TOKEN`). The steps and the checks on the comment are in `docs/architecture.md` §12.
 
-To run it on a schedule, use cron or launchd on that computer, for example every 15 minutes: `*/15 * * * * cd /path/to/claude-sync && git pull -q && (cd relay && npm run triage)`. A run that finds nothing, or reports that are too new, does nothing.
+To run it on a schedule on macOS, `TRIAGE_APP_ID=... TRIAGE_APP_INSTALLATION_ID=... TRIAGE_APP_KEY_FILE=... sh relay/triage/install-launchd.sh` writes `~/Library/LaunchAgents/com.claude-sync.triage.plist` (every 5 minutes, logs to `~/Library/Logs/claude-sync-triage.log`) and loads it only when you add `--load`. A run that finds nothing, or reports that are too new, does nothing.
 
 What keeps it safe:
 
