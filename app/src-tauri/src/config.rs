@@ -14,17 +14,17 @@ pub const GITHUB_CLIENT_ID: &str = match option_env!("CLAUDE_SYNC_GITHUB_CLIENT_
     None => "",
 };
 
-/// Client ID of the GitHub App (per-repo access, issue #39); empty until the App exists.
-/// Used when the "GitHub App" setting is on.
+/// Public client ID of the GitHub App (per-repo access, issue #39), used when the
+/// "GitHub App" setting is on. `CLAUDE_SYNC_GITHUB_APP_CLIENT_ID` overrides it.
 pub const GITHUB_APP_CLIENT_ID: &str = match option_env!("CLAUDE_SYNC_GITHUB_APP_CLIENT_ID") {
     Some(id) => id,
-    None => "",
+    None => "Iv23litHw8qKqwlLcKNV",
 };
 
 /// Slug of the GitHub App, for `https://github.com/apps/<slug>`.
 pub const GITHUB_APP_SLUG: &str = match option_env!("CLAUDE_SYNC_GITHUB_APP_SLUG") {
     Some(s) => s,
-    None => "claude-sync",
+    None => "claude-sync-app-github",
 };
 
 /// The client ID sign-in and token refresh use: the App's when `github_app` is on and the

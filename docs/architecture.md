@@ -475,13 +475,13 @@ Explains a collision (§7), a pending CLAUDE.md change (§7a) and incoming group
 
 Create it at GitHub, Settings, Developer settings, GitHub Apps, New GitHub App:
 
-- Name: `claude-sync` (slug becomes `claude-sync`; if taken, set `CLAUDE_SYNC_GITHUB_APP_SLUG`). Homepage URL: the repo URL.
+- Name: `claude-sync-app-github` (App ID 5412185; slug `claude-sync-app-github`, built in as the default of `CLAUDE_SYNC_GITHUB_APP_SLUG`). Homepage URL: the repo URL.
 - Callback URL: leave empty is not allowed for some forms; use `https://github.com/MehdiMamas/claude-sync`. Request user authorization (OAuth) during installation: off. Webhook: **Active off**.
 - **Enable Device Flow: on.** Expire user authorization tokens: **on** (the default; do not opt out).
 - Repository permissions: Administration **write**, Contents **write**, Pull requests **write**, Metadata read (automatic). Workflows: none.
 - Account permissions: **Repository creation: write** (needed for `POST /user/repos`). No email or other account permissions.
 - Where can this App be installed: **Any account** (friends install it on their own accounts).
-- After creating: copy the Client ID (not the App ID), build with `CLAUDE_SYNC_GITHUB_APP_CLIENT_ID=<id>` (and `CLAUDE_SYNC_GITHUB_APP_SLUG`), do not generate a client secret or private key (the app uses neither).
+- The Client ID (public, not a secret) is built in as the default of `CLAUDE_SYNC_GITHUB_APP_CLIENT_ID`; set the variable only to point a build at another App. No client secret or private key exists (the app uses neither).
 - Each user installs it with "All repositories" on their account, and the host installs it on any org that owns a group repo.
 
 **Settings UI.** Settings has a "GitHub App (beta)" card: a toggle for the `githubApp` setting (off by default, takes effect at next sign-in; disabled with "This build has no GitHub App" when `app_info.appClientIdMissing`). When on, an "Install the App" button calls `open_app_install` and `app_coverage` fills a list of group repos the App does not reach ("Not covered: owner/repo"). Code: `app/ui/src/screens/settings.ts`, `coverageLines` in `app/ui/src/copy.ts`.
