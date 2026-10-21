@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["api", "lib", "dev", "test"]
+  "include": ["api", "lib", "dev", "test", "triage"]
 }

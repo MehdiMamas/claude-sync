@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { POST as feedback } from "../api/feedback.ts";
 import { resetAuthCache } from "../lib/auth.ts";
-import { fenceFor, MAX_ISSUE_BODY } from "../lib/feedback.ts";
 import { FEEDBACK_LIMIT, FEEDBACK_WINDOW_MS, resetRateLimits } from "../lib/ratelimit.ts";
 import { type Call, type FetchMock, mockFetch, mockUser, RELAY_TOKEN, req, setEnv, USER_TOKEN } from "./helpers.ts";
 
 const REPO = "/repos/MehdiMamas/claude-sync";
+// The private attachments repo: `<FEEDBACK_REPO>-feedback` by default.
+const ATT = "/repos/MehdiMamas/claude-sync-feedback";
 const MILESTONES = `${REPO}/milestones?state=open&per_page=100`;
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("fake png body")]);
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from("fake jpeg body")]);
@@ -16,12 +17,26 @@ const ISSUE_URL = "https://github.com/MehdiMamas/claude-sync/issues/42";
 interface Issue {
   title: string;
   body: string;
+  labels?: string[];
+  milestone?: number;
+}
+
+interface Patch {
   labels: string[];
   milestone?: number;
+  body?: string;
+}
+
+interface TreeEntry {
+  path: string;
+  mode: string;
+  type: string;
+  sha: string;
 }
 
 let fm: FetchMock;
 let logs: string[];
+let blobs: Map<string, Buffer>;
 
 function post(body: unknown, token?: string | null): Request {
   return req("/api/feedback", {
@@ -54,8 +69,22 @@ function issueCall(): Call & { body: Issue } {
   return call;
 }
 
-function patchCalls(): Array<Call & { body: { labels: string[]; milestone?: number } }> {
-  return fm.calls.filter((c) => c.method === "PATCH") as Array<Call & { body: { labels: string[]; milestone?: number } }>;
+function patchCalls(): Array<Call & { body: Patch }> {
+  return fm.calls.filter((c) => c.method === "PATCH" && /\/repos\/MehdiMamas\/claude-sync\/issues\/\d+$/.test(c.url)) as Array<
+    Call & { body: Patch }
+  >;
+}
+
+function attachmentCalls(): Call[] {
+  return fm.calls.filter((c) => c.url.includes(`${ATT}`));
+}
+
+/** The files of the last attachments commit, by path. */
+function committed(): Map<string, Buffer> {
+  const trees = fm.calls.filter((c) => c.method === "POST" && c.url.endsWith(`${ATT}/git/trees`));
+  const tree = trees.at(-1) as (Call & { body: { base_tree: string; tree: TreeEntry[] } }) | undefined;
+  assert.ok(tree, "a tree was written");
+  return new Map(tree.body.tree.map((e) => [e.path, blobs.get(e.sha) ?? Buffer.alloc(0)]));
 }
 
 /** The caller's create answers `status` with GitHub's `message`; any other token would succeed. */
@@ -67,15 +96,12 @@ function refuseUser(status: number, message = "Resource not accessible", headers
   );
 }
 
-/** No issue was filed with the relay token, and nothing was labelled. */
+/** No issue was filed with the relay token, nothing was labelled and nothing was stored. */
 function assertOnlyTheCallerTried(): void {
   assert.equal(issueCalls().length, 1);
   assert.equal(issueCall().headers.authorization, `Bearer ${USER_TOKEN}`);
   assert.equal(patchCalls().length, 0);
-}
-
-function putCalls(): Call[] {
-  return fm.calls.filter((c) => c.method === "PUT");
+  assert.equal(attachmentCalls().length, 0, "no attachment is left behind for a refused report");
 }
 
 beforeEach(() => {
@@ -85,20 +111,29 @@ beforeEach(() => {
   mock.timers.enable({ apis: ["Date"], now: NOW });
   fm = mockFetch();
   mockUser(fm, "MehdiMamas");
-  fm.on("GET", `${REPO}/git/ref/heads/feedback-assets`, { ref: "refs/heads/feedback-assets", object: { sha: "a1" } });
-  fm.on("PUT", new RegExp(`${REPO}/contents/feedback/`), (call) =>
-    Response.json({ content: { path: call.url.split("/contents/")[1] } }, { status: 201 }),
-  );
   fm.on("GET", MILESTONES, [
     { number: 1, title: "Sprint 1", state: "open", due_on: "2026-10-06T07:00:00Z" },
     { number: 2, title: "Sprint 2", state: "open", due_on: "2026-10-20T07:00:00Z" },
     { number: 3, title: "Sprint 3", state: "open", due_on: "2026-10-27T07:00:00Z" },
   ]);
-  // As for a user without push access: GitHub drops the labels and milestone.
   fm.on("POST", `${REPO}/issues`, () =>
-    Response.json({ number: 42, html_url: ISSUE_URL, labels: [], milestone: null }, { status: 201 }),
+    Response.json({ number: 42, html_url: ISSUE_URL, created_at: "2026-10-13T15:00:01Z" }, { status: 201 }),
   );
   fm.on("PATCH", `${REPO}/issues/42`, (call) => Response.json({ number: 42, ...(call.body as object) }));
+
+  blobs = new Map();
+  fm.on("GET", ATT, { default_branch: "main" });
+  fm.on("POST", `${ATT}/git/blobs`, (call) => {
+    const sha = `blob${blobs.size + 1}`;
+    blobs.set(sha, Buffer.from((call.body as { content: string }).content, "base64"));
+    return Response.json({ sha }, { status: 201 });
+  });
+  fm.on("GET", `${ATT}/git/ref/heads/main`, { ref: "refs/heads/main", object: { sha: "head1" } });
+  fm.on("GET", `${ATT}/git/commits/head1`, { sha: "head1", tree: { sha: "tree0" } });
+  fm.on("POST", `${ATT}/git/trees`, Response.json({ sha: "tree1" }, { status: 201 }));
+  fm.on("POST", `${ATT}/git/commits`, Response.json({ sha: "commit1" }, { status: 201 }));
+  fm.on("PATCH", `${ATT}/git/refs/heads/main`, { ref: "refs/heads/main", object: { sha: "commit1" } });
+
   logs = [];
   for (const level of ["log", "warn", "error", "info", "debug"] as const) {
     mock.method(console, level, (...args: unknown[]) => logs.push(args.map(String).join(" ")));
@@ -115,7 +150,7 @@ afterEach(() => {
 });
 
 describe("POST /api/feedback", () => {
-  it("opens the issue as the caller, then sets labels and the nearest sprint with the relay token", async () => {
+  it("opens the issue as the caller, stores the logs privately, then labels it with the relay token", async () => {
     const res = await feedback(post(valid()));
     assert.equal(res.status, 201);
     assert.deepEqual(await res.json(), { number: 42, url: ISSUE_URL });
@@ -124,15 +159,9 @@ describe("POST /api/feedback", () => {
     const call = issueCall();
     assert.equal(call.headers.authorization, `Bearer ${USER_TOKEN}`);
     assert.equal(call.body.title, "Sync stops after sleep");
-    assert.deepEqual(call.body.labels, ["feedback", "type:bug"]);
-    assert.equal(call.body.milestone, 2);
-
-    const patches = patchCalls();
-    assert.equal(patches.length, 1);
-    assert.equal(patches[0]?.headers.authorization, `Bearer ${RELAY_TOKEN}`);
-    assert.deepEqual(patches[0]?.body, { labels: ["feedback", "type:bug"], milestone: 2 });
-    // The labels are set after the issue exists.
-    assert.ok(fm.calls.indexOf(call) < fm.calls.indexOf(patches[0] as Call));
+    // No labels at creation: the feedback label starts triage, which needs the attachments.
+    assert.equal("labels" in call.body, false);
+    assert.equal("milestone" in call.body, false);
 
     const body = call.body.body;
     assert.match(body, /^After the laptop wakes up/);
@@ -141,28 +170,57 @@ describe("POST /api/feedback", () => {
     assert.match(body, /\| Kind \| bug \|/);
     assert.match(body, /\| App version \| `0\.3\.0` \|/);
     assert.match(body, /\| OS \| `Windows 11 Pro 10\.0\.26200` \|/);
-    assert.match(body, /<details>\n<summary>Logs \(redacted\)<\/summary>\n\n```text\n2026-10-13T10:00:00Z INFO started\n/);
-    assert.match(body, /```\n\n<\/details>$/);
-    // No screenshot: nothing is committed.
-    assert.equal(putCalls().length, 0);
-    assert.equal(fm.calls.filter((c) => c.url.includes("/git/")).length, 0);
+    assert.match(body, /_The logs went privately to the maintainer\._$/);
+    // The logs never reach the public issue.
+    assert.ok(!body.includes("poll failed") && !body.includes("<details>"));
+
+    const files = committed();
+    assert.deepEqual([...files.keys()], ["issues/42/logs.txt", "issues/42/report.json"]);
+    assert.equal(files.get("issues/42/logs.txt")?.toString("utf8"), valid().logs);
+    for (const c of attachmentCalls()) assert.equal(c.headers.authorization, `Bearer ${RELAY_TOKEN}`);
+    const commit = fm.calls.find((c) => c.method === "POST" && c.url.endsWith(`${ATT}/git/commits`));
+    assert.deepEqual(commit?.body, { message: "feedback: MehdiMamas/claude-sync#42", tree: "tree1", parents: ["head1"] });
+    const tree = fm.calls.find((c) => c.method === "POST" && c.url.endsWith(`${ATT}/git/trees`));
+    assert.equal((tree?.body as { base_tree: string }).base_tree, "tree0");
+    const refUpdate = fm.calls.find((c) => c.method === "PATCH" && c.url.endsWith(`${ATT}/git/refs/heads/main`));
+    assert.deepEqual(refUpdate?.body, { sha: "commit1" });
+
+    const patches = patchCalls();
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0]?.headers.authorization, `Bearer ${RELAY_TOKEN}`);
+    assert.deepEqual(patches[0]?.body, { labels: ["feedback", "type:bug"], milestone: 2 });
+    // Created, then stored, then labelled.
+    const at = (c: Call | undefined): number => fm.calls.indexOf(c as Call);
+    assert.ok(at(call) < at(refUpdate));
+    assert.ok(at(refUpdate) < at(patches[0]));
+  });
+
+  it("keeps who filed it in a private report.json", async () => {
+    mockUser(fm, "friend-one");
+    assert.equal((await feedback(post(valid()))).status, 201);
+    const report = JSON.parse(committed().get("issues/42/report.json")?.toString("utf8") ?? "{}");
+    assert.deepEqual(report, {
+      repo: "MehdiMamas/claude-sync",
+      number: 42,
+      url: ISSUE_URL,
+      login: "friend-one",
+      kind: "bug",
+      appVersion: "0.3.0",
+      os: "Windows 11 Pro 10.0.26200",
+      createdAt: "2026-10-13T15:00:01Z",
+    });
   });
 
   it("labels ideas type:idea", async () => {
     assert.equal((await feedback(post(valid({ kind: "idea" })))).status, 201);
-    assert.deepEqual(issueCall().body.labels, ["feedback", "type:idea"]);
     assert.deepEqual(patchCalls()[0]?.body.labels, ["feedback", "type:idea"]);
   });
 
-  it("skips the label call when GitHub kept the labels and milestone (a collaborator)", async () => {
-    fm.on("POST", `${REPO}/issues`, () =>
-      Response.json(
-        { number: 42, html_url: ISSUE_URL, labels: [{ name: "feedback" }, { name: "type:bug" }], milestone: { number: 2 } },
-        { status: 201 },
-      ),
-    );
-    assert.equal((await feedback(post(valid()))).status, 201);
-    assert.equal(patchCalls().length, 0);
+  it("stores nothing and says so when there is no screenshot and no logs", async () => {
+    assert.equal((await feedback(post(valid({ logs: "" })))).status, 201);
+    assert.equal(attachmentCalls().length, 0);
+    assert.match(issueCall().body.body, /_No screenshot or logs attached\._$/);
+    assert.deepEqual(patchCalls()[0]?.body, { labels: ["feedback", "type:bug"], milestone: 2 });
   });
 
   it("still answers 201 when setting the labels fails, and logs it", async () => {
@@ -254,49 +312,57 @@ describe("POST /api/feedback", () => {
     assertOnlyTheCallerTried();
   });
 
-  it("commits a PNG screenshot to feedback-assets and links it in the issue", async () => {
+  it("stores a PNG screenshot privately and keeps it out of the issue", async () => {
     const res = await feedback(post(valid({ screenshot: PNG.toString("base64") })));
     assert.equal(res.status, 201);
-    const puts = putCalls();
-    assert.equal(puts.length, 1);
-    const put = puts[0] as Call & { body: { content: string; branch: string; message: string } };
-    const path = put.url.split("/contents/")[1] ?? "";
-    assert.match(path, /^feedback\/2026-10\/[0-9a-f-]{36}\.png$/);
-    assert.equal(put.body.branch, "feedback-assets");
-    assert.deepEqual(Buffer.from(put.body.content, "base64"), PNG);
-    assert.equal(put.headers.authorization, `Bearer ${RELAY_TOKEN}`);
-    assert.ok(
-      issueCall().body.body.includes(
-        `![screenshot](https://github.com/MehdiMamas/claude-sync/blob/feedback-assets/${path}?raw=true)`,
-      ),
-    );
+    const files = committed();
+    assert.deepEqual([...files.keys()], ["issues/42/screenshot.png", "issues/42/logs.txt", "issues/42/report.json"]);
+    assert.deepEqual(files.get("issues/42/screenshot.png"), PNG);
+    const body = issueCall().body.body;
+    assert.ok(!body.includes("![") && !body.includes("http"), body);
+    assert.match(body, /_The screenshot and logs went privately to the maintainer\._$/);
   });
 
   it("accepts a JPEG given as a data URL and stores it as .jpg", async () => {
-    const res = await feedback(post(valid({ screenshot: `data:image/jpeg;base64,${JPEG.toString("base64")}` })));
+    const res = await feedback(post(valid({ logs: "", screenshot: `data:image/jpeg;base64,${JPEG.toString("base64")}` })));
     assert.equal(res.status, 201);
-    assert.match(putCalls()[0]?.url ?? "", /\/feedback\/2026-10\/[0-9a-f-]{36}\.jpg$/);
+    assert.deepEqual([...committed().keys()], ["issues/42/screenshot.jpg", "issues/42/report.json"]);
+    assert.match(issueCall().body.body, /_The screenshot went privately to the maintainer\._$/);
   });
 
-  it("creates feedback-assets from the default branch head when it is missing", async () => {
-    fm.on("GET", `${REPO}/git/ref/heads/feedback-assets`, 404);
-    fm.on("GET", REPO, { default_branch: "main" });
-    fm.on("GET", `${REPO}/git/ref/heads/main`, { ref: "refs/heads/main", object: { sha: "c0ffee" } });
-    fm.on("POST", `${REPO}/git/refs`, (call) => Response.json({ ref: (call.body as { ref: string }).ref }, { status: 201 }));
-
-    const res = await feedback(post(valid({ screenshot: PNG.toString("base64") })));
-    assert.equal(res.status, 201);
-    const create = fm.calls.find((c) => c.method === "POST" && c.url.endsWith("/git/refs"));
-    assert.deepEqual(create?.body, { ref: "refs/heads/feedback-assets", sha: "c0ffee" });
-    // The branch exists before the screenshot is committed to it.
-    assert.ok(fm.calls.indexOf(create as Call) < fm.calls.indexOf(putCalls()[0] as Call));
+  it("commits again on top of the new head when another report moved the branch", async () => {
+    let heads = 0;
+    fm.on("GET", `${ATT}/git/ref/heads/main`, () => Response.json({ object: { sha: heads++ === 0 ? "head1" : "head2" } }));
+    fm.on("GET", `${ATT}/git/commits/head2`, { sha: "head2", tree: { sha: "tree9" } });
+    let updates = 0;
+    fm.on("PATCH", `${ATT}/git/refs/heads/main`, () =>
+      updates++ === 0 ? Response.json({ message: "Update is not a fast forward" }, { status: 422 }) : Response.json({}),
+    );
+    assert.equal((await feedback(post(valid()))).status, 201);
+    assert.equal(updates, 2);
+    // Blobs are uploaded once; the tree and commit are rebuilt on the new head.
+    assert.equal(fm.calls.filter((c) => c.url.endsWith(`${ATT}/git/blobs`)).length, 2);
+    const commits = fm.calls.filter((c) => c.method === "POST" && c.url.endsWith(`${ATT}/git/commits`));
+    assert.deepEqual((commits[1]?.body as { parents: string[] }).parents, ["head2"]);
+    assert.match(issueCall().body.body, /went privately to the maintainer/);
+    assert.equal("body" in (patchCalls()[0]?.body ?? {}), false);
   });
 
-  it("still files the issue when the screenshot cannot be stored", async () => {
-    fm.on("PUT", new RegExp(`${REPO}/contents/feedback/`), 409);
+  it("still files and labels the issue when the attachments cannot be stored, and says so", async () => {
+    fm.on("PATCH", `${ATT}/git/refs/heads/main`, 422);
     const res = await feedback(post(valid({ screenshot: PNG.toString("base64") })));
     assert.equal(res.status, 201);
-    assert.match(issueCall().body.body, /_The screenshot could not be stored\._/);
+    assert.equal(fm.calls.filter((c) => c.method === "PATCH" && c.url.includes(ATT)).length, 3);
+    const patch = patchCalls()[0]?.body;
+    assert.deepEqual(patch?.labels, ["feedback", "type:bug"]);
+    assert.match(patch?.body ?? "", /_The screenshot and logs could not be stored\._$/);
+    assert.ok(logs.some((l) => l.includes("feedback attachments") && l.includes("422")), logs.join("\n"));
+  });
+
+  it("says the attachments could not be stored when the relay token cannot see the repo", async () => {
+    fm.on("GET", ATT, 404);
+    assert.equal((await feedback(post(valid()))).status, 201);
+    assert.match(patchCalls()[0]?.body.body ?? "", /_The logs could not be stored\._$/);
   });
 
   it("puts the issue in the latest sprint when every sprint is past", async () => {
@@ -306,20 +372,19 @@ describe("POST /api/feedback", () => {
       { number: 7, title: "Someday", state: "open", due_on: "2027-01-01T07:00:00Z" },
     ]);
     assert.equal((await feedback(post(valid()))).status, 201);
-    assert.equal(issueCall().body.milestone, 2);
+    assert.equal(patchCalls()[0]?.body.milestone, 2);
   });
 
   it("sets no milestone when there is no sprint", async () => {
     fm.on("GET", MILESTONES, []);
     assert.equal((await feedback(post(valid()))).status, 201);
-    assert.equal("milestone" in issueCall().body, false);
     assert.deepEqual(patchCalls()[0]?.body, { labels: ["feedback", "type:bug"] });
   });
 
   it("sets no milestone when listing milestones fails", async () => {
     fm.on("GET", MILESTONES, 500);
     assert.equal((await feedback(post(valid()))).status, 201);
-    assert.equal("milestone" in issueCall().body, false);
+    assert.equal("milestone" in (patchCalls()[0]?.body ?? {}), false);
   });
 
   it("redacts secrets in the logs, title and description again", async () => {
@@ -337,44 +402,27 @@ describe("POST /api/feedback", () => {
     const { title, body } = issueCall().body;
     assert.equal(title, "token [REDACTED:github_pat]");
     assert.ok(body.includes("my key is [REDACTED:sk-ant]"));
-    assert.ok(body.includes("Authorization: Bearer [REDACTED:bearer]"));
-    assert.ok(body.includes('{"access_token":"[REDACTED:token-field]"}'));
-    assert.ok(body.includes("[REDACTED:ghp]"));
+    const stored = committed().get("issues/42/logs.txt")?.toString("utf8") ?? "";
+    assert.ok(stored.includes("Authorization: Bearer [REDACTED:bearer]"));
+    assert.ok(stored.includes('{"access_token":"[REDACTED:token-field]"}'));
+    assert.ok(stored.includes("[REDACTED:ghp]"));
     for (const secret of [pat, "t".repeat(40), "secret-value", "a".repeat(36)]) {
-      assert.ok(!body.includes(secret), "secret removed");
+      assert.ok(!body.includes(secret) && !stored.includes(secret), "secret removed");
     }
   });
 
-  it("keeps the last 200 KB of the logs, inline when they fit, else in a committed .log file", async () => {
+  it("keeps the last 200 KB of the logs", async () => {
     const line = "2026-10-13T10:00:00Z INFO poll ok ".padEnd(99, ".") + "\n"; // 100 bytes
     const big = "FIRST-LINE\n" + line.repeat(3000) + "LAST-LINE\n"; // ~300 KB
     const res = await feedback(post(valid({ logs: big })));
     assert.equal(res.status, 201);
 
-    // The full log file holds the last 200 KB.
-    const put = putCalls()[0] as Call & { body: { content: string } };
-    assert.match(put.url, /\/feedback\/2026-10\/[0-9a-f-]{36}\.log$/);
-    const stored = Buffer.from(put.body.content, "base64").toString("utf8");
+    const stored = committed().get("issues/42/logs.txt")?.toString("utf8") ?? "";
     assert.ok(Buffer.byteLength(stored) <= 200 * 1024 + 64);
     assert.ok(stored.endsWith("LAST-LINE\n"));
     assert.ok(!stored.includes("FIRST-LINE"));
     assert.match(stored, /^\[… \d+ earlier bytes cut\]\n/);
-
-    // The issue body shows the end and links the file, under GitHub's body limit.
-    const body = issueCall().body.body;
-    assert.ok(body.length <= MAX_ISSUE_BODY, `body is ${body.length} chars`);
-    assert.ok(body.includes("LAST-LINE"));
-    assert.match(body, /\[Full logs \(last 200 KB\)\]\(https:\/\/github\.com\/MehdiMamas\/claude-sync\/blob\/feedback-assets\/feedback\/2026-10\/[0-9a-f-]{36}\.log\?raw=true\)/);
-  });
-
-  it("fences logs so backticks in them cannot close the block", async () => {
-    const res = await feedback(post(valid({ logs: "a ``` b\nc ```` d\n</details>\n" })));
-    assert.equal(res.status, 201);
-    const body = issueCall().body.body;
-    assert.ok(body.includes("`````text\na ``` b\nc ```` d\n</details>\n\n`````\n\n</details>"));
-    assert.equal(fenceFor("no ticks"), "```");
-    assert.equal(fenceFor("x `y` ``z``"), "```");
-    assert.equal(fenceFor("````"), "`````");
+    assert.ok(!issueCall().body.body.includes("LAST-LINE"));
   });
 
   it("keeps table cells safe from markdown in appVersion and os", async () => {
@@ -415,7 +463,8 @@ describe("POST /api/feedback", () => {
     const big = Buffer.concat([PNG, Buffer.alloc(3 * 1024 * 1024)]);
     const res = await feedback(post(valid({ screenshot: big.toString("base64") })));
     assert.equal(res.status, 413);
-    assert.equal(putCalls().length, 0);
+    assert.equal(issueCalls().length, 0);
+    assert.equal(attachmentCalls().length, 0);
   });
 
   it(`allows ${FEEDBACK_LIMIT} posts per login per hour, then 429 with Retry-After`, async () => {
@@ -462,17 +511,30 @@ describe("POST /api/feedback", () => {
     assert.equal(fm.calls.filter((c) => c.method !== "GET").length, 0);
   });
 
-  it("files into FEEDBACK_REPO when set", async () => {
-    setEnv({ FEEDBACK_REPO: "MehdiMamas/claude-sync-feedback" });
-    fm.on("GET", "/repos/MehdiMamas/claude-sync-feedback/milestones?state=open&per_page=100", []);
-    fm.on("POST", "/repos/MehdiMamas/claude-sync-feedback/issues", () =>
-      Response.json({ number: 1, html_url: "https://github.com/MehdiMamas/claude-sync-feedback/issues/1" }, { status: 201 }),
+  it("files into FEEDBACK_REPO and stores into FEEDBACK_ATTACHMENTS_REPO when set", async () => {
+    setEnv({ FEEDBACK_REPO: "MehdiMamas/other", FEEDBACK_ATTACHMENTS_REPO: "MehdiMamas/other-private" });
+    const other = "/repos/MehdiMamas/other";
+    const priv = "/repos/MehdiMamas/other-private";
+    fm.on("GET", `${other}/milestones?state=open&per_page=100`, []);
+    fm.on("POST", `${other}/issues`, () =>
+      Response.json({ number: 1, html_url: "https://github.com/MehdiMamas/other/issues/1" }, { status: 201 }),
     );
-    fm.on("PATCH", "/repos/MehdiMamas/claude-sync-feedback/issues/1", {});
+    fm.on("PATCH", `${other}/issues/1`, {});
+    fm.on("GET", priv, { default_branch: "trunk" });
+    fm.on("POST", `${priv}/git/blobs`, Response.json({ sha: "b" }, { status: 201 }));
+    fm.on("GET", `${priv}/git/ref/heads/trunk`, { object: { sha: "h" } });
+    fm.on("GET", `${priv}/git/commits/h`, { tree: { sha: "t" } });
+    fm.on("POST", `${priv}/git/trees`, Response.json({ sha: "t2" }, { status: 201 }));
+    fm.on("POST", `${priv}/git/commits`, Response.json({ sha: "c" }, { status: 201 }));
+    fm.on("PATCH", `${priv}/git/refs/heads/trunk`, {});
     const res = await feedback(post(valid()));
-    assert.deepEqual(await res.json(), {
-      number: 1,
-      url: "https://github.com/MehdiMamas/claude-sync-feedback/issues/1",
-    });
+    assert.deepEqual(await res.json(), { number: 1, url: "https://github.com/MehdiMamas/other/issues/1" });
+    const tree = fm.calls.find((c) => c.url.endsWith(`${priv}/git/trees`));
+    assert.deepEqual(
+      (tree?.body as { tree: TreeEntry[] }).tree.map((e) => e.path),
+      ["issues/1/logs.txt", "issues/1/report.json"],
+    );
+    const patch = fm.calls.find((c) => c.method === "PATCH" && c.url.endsWith(`${other}/issues/1`));
+    assert.equal("body" in (patch?.body as object), false);
   });
 });
