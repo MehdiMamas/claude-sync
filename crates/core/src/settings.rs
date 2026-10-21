@@ -20,7 +20,7 @@
 use crate::Error;
 use regex::Regex;
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -120,7 +120,8 @@ pub fn reconstruct(shared_copy: &Value, local: &Value, owned: &Owned) -> Option<
         return None;
     }
     let mut r = shared_copy.clone();
-    for (ptr, v) in &owned.values {
+    let canary = canary_pointers(local);
+    for (ptr, v) in owned.values.iter().filter(|(p, _)| !canary.contains(*p)) {
         match local.pointer(ptr) {
             Some(lv) if lv == v => {}
             Some(lv) => {
@@ -145,11 +146,61 @@ pub fn reconstruct(shared_copy: &Value, local: &Value, owned: &Owned) -> Option<
     (r != *shared_copy).then_some(r)
 }
 
+/// Mods being tried by a mods-canary on this device: `enabledPlugins["<name>@claude-mods"]`
+/// is `false` and `env.CLAUDE_CODE_PLUGIN_DIRS` (a path list split on `:` or `;`) has a
+/// path ending in `mods/<name>`. Pure; holds only while both conditions hold.
+pub fn canary_mods(local: &Value) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let Some(dirs) = local
+        .pointer("/env/CLAUDE_CODE_PLUGIN_DIRS")
+        .and_then(Value::as_str)
+    else {
+        return out;
+    };
+    let Some(enabled) = local.get("enabledPlugins").and_then(Value::as_object) else {
+        return out;
+    };
+    for dir in dirs.split([':', ';']) {
+        let mut parts = dir.trim_end_matches(['/', '\\']).rsplit(['/', '\\']);
+        let (Some(name), Some("mods")) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        if !name.is_empty()
+            && enabled.get(&format!("{name}@claude-mods")) == Some(&Value::Bool(false))
+        {
+            out.insert(name.to_string());
+        }
+    }
+    out
+}
+
+/// JSON pointers of the `enabledPlugins` entries a canary overrides (see [`canary_mods`]).
+pub fn canary_pointers(local: &Value) -> BTreeSet<String> {
+    canary_mods(local)
+        .into_iter()
+        .map(|n| join("/enabledPlugins", &format!("{n}@claude-mods")))
+        .collect()
+}
+
+/// After a merge, put the local value back at every canary pointer: a canary trial is a
+/// local-only override and the group's value must not replace it. Returns true if the
+/// merged settings still differ from `local`.
+pub fn keep_canaries(local: &Value, merged: &mut Value) -> bool {
+    for ptr in canary_pointers(local) {
+        if let Some(v) = local.pointer(&ptr) {
+            set_at(merged, &ptr, v.clone());
+        }
+    }
+    *merged != *local
+}
+
 /// Owned pointers whose local value differs from what the app set:
 /// `(pointer, deleted)`. An array is listed once when any owned item is missing.
+/// Canary overrides (see [`canary_mods`]) are not edits.
 pub fn edited_pointers(local: &Value, owned: &Owned) -> Vec<(String, bool)> {
+    let canary = canary_pointers(local);
     let mut out = Vec::new();
-    for (ptr, v) in &owned.values {
+    for (ptr, v) in owned.values.iter().filter(|(p, _)| !canary.contains(*p)) {
         match local.pointer(ptr) {
             Some(lv) if lv == v => {}
             Some(_) => out.push((ptr.clone(), false)),
@@ -735,6 +786,58 @@ mod tests {
         // With ownership, items and env keys the group dropped are gone (v0 kept them all).
         assert_eq!(local["permissions"]["allow"], json!(["Local", "S10"]));
         assert_eq!(local["env"], json!({"K10": "10"}));
+    }
+
+    // ---- mods-canary (#91) ----
+
+    fn canary_local(enabled: bool, dirs: Option<&str>) -> Value {
+        let mut v = json!({"enabledPlugins": {"tab-title@claude-mods": enabled}});
+        if let Some(d) = dirs {
+            v["env"] = json!({"CLAUDE_CODE_PLUGIN_DIRS": d});
+        }
+        v
+    }
+
+    #[test]
+    fn canary_detection() {
+        let dir = "/Users/x/.claude-sync/marketplaces/claude-mods/mods/tab-title";
+        let names = |v: &Value| canary_mods(v).into_iter().collect::<Vec<_>>();
+        assert_eq!(names(&canary_local(false, Some(dir))), vec!["tab-title"]);
+        // Wrong parent folder.
+        let other = "/Users/x/plugins/tab-title";
+        assert!(canary_mods(&canary_local(false, Some(other))).is_empty());
+        // The plugin is enabled.
+        assert!(canary_mods(&canary_local(true, Some(dir))).is_empty());
+        // No env.
+        assert!(canary_mods(&canary_local(false, None)).is_empty());
+        // Both separators, with other paths around.
+        let unix = format!("/a/b:{dir}:/c");
+        assert_eq!(names(&canary_local(false, Some(&unix))), vec!["tab-title"]);
+        let win = r"C:\a;C:\Users\x\claude-mods\mods\tab-title\;D:\c";
+        assert_eq!(names(&canary_local(false, Some(win))), vec!["tab-title"]);
+    }
+
+    #[test]
+    fn canary_is_not_an_edit_not_shared_and_not_overwritten() {
+        let shared = json!({"enabledPlugins": {"tab-title@claude-mods": true}});
+        let a = m(json!({}), shared.clone(), &Owned::default());
+        let dir = "/h/claude-mods/mods/tab-title";
+        let local = canary_local(false, Some(dir));
+        // No alert.
+        assert!(edited_pointers(&local, &a.owned).is_empty());
+        // Not pushed: the group's copy is unchanged.
+        assert_eq!(reconstruct(&shared, &local, &a.owned), None);
+        // Not overwritten on pull.
+        let mut b = m(local.clone(), shared.clone(), &a.owned);
+        assert!(!keep_canaries(&local, &mut b.settings));
+        assert_eq!(b.settings, local);
+        // A real edit (no canary env) still raises the alert and is shared.
+        let real = canary_local(false, None);
+        assert_eq!(
+            edited_pointers(&real, &a.owned),
+            vec![("/enabledPlugins/tab-title@claude-mods".to_string(), false)]
+        );
+        assert!(reconstruct(&shared, &real, &a.owned).is_some());
     }
 
     // ---- ownership (#17) ----
