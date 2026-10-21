@@ -14,6 +14,10 @@ pub struct AppState {
     /// Joined groups turned off on this device: nothing of them is applied or synced.
     #[serde(default)]
     pub disabled: std::collections::BTreeSet<crate::GroupId>,
+    /// Sign in with the GitHub App (per-repo access, issue #39) instead of the OAuth App
+    /// (`repo` scope). Takes effect at the next sign-in.
+    #[serde(default)]
+    pub github_app: bool,
 }
 
 impl AppState {

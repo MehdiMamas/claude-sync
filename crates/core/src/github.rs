@@ -7,7 +7,9 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+mod app;
 mod session;
+pub use app::{install_url, manage_url, uncovered, Coverage, Installation};
 pub use session::{refresh_tokens_at, Session, Tokens, REFRESH_MARGIN_SECS};
 
 pub const API: &str = "https://api.github.com";

@@ -122,7 +122,11 @@ impl Ctx {
             Ok(Some((login, tokens))) => (
                 Some(Auth {
                     login,
-                    session: crate::auth::new_session(tokens, true),
+                    session: crate::auth::new_session(
+                        tokens,
+                        true,
+                        config::client_id(state.github_app),
+                    ),
                 }),
                 None,
             ),
@@ -203,6 +207,21 @@ impl Ctx {
     /// The login whose sign-in expired, while signed out that way.
     pub fn expired_login(&self) -> Option<String> {
         lock(&self.expired).clone()
+    }
+
+    /// The groups joined on this device.
+    pub fn joined_groups(&self) -> Vec<claude_sync_core::GroupId> {
+        lock(&self.state).groups.clone()
+    }
+
+    /// Whether sign-in uses the GitHub App (setting `githubApp`).
+    pub fn github_app(&self) -> bool {
+        lock(&self.state).github_app
+    }
+
+    /// The client ID for this device's sign-in method.
+    pub fn client_id(&self) -> &'static str {
+        config::client_id(self.github_app())
     }
 
     pub fn poll_seconds(&self) -> u64 {

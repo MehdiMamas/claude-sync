@@ -129,6 +129,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
             commands::auth_status,
+            commands::app_coverage,
+            commands::open_app_install,
             commands::start_sign_in,
             commands::cancel_sign_in,
             commands::sign_out,
