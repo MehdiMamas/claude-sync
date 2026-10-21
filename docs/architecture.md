@@ -483,3 +483,5 @@ Create it at GitHub, Settings, Developer settings, GitHub Apps, New GitHub App:
 - Where can this App be installed: **Any account** (friends install it on their own accounts).
 - After creating: copy the Client ID (not the App ID), build with `CLAUDE_SYNC_GITHUB_APP_CLIENT_ID=<id>` (and `CLAUDE_SYNC_GITHUB_APP_SLUG`), do not generate a client secret or private key (the app uses neither).
 - Each user installs it with "All repositories" on their account, and the host installs it on any org that owns a group repo.
+
+**Settings UI.** Settings has a "GitHub App (beta)" card: a toggle for the `githubApp` setting (off by default, takes effect at next sign-in; disabled with "This build has no GitHub App" when `app_info.appClientIdMissing`). When on, an "Install the App" button calls `open_app_install` and `app_coverage` fills a list of group repos the App does not reach ("Not covered: owner/repo"). Code: `app/ui/src/screens/settings.ts`, `coverageLines` in `app/ui/src/copy.ts`.

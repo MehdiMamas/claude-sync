@@ -265,6 +265,14 @@ export interface Settings {
   paused: boolean;
   /** Show desktop notifications. The history is kept either way. */
   desktopNotifications: boolean;
+  /** Sign in with the GitHub App instead of the OAuth app (takes effect at next sign-in). */
+  githubApp: boolean;
+}
+/** Which group repos the GitHub App can reach. */
+export interface Coverage {
+  covered: GroupId[];
+  missing: GroupId[];
+  noInstallation: boolean;
 }
 export type HelperTask = "collision" | "claudeMdReview" | "activity";
 export interface HelperStatus {
@@ -417,6 +425,8 @@ export interface AppInfo {
   os: string;
   relayConfigured: boolean;
   clientIdMissing: boolean;
+  /** This build has no GitHub App client ID. */
+  appClientIdMissing: boolean;
   stateDir: string;
 }
 
@@ -527,6 +537,8 @@ export const api = {
   clearNotifications: () => call<void>("clear_notifications"),
   testNotification: () => call<void>("test_notification"),
   notificationPermission: () => call<"granted" | "denied" | "not_asked" | "unknown">("notification_permission"),
+  appCoverage: () => call<Coverage>("app_coverage"),
+  openAppInstall: (manage: boolean) => call<void>("open_app_install", { manage }),
   openNotificationSettings: () => call<void>("open_notification_settings"),
   feedbackLogs: () => call<string>("feedback_logs"),
   feedbackCaptureScreen: () => call<Screenshot>("feedback_capture_screen"),
