@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   buildBatchPrompt,
@@ -252,7 +252,7 @@ describe("triage run", () => {
       calls.push({ prompt: req.prompt, addDirs: req.addDirs, model: req.model });
       if (req.prompt.includes("Report #6:")) throw new Error("Claude ended with error_max_turns");
       return req.addDirs
-        .map((d) => `=== ISSUE ${d.split("/").at(-1)} ===\nVERDICT: ok\nREASON: real\n\n### read\nSECRET-REPORT-TEXT`)
+        .map((d) => `=== ISSUE ${basename(d)} ===\nVERDICT: ok\nREASON: real\n\n### read\nSECRET-REPORT-TEXT`)
         .join("\n\n");
     };
     const results = analyze({ out: dir, runner, model: "sonnet", repo: REPO, cwd: dir, log });
@@ -277,7 +277,7 @@ describe("triage run", () => {
     let runs = 0;
     const runner: ClaudeRunner = (req) => {
       runs++;
-      return req.addDirs.map((d) => `=== ISSUE ${d.split("/").at(-1)} ===\nVERDICT: ok\nREASON: r\n\nwrite-up`).join("\n");
+      return req.addDirs.map((d) => `=== ISSUE ${basename(d)} ===\nVERDICT: ok\nREASON: r\n\nwrite-up`).join("\n");
     };
     const base = { repo: REPO, token: TOKEN, log, owner: "MehdiMamas", issue: "all", force: false, out: dir, sha: "abcdef1234" };
     const opts = { model: "sonnet", cwd: dir };
