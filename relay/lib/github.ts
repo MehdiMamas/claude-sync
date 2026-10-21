@@ -16,10 +16,10 @@ export interface GitHubRequest {
 export async function github(path: string, opts: GitHubRequest): Promise<Response> {
   const headers: Record<string, string> = {
     accept: opts.accept ?? "application/vnd.github+json",
-    authorization: `Bearer ${opts.token}`,
     "user-agent": "claude-sync-relay",
     "x-github-api-version": "2022-11-28",
   };
+  if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   const init: RequestInit = { method: opts.method ?? "GET", headers };
   if (opts.body !== undefined) {
     headers["content-type"] = "application/json";
