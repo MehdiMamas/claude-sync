@@ -490,8 +490,20 @@ impl Engine {
                 .await?;
             st.seen_pushed_unix = now_unix();
         } else {
-            let files = remote.files_matching(&head.commit, |p| p == FILE).await?;
-            PersonalFile::parse(files.get(FILE).ok_or_else(|| not_personal(&id))?)?;
+            let files = remote
+                .files_matching(&head.commit, |p| {
+                    p == FILE
+                        || p == "README.md"
+                        || p.starts_with("owners/")
+                        || p.starts_with("projects/")
+                })
+                .await?;
+            match files.get(FILE) {
+                Some(f) => {
+                    PersonalFile::parse(f)?;
+                }
+                None => return Err(clash(&id, &files)),
+            }
         }
         // Start from an empty base, like the first time: nothing that changed while it was
         // off on this device is mistaken for a deletion.
@@ -1317,6 +1329,28 @@ fn not_personal(id: &GroupId) -> Error {
     Error::Invalid(format!(
         "{id} exists but is not a claude-sync personal memory repo; rename or delete it on GitHub"
     ))
+}
+
+/// The error for a repo with our name but no marker: the personal-rules mod's own repo (its
+/// layout is `owners/` and `projects/`, with a README naming the mod) or some other repo.
+fn clash(id: &GroupId, files: &crate::FileSet) -> Error {
+    let readme = files
+        .get("README.md")
+        .is_some_and(|r| String::from_utf8_lossy(r).contains("personal-rules mod"));
+    let layout = files
+        .keys()
+        .any(|p| p.starts_with("owners/") || p.starts_with("projects/"));
+    if readme && layout {
+        Error::Invalid(format!(
+            "{id} is used by the personal-rules mod, not by personal memory. Personal memory \
+             can't start until that mod moves to its own repo (an update is on the way)."
+        ))
+    } else {
+        Error::Invalid(format!(
+            "{id} already exists on GitHub and wasn't made by claude-sync, so personal memory \
+             won't use it. Rename or delete that repo on GitHub, then turn this on again."
+        ))
+    }
 }
 
 fn readme(login: &str) -> String {
