@@ -706,7 +706,7 @@ impl Engine {
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
         let mut state = AppState::load(&self.paths)?;
-        if state.disabled.contains(id) == !enabled {
+        if state.disabled.contains(id) != enabled {
             return Ok(ApplyReport::default());
         }
         if !enabled {

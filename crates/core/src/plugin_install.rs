@@ -38,6 +38,10 @@ pub struct Installed {
 /// The `claude plugin` commands the app runs; tests use a fake.
 pub trait PluginCli {
     fn list(&self) -> Result<Vec<Installed>, String>;
+    /// Names of the marketplaces Claude Code has registered (`marketplace list --json`).
+    fn marketplace_list(&self) -> Result<Vec<String>, String>;
+    /// Register the directory marketplace at `path` (`marketplace add`).
+    fn marketplace_add(&self, path: &Path) -> Result<(), String>;
     fn marketplace_update(&self, name: &str) -> Result<(), String>;
     fn install(&self, id: &str) -> Result<(), String>;
     fn update(&self, id: &str) -> Result<(), String>;
@@ -83,6 +87,13 @@ impl RealCli {
 impl PluginCli for RealCli {
     fn list(&self) -> Result<Vec<Installed>, String> {
         parse_list(&self.run(&["plugin", "list", "--json"])?)
+    }
+    fn marketplace_list(&self) -> Result<Vec<String>, String> {
+        parse_marketplace_names(&self.run(&["plugin", "marketplace", "list", "--json"])?)
+    }
+    fn marketplace_add(&self, path: &Path) -> Result<(), String> {
+        self.run(&["plugin", "marketplace", "add", &path.to_string_lossy()])
+            .map(drop)
     }
     fn marketplace_update(&self, name: &str) -> Result<(), String> {
         self.run(&["plugin", "marketplace", "update", name])
@@ -142,6 +153,37 @@ pub fn parse_list(stdout: &str) -> Result<Vec<Installed>, String> {
             })
         })
         .collect())
+}
+
+/// `claude plugin marketplace list --json`: an array of `{name, ...}`.
+pub fn parse_marketplace_names(stdout: &str) -> Result<Vec<String>, String> {
+    let v: Vec<Value> = serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("unexpected output of claude plugin marketplace list --json: {e}"))?;
+    Ok(v.iter()
+        .filter_map(|m| m.get("name").and_then(Value::as_str).map(str::to_string))
+        .collect())
+}
+
+/// Register `name` with Claude Code when it is not yet (it only knows `extraKnownMarketplaces`
+/// after a session start, so on a new machine `marketplace update` finds nothing), else update.
+fn add_or_update(cli: &dyn PluginCli, paths: &Paths, name: &str) -> Result<(), String> {
+    let dir = paths.marketplaces_dir().join(name);
+    let dir = std::path::absolute(&dir).unwrap_or(dir);
+    let add = |why: &str| {
+        cli.marketplace_add(&dir)
+            .map_err(|e| format!("could not add the marketplace ({why}): {e}"))
+    };
+    // If the list itself fails, fall through to update and its not-found fallback.
+    if cli
+        .marketplace_list()
+        .is_ok_and(|known| !known.iter().any(|k| k == name))
+    {
+        return add("not registered yet");
+    }
+    match cli.marketplace_update(name) {
+        Err(e) if e.to_lowercase().contains("not found") => add(&e),
+        r => r,
+    }
 }
 
 /// `name@marketplace` with plain characters only (it is passed as an argument).
@@ -392,7 +434,7 @@ pub fn ensure(
     };
     out.ran = true;
     for name in changed {
-        match cli.marketplace_update(name) {
+        match add_or_update(cli.as_ref(), paths, name) {
             Ok(()) => out.marketplaces_updated.push(name.clone()),
             Err(e) => out
                 .warnings
@@ -464,6 +506,8 @@ mod tests {
     #[derive(Default)]
     struct Fake {
         installed: RefCell<Vec<Installed>>,
+        /// Marketplaces registered with Claude Code.
+        known: RefCell<Vec<String>>,
         calls: RefCell<Vec<String>>,
         fail: RefCell<BTreeMap<String, String>>,
     }
@@ -484,6 +528,16 @@ mod tests {
         fn list(&self) -> Result<Vec<Installed>, String> {
             self.0.call("list".into())?;
             Ok(self.0.installed.borrow().clone())
+        }
+        fn marketplace_list(&self) -> Result<Vec<String>, String> {
+            self.0.call("marketplace list".into())?;
+            Ok(self.0.known.borrow().clone())
+        }
+        fn marketplace_add(&self, path: &Path) -> Result<(), String> {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            self.0.call(format!("marketplace add {name}"))?;
+            self.0.known.borrow_mut().push(name);
+            Ok(())
         }
         fn marketplace_update(&self, name: &str) -> Result<(), String> {
             self.0.call(format!("marketplace update {name}"))
@@ -533,6 +587,7 @@ mod tests {
                 group,
                 fake: Rc::default(),
             };
+            env.fake.known.borrow_mut().push("mods".into());
             env.marketplace(&[("router", "1.0.0"), ("manager", "1.0.0")]);
             env.settings(
                 &["router@mods", "manager@mods"],
@@ -625,7 +680,12 @@ mod tests {
         assert!(o.warnings.is_empty());
         assert_eq!(
             e.calls(),
-            ["marketplace update mods", "list", "install manager@mods"]
+            [
+                "marketplace list",
+                "marketplace update mods",
+                "list",
+                "install manager@mods"
+            ]
         );
         // Nothing changed: the CLI is not asked again.
         assert_eq!(e.ensure(false), Outcome::default());
@@ -643,7 +703,12 @@ mod tests {
         assert_eq!(o.updated, ["router@mods"]);
         assert_eq!(
             e.calls(),
-            ["marketplace update mods", "list", "update router@mods"]
+            [
+                "marketplace list",
+                "marketplace update mods",
+                "list",
+                "update router@mods"
+            ]
         );
 
         // The group turns on another plugin (no marketplace change).
@@ -694,7 +759,12 @@ mod tests {
         assert!(warnings(&e.paths, &e.group).unwrap().is_empty());
         assert_eq!(
             e.calls(),
-            ["marketplace update mods", "list", "install router@mods"]
+            [
+                "marketplace list",
+                "marketplace update mods",
+                "list",
+                "install router@mods"
+            ]
         );
     }
 
@@ -723,5 +793,42 @@ mod tests {
         let o = e.ensure(false);
         assert_eq!(o.warnings, ["couldn't list the installed plugins: boom"]);
         assert!(o.installed.is_empty());
+    }
+
+    #[test]
+    fn a_fresh_machine_registers_the_marketplace_before_installing() {
+        let e = Env::new();
+        e.fake.known.borrow_mut().clear();
+        let o = e.ensure(false);
+        assert!(o.warnings.is_empty(), "{:?}", o.warnings);
+        assert_eq!(o.marketplaces_updated, ["mods"]);
+        assert_eq!(o.installed, ["manager@mods", "router@mods"]);
+        let calls = e.calls();
+        assert_eq!(calls[..2], ["marketplace list", "marketplace add mods"]);
+        assert!(!calls.contains(&"marketplace update mods".to_string()));
+    }
+
+    #[test]
+    fn update_not_found_falls_back_to_add_and_add_failure_is_reported() {
+        let e = Env::new();
+        e.fake.fail.borrow_mut().insert(
+            "marketplace update mods".into(),
+            "Marketplace 'mods' not found".into(),
+        );
+        let o = e.ensure(false);
+        assert!(o.warnings.is_empty(), "{:?}", o.warnings);
+        assert!(e.calls().contains(&"marketplace add mods".to_string()));
+
+        let e = Env::new();
+        e.fake.known.borrow_mut().clear();
+        e.fake
+            .fail
+            .borrow_mut()
+            .insert("marketplace add mods".into(), "bad source".into());
+        let o = e.ensure(false);
+        assert_eq!(
+            o.warnings[0],
+            "couldn't update the mods marketplace: could not add the marketplace (not registered yet): bad source"
+        );
     }
 }
