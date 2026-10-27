@@ -5,9 +5,10 @@
 //! own. So after an apply that changed a group's marketplaces or the plugins it turns on, the
 //! app runs the `claude plugin` CLI in the background: `marketplace update` once per changed
 //! marketplace, `install --scope user` for each group-enabled plugin that is not installed,
-//! and `update` for an installed one whose marketplace entry changed. Nothing is ever
-//! uninstalled. Failures become warnings on the group screen (with Retry); they never fail a
-//! sync. A plugin that needs `-y` (marketplace-declared commands) is reported, not confirmed.
+//! and `update` for an installed one whose marketplace entry or source folder changed (a mod
+//! with no version changes only its files). Nothing is ever uninstalled. Failures become
+//! warnings on the group screen (with Retry); they never fail a sync. A plugin that needs
+//! `-y` (marketplace-declared commands) is reported, not confirmed.
 use crate::apply::{sha256_hex, Manifest, SHARED_SETTINGS};
 use crate::state::write_json;
 use crate::{claude_cli, secrets, GroupId, Paths};
@@ -331,22 +332,44 @@ fn fingerprint(dir: &Path) -> String {
     sha256_hex(&buf)
 }
 
+/// The folder a relative `source` of a bundled marketplace points at (under
+/// `metadata.pluginRoot` when set); `None` for a remote source or one leaving the marketplace.
+fn source_dir(root: &Path, v: &Value, e: &Value) -> Option<PathBuf> {
+    let src = e.get("source")?.as_str()?;
+    let base = v
+        .get("metadata")
+        .and_then(|m| m.get("pluginRoot"))
+        .and_then(Value::as_str)
+        .filter(|_| !src.starts_with("./"))
+        .unwrap_or("");
+    let rel = Path::new(base).join(src);
+    rel.components()
+        .all(|c| {
+            matches!(
+                c,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+        .then(|| root.join(rel))
+}
+
 /// The entry of plugin `name@mp` in a bundled marketplace: its hash and declared version.
+/// The hash also covers the plugin's source folder, so a mod with no version (claude-sync-data
+/// #341) whose files changed still counts as changed (#111).
 fn entry(paths: &Paths, id: &str) -> Option<(String, Option<String>)> {
     let (name, mp) = id.split_once('@')?;
-    let file = paths
-        .marketplaces_dir()
-        .join(mp)
-        .join(".claude-plugin")
-        .join("marketplace.json");
-    let v = read_value(&file)?;
+    let root = paths.marketplaces_dir().join(mp);
+    let v = read_value(&root.join(".claude-plugin").join("marketplace.json"))?;
     let e = v
         .get("plugins")?
         .as_array()?
         .iter()
         .find(|p| p.get("name").and_then(Value::as_str) == Some(name))?;
     let version = e.get("version").and_then(Value::as_str).map(str::to_string);
-    Some((sha256_hex(e.to_string().as_bytes()), version))
+    let files = source_dir(&root, &v, e)
+        .map(|d| fingerprint(&d))
+        .unwrap_or_default();
+    Some((sha256_hex(format!("{e}\n{files}").as_bytes()), version))
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -395,11 +418,19 @@ pub fn ensure(
         .map(|(name, _)| name)
         .collect();
     let added = enabled.iter().any(|id| !prev.enabled.contains(id));
+    let current: BTreeMap<String, (String, Option<String>)> = enabled
+        .iter()
+        .filter_map(|id| entry(paths, id).map(|e| (id.clone(), e)))
+        .collect();
+    // Also true once after an upgrade, when the recorded hashes did not cover the folders yet.
+    let entries_changed = current
+        .iter()
+        .any(|(id, (h, _))| prev.entries.get(id) != Some(h));
     let mut out = Outcome::default();
     let record = |st: &mut State, warnings: Vec<String>| {
-        let entries = enabled
+        let entries = current
             .iter()
-            .filter_map(|id| entry(paths, id).map(|(h, _)| (id.clone(), h)))
+            .map(|(id, (h, _))| (id.clone(), h.clone()))
             .collect();
         st.groups.insert(
             key.clone(),
@@ -411,7 +442,7 @@ pub fn ensure(
             },
         );
     };
-    if !force && changed.is_empty() && !added {
+    if !force && changed.is_empty() && !added && !entries_changed {
         // At most plugins left the group: nothing to install, and nothing is uninstalled.
         if prev.enabled != enabled {
             record(&mut st, prev.warnings.clone());
@@ -458,12 +489,10 @@ pub fn ensure(
                         }
                         continue;
                     };
-                    let current = entry(paths, id);
-                    let entry_changed = current
-                        .as_ref()
-                        .is_some_and(|(h, _)| prev.entries.get(id).is_some_and(|p| p != h));
+                    let current = current.get(id);
+                    let entry_changed =
+                        current.is_some_and(|(h, _)| prev.entries.get(id) != Some(h));
                     let version_differs = current
-                        .as_ref()
                         .and_then(|(_, v)| v.as_deref())
                         .is_some_and(|v| have.version.as_deref().is_some_and(|iv| iv != v));
                     if entry_changed || version_differs {
@@ -684,7 +713,9 @@ mod tests {
                 "marketplace list",
                 "marketplace update mods",
                 "list",
-                "install manager@mods"
+                "install manager@mods",
+                // Installed before any hash was recorded: refreshed once, its cache may be stale.
+                "update router@mods"
             ]
         );
         // Nothing changed: the CLI is not asked again.
@@ -719,6 +750,67 @@ mod tests {
         let o = e.ensure(false);
         assert_eq!(o.installed, ["new@other"]);
         assert_eq!(e.calls(), ["list", "install new@other"]);
+    }
+
+    #[test]
+    fn a_changed_mod_folder_updates_only_that_plugin() {
+        let e = Env::new();
+        let dir = |n: &str| e.paths.marketplaces_dir().join("mods").join(n);
+        std::fs::create_dir_all(dir("router")).unwrap();
+        std::fs::write(dir("router").join("hook.mjs"), "v1").unwrap();
+        e.ensure(false);
+        e.calls();
+        // A file in router's folder changes; marketplace.json and the version do not.
+        std::fs::write(dir("router").join("hook.mjs"), "v2").unwrap();
+        let o = e.ensure(false);
+        assert_eq!(o.updated, ["router@mods"]);
+        assert_eq!(
+            e.calls(),
+            [
+                "marketplace list",
+                "marketplace update mods",
+                "list",
+                "update router@mods"
+            ]
+        );
+        assert_eq!(e.ensure(false), Outcome::default());
+    }
+
+    #[test]
+    fn an_old_entry_hash_updates_installed_plugins_once() {
+        let e = Env::new();
+        e.ensure(false);
+        e.calls();
+        // State written by an older app: entry hashes without the folder part.
+        let mut st = State::load(&e.paths).unwrap();
+        for h in st
+            .groups
+            .get_mut(&e.group.to_string())
+            .unwrap()
+            .entries
+            .values_mut()
+        {
+            *h = "old".into();
+        }
+        st.save(&e.paths).unwrap();
+        let o = e.ensure(false);
+        assert_eq!(o.updated, ["manager@mods", "router@mods"]);
+        assert_eq!(
+            e.calls(),
+            ["list", "update manager@mods", "update router@mods"]
+        );
+        assert_eq!(e.ensure(false), Outcome::default());
+    }
+
+    #[test]
+    fn source_dirs_stay_inside_the_marketplace() {
+        let root = Path::new("/m");
+        let v = serde_json::json!({"metadata": {"pluginRoot": "plugins"}});
+        let at = |src: Value| source_dir(root, &v, &serde_json::json!({ "source": src }));
+        assert_eq!(at("./mods/x".into()), Some(root.join("./mods/x")));
+        assert_eq!(at("x".into()), Some(root.join("plugins/x")));
+        assert_eq!(at("../x".into()), None);
+        assert_eq!(at(serde_json::json!({"source": "github"})), None);
     }
 
     #[test]
