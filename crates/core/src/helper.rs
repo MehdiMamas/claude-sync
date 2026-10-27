@@ -37,6 +37,16 @@ impl Task {
             Task::Activity => "These are recent changes other members made to the group. Summarise them:",
         }
     }
+
+    /// Shown instead of asking Claude when there is no text to send.
+    fn nothing(self) -> &'static str {
+        match self {
+            Task::Activity => {
+                "No other member changed the group recently, so there is nothing to summarise."
+            }
+            Task::Collision | Task::ClaudeMdReview => "There is nothing to explain yet.",
+        }
+    }
 }
 
 /// Finds and runs `claude`. The app uses [`LocalClaude`]; tests use a fake, so they never
@@ -152,8 +162,12 @@ fn run_claude(runner: &dyn Runner, prompt: &str) -> Result<String> {
     }
 }
 
-/// Explain or summarise `text`. Refuses, without sending, when the text holds a secret (§9).
+/// Explain or summarise `text`. Refuses, without sending, when the text is empty or holds a
+/// secret (§9).
 pub fn explain(runner: &dyn Runner, task: Task, text: &str) -> Result<String> {
+    if text.trim().is_empty() {
+        return Err(Error::Invalid(task.nothing().into()));
+    }
     if let Some(pattern) = secrets::first_hit(text) {
         return Err(Error::Invalid(format!(
             "This text looks like it contains a secret ({pattern}), so it was not sent to Claude. Remove the secret first."
@@ -299,6 +313,17 @@ mod tests {
         let err = explain(&f, Task::Activity, &text).unwrap_err().to_string();
         assert!(err.contains("not sent"), "{err}");
         assert!(!err.contains("ghp_aaa"));
+        assert!(f.seen.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn empty_text_is_not_sent() {
+        let f = Fake::new(0, OK);
+        let err = explain(&f, Task::Activity, " \n\n ")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("nothing to summarise"), "{err}");
+        assert!(explain(&f, Task::Collision, "").is_err());
         assert!(f.seen.lock().unwrap().is_empty());
     }
 
