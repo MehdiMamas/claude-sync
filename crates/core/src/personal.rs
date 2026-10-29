@@ -582,6 +582,10 @@ impl Engine {
             self.personal_pull_push(remote, head, st, &mut report).await
         }
         .await;
+        if self.state_is_git_clone() {
+            // Entries recorded before these paths stopped syncing are no longer true.
+            st.conflicts.retain(|c| !state_skipped(&c.path));
+        }
         st.conflicts.extend(report.conflicts.iter().cloned());
         let excess = st.conflicts.len().saturating_sub(MAX_CONFLICTS);
         st.conflicts.drain(..excess);
