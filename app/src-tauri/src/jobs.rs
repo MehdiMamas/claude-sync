@@ -4,9 +4,7 @@
 use crate::ctx::{Ctx, Prefs};
 use crate::guard::{self, Error};
 use crate::notify::{self, Kind};
-use claude_sync_core::jobs::{
-    self, os, run, AutoAccepted, Jobs, JobsOverview, JobsState, ReconcileReport,
-};
+use claude_sync_core::jobs::{self, os, run, AutoAccepted, Jobs, JobsOverview, ReconcileReport};
 use claude_sync_core::plugin_install::{self, PluginCli, RealCli};
 use claude_sync_core::state::AppState;
 use claude_sync_core::{claude_cli, notifications, GroupId, Paths};

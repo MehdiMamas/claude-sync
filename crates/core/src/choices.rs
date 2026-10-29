@@ -377,4 +377,47 @@ mod tests {
         assert!(out.personal.off, "remote is newer");
         assert!(merge(b"nope", &remote).is_none());
     }
+
+    #[test]
+    fn migrates_membership_order_and_app_settings() {
+        let (_t, p) = paths();
+        let (g1, g2) = (id("a/one"), id("a/two"));
+        AppState {
+            groups: vec![g2.clone(), g1.clone()],
+            paused: true,
+            poll_seconds: Some(120),
+            ..AppState::default()
+        }
+        .save(&p)
+        .unwrap();
+        let c = load(&p).unwrap();
+        assert_eq!(c.group(&g1).member, Some(true));
+        assert_eq!(c.order.list, ["a/two", "a/one"]);
+        assert_eq!(c.order.ts, 0);
+        assert!(c.app.paused && c.app.interval_secs == Some(120) && c.app.start_at_login.is_none());
+    }
+
+    #[test]
+    fn merge_takes_the_newer_order_and_app_whole() {
+        let mk = |list: &[&str], ots: u64, paused: bool, ats: u64| {
+            let c = Choices {
+                order: Order {
+                    list: list.iter().map(|s| s.to_string()).collect(),
+                    ts: ots,
+                },
+                app: AppChoice {
+                    paused,
+                    ts: ats,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            serde_json::to_vec(&c).unwrap()
+        };
+        let local = mk(&["a/x", "a/y"], 5, true, 1);
+        let remote = mk(&["a/y", "a/x"], 3, false, 4);
+        let out: Choices = serde_json::from_slice(&merge(&local, &remote).unwrap()).unwrap();
+        assert_eq!(out.order.list, ["a/x", "a/y"], "local order is newer");
+        assert!(!out.app.paused, "remote app choice is newer");
+    }
 }

@@ -1571,3 +1571,103 @@ async fn turning_personal_sync_off_on_one_device_stops_the_other_at_its_next_syn
     assert!(mac.personal_status().enabled);
     assert!(!crate::choices::load(&mac.paths).unwrap().personal.off);
 }
+
+// ---------------------------------------------------------------- more choices (#127)
+
+#[tokio::test]
+async fn leaving_and_rejoining_follow_the_newer_choice_and_the_order_follows() {
+    let world = FakeGitHub::new();
+    let (g1, _) = group_with(&world, &["ana"]);
+    let (g2, _) = group_with(&world, &["bo", "ana"]);
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.join(&g1).await.unwrap();
+    pc.join(&g2).await.unwrap();
+    pc.personal_enable().await.unwrap();
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    mac.personal_enable().await.unwrap();
+    mac.sync().await;
+    let joined = |d: &Dev| crate::state::AppState::load(&d.paths).unwrap().groups;
+    assert_eq!(
+        joined(&mac),
+        [g1.clone(), g2.clone()],
+        "joined by the pc's choice"
+    );
+
+    // The order set on the pc reaches the mac.
+    pc.reorder_groups(vec![g2.clone(), g1.clone()])
+        .await
+        .unwrap();
+    pc.sync().await;
+    mac.sync().await;
+    assert_eq!(joined(&mac), [g2.clone(), g1.clone()]);
+
+    // Leaving on the pc leaves on the mac.
+    pc.leave(&g1).await.unwrap();
+    pc.sync().await;
+    mac.sync().await;
+    assert_eq!(joined(&mac), std::slice::from_ref(&g2));
+
+    // Rejoining on the mac (a newer choice) rejoins on the pc.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    mac.join(&g1).await.unwrap();
+    mac.sync().await;
+    pc.sync().await;
+    assert!(joined(&pc).contains(&g1));
+    assert_eq!(joined(&pc), joined(&mac));
+}
+
+#[tokio::test]
+async fn keep_one_on_one_device_leaves_the_line_out_on_the_other() {
+    let world = FakeGitHub::new();
+    let (g, _) = group_with(&world, &["ana"]);
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.join(&g).await.unwrap();
+    pc.personal_enable().await.unwrap();
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    mac.personal_enable().await.unwrap();
+    mac.sync().await;
+    assert_eq!(mac.claude_md_review(&g).unwrap().declined, 0);
+
+    pc.drop_claude_md_line(
+        &crate::conflicts::Source::Group { id: g.clone() },
+        "# Friends rule",
+    )
+    .await
+    .unwrap();
+    pc.sync().await;
+    mac.sync().await;
+    assert_eq!(mac.claude_md_review(&g).unwrap().declined, 1);
+    assert!(!mac
+        .claude_md()
+        .unwrap_or_default()
+        .contains("# Friends rule"));
+}
+
+#[tokio::test]
+async fn pause_and_the_interval_set_on_one_device_are_in_choices_on_the_other() {
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.personal_enable().await.unwrap();
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    mac.personal_enable().await.unwrap();
+    crate::choices::set_app(&pc.paths, |a| {
+        a.paused = true;
+        a.interval_secs = Some(300);
+        a.start_at_login = Some(false);
+    })
+    .unwrap();
+    pc.sync().await;
+    mac.sync().await;
+    let a = crate::choices::load(&mac.paths).unwrap().app;
+    assert_eq!(
+        (a.paused, a.interval_secs, a.start_at_login),
+        (true, Some(300), Some(false))
+    );
+
+    // The later change wins on both.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    crate::choices::set_app(&mac.paths, |a| a.paused = false).unwrap();
+    mac.sync().await;
+    pc.sync().await;
+    assert!(!crate::choices::load(&pc.paths).unwrap().app.paused);
+}

@@ -1049,7 +1049,12 @@ pub(crate) mod tests {
         let r = e.jobs().reconcile(false).unwrap();
         assert!(r.auto_accepted.is_empty());
         assert!(e.registered().is_empty());
-        assert!(crate::choices::load(&e.paths).unwrap().groups.is_empty());
+        assert!(
+            !crate::choices::load(&e.paths)
+                .unwrap()
+                .group(&g)
+                .auto_run_jobs
+        );
         let o = e.jobs().overview(&g).unwrap();
         assert!(!o.auto_accept);
         assert!(!o.jobs[0].accepted);
@@ -1104,6 +1109,71 @@ pub(crate) mod tests {
                 .group(&g)
                 .auto_run_jobs
         );
+    }
+
+    /// Send `from`'s choices to `to` the way personal sync does.
+    fn sync_choices(from: &Env, to: &Env) {
+        let l = std::fs::read(crate::choices::file(&to.paths)).unwrap_or_default();
+        let r = std::fs::read(crate::choices::file(&from.paths)).unwrap();
+        let bytes = crate::choices::merge(&l, &r).unwrap_or(r);
+        crate::state::write_atomic(&crate::choices::file(&to.paths), &bytes).unwrap();
+    }
+
+    #[test]
+    fn a_job_accepted_on_one_device_runs_on_the_other_until_it_changes() {
+        let (pc, mac) = (Env::new(), Env::new());
+        let g = group("a");
+        pc.groups(&[(&g, Some(SCOUT))]);
+        mac.groups(&[(&g, Some(SCOUT))]);
+        pc.jobs()
+            .accept(&g, "setup-scout", &hash_of(&pc, &g, "setup-scout"))
+            .unwrap();
+        assert!(mac.registered().is_empty());
+        sync_choices(&pc, &mac);
+        let r = mac.jobs().reconcile(false).unwrap();
+        assert!(r.auto_accepted.is_empty(), "no asking");
+        assert_eq!(mac.registered(), ["setup-scout"]);
+        assert!(mac.jobs().overview(&g).unwrap().jobs[0].accepted);
+
+        // The job changes: both ask again.
+        let changed = SCOUT.replace("unattended", "unattended now");
+        for e in [&pc, &mac] {
+            e.groups(&[(&g, Some(&changed))]);
+            e.jobs().reconcile(false).unwrap();
+            let v = &e.jobs().overview(&g).unwrap().jobs[0];
+            assert!(!v.accepted && v.changed);
+            assert!(e.registered().is_empty());
+        }
+
+        // Turned off on one device, off on the other.
+        pc.jobs()
+            .accept(&g, "setup-scout", &hash_of(&pc, &g, "setup-scout"))
+            .unwrap();
+        pc.jobs().set_enabled(&g, "setup-scout", false).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        sync_choices(&pc, &mac);
+        mac.jobs().reconcile(false).unwrap();
+        let v = &mac.jobs().overview(&g).unwrap().jobs[0];
+        assert!(v.accepted && !v.enabled);
+        assert!(mac.registered().is_empty());
+    }
+
+    #[test]
+    fn old_accepted_and_off_jobs_are_copied_into_choices_once() {
+        let e = Env::new();
+        let g = group("a");
+        e.groups(&[(&g, Some(SCOUT))]);
+        let hash = hash_of(&e, &g, "setup-scout");
+        let old = serde_json::json!({"jobs": {"setup-scout": {
+            "group": {"owner": "acme", "repo": "a"}, "accepted": hash, "enabled": false}}});
+        std::fs::write(state_file(&e.paths), old.to_string()).unwrap();
+        // Finding the job already made an (empty) choices file; start from the old files.
+        let _ = std::fs::remove_file(crate::choices::file(&e.paths));
+        let c = crate::choices::load(&e.paths).unwrap().group(&g);
+        assert_eq!(c.accepted_jobs["setup-scout"], hash);
+        assert!(c.off_jobs.contains("setup-scout") && c.ts == 0);
+        let v = &e.jobs().overview(&g).unwrap().jobs[0];
+        assert!(v.accepted && !v.enabled);
     }
 
     #[test]

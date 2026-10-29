@@ -365,7 +365,7 @@ function pendingJob(id: GroupId, j: JobView, unsupported: boolean, show: (o: Job
     permission(j.permissionMode),
     j.args.length > 0 && h("p", { class: "small" }, "Claude Code options: ", h("code", null, j.args.join(" ")), j.args.includes("--chrome") && " (uses Chrome through Claude in Chrome when it is running)"),
     j.report && h("p", { class: "muted small" }, "Its report: ", h("code", null, j.report)),
-    h("p", { class: "muted small" }, "It only runs on this device after you accept it. If the group changes it, it stops until you accept it again."),
+    h("p", { class: "muted small" }, "It only runs on your devices after you accept it. If the group changes it, it stops until you accept it again."),
     h("div", { class: "actions" }, accept, always),
     h("p", { class: "muted small" }, `"Always allow" accepts this job and every new or changed job of ${groupKey(id)} from now on, without showing it to you first. You get a notification each time.`),
   );
@@ -482,7 +482,7 @@ function jobsCard(id: GroupId): HTMLElement {
     "section",
     { class: "card", "aria-labelledby": "jobs-h" },
     h("h2", { id: "jobs-h" }, "Scheduled jobs"),
-    h("p", { class: "muted small" }, "Claude Code tasks this group runs on a schedule. Each one needs your OK on this device first, unless you let this group's jobs run without asking."),
+    h("p", { class: "muted small" }, "Claude Code tasks this group runs on a schedule. Each one needs your OK first, unless you let this group's jobs run without asking."),
     body,
   );
   let timer: number | undefined;

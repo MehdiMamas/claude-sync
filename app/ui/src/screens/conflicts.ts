@@ -67,7 +67,7 @@ function clashItem(c: Clash, applies: boolean): HTMLElement {
   const drop = (keep: ClashSide, other: ClashSide) =>
     act(keepLabel(keep), "Keeping…", async () => {
       await api.dropClaudeMdLine(other.source, other.text);
-      return other.source.kind === "own" ? "Taken out of your CLAUDE.md (backed up first)" : `Left out of ${other.name}'s CLAUDE.md on this device`;
+      return other.source.kind === "own" ? "Taken out of your CLAUDE.md (backed up first)" : `Left out of ${other.name}'s CLAUDE.md on all your devices`;
     });
 
   if (c.kind === "setting") {
@@ -116,7 +116,7 @@ function clashItem(c: Clash, applies: boolean): HTMLElement {
     h(
       "p",
       { class: "muted small" },
-      c.kind === "duplicate" ? "Claude reads it twice. Keep one: the other is left out on this device only." : "Claude gets both. Keep one: the other is left out on this device only.",
+      c.kind === "duplicate" ? "Claude reads it twice. Keep one: the other is left out on all your devices." : "Claude gets both. Keep one: the other is left out on all your devices.",
     ),
     explainButton("collision", "Explain", () => clashText(c)),
     editor,
