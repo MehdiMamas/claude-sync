@@ -1314,6 +1314,59 @@ async fn personal_state_syncs_between_devices() {
         .any(|(p, t)| p == MODE_PATH && (t == MODE_NEW || t.contains("04:30"))));
 }
 
+#[tokio::test]
+async fn a_git_clone_personal_state_syncs_only_claude_sync() {
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    for d in [&pc, &mac] {
+        std::fs::create_dir_all(d.state_path(".git")).unwrap();
+        d.set_state(".git/config", "x");
+    }
+    pc.personal_enable().await.unwrap();
+    mac.personal_enable().await.unwrap();
+    let repo = personal_repo(&world, "ana");
+
+    pc.set_state("rules/a.json", MODE_OLD);
+    pc.set_state("claude-sync/note.json", MODE_OLD);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    pc.sync().await;
+    mac.sync().await;
+    assert_eq!(repo.file("state/rules/a.json"), None);
+    assert_eq!(repo.file("state/.git/config"), None);
+    assert_eq!(
+        repo.file("state/claude-sync/note.json").as_deref(),
+        Some(MODE_OLD)
+    );
+    assert_eq!(
+        mac.state("claude-sync/note.json").as_deref(),
+        Some(MODE_OLD)
+    );
+    assert_eq!(mac.state("rules/a.json"), None);
+
+    // A rule edited on the other device too is no conflict and no remote change.
+    mac.set_state("rules/a.json", MODE_NEW);
+    pc.set_state("rules/a.json", MODE_OLD);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    mac.sync().await;
+    pc.sync().await;
+    assert!(pc.personal_status().conflicts.is_empty());
+    assert!(mac.personal_status().conflicts.is_empty());
+    assert_eq!(pc.state("rules/a.json").as_deref(), Some(MODE_OLD));
+    assert_eq!(repo.file("state/rules/a.json"), None);
+}
+
+#[tokio::test]
+async fn without_git_all_of_personal_state_still_syncs() {
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.personal_enable().await.unwrap();
+    pc.set_state("rules/a.json", MODE_OLD);
+    pc.sync().await;
+    let repo = personal_repo(&world, "ana");
+    assert_eq!(repo.file("state/rules/a.json").as_deref(), Some(MODE_OLD));
+}
+
 #[test]
 fn kinds_default_includes_state() {
     assert!(Kinds::default().state);
