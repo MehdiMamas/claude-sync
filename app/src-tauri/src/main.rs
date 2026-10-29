@@ -3,6 +3,7 @@
 
 mod auth;
 mod background;
+mod cli;
 mod commands;
 mod config;
 mod ctx;
@@ -48,6 +49,7 @@ fn headless(paths: &Paths) -> Option<i32> {
     match args.first().map(String::as_str) {
         Some(claude_sync_core::jobs::RUN_JOB_ARG) => Some(jobs::run_job_main(paths, &args[1..])),
         Some(jobs::REMOVE_JOBS_ARG) => Some(jobs::remove_jobs_main(paths)),
+        Some(c) if cli::COMMANDS.contains(&c) => Some(cli::run(paths, &args)),
         _ => None,
     }
 }
@@ -114,8 +116,13 @@ fn main() {
     let background_start = std::env::args().any(|a| a == config::BACKGROUND_ARG);
 
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            window::open(app, None)
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // A CLI change (`claude-sync personal enable`): reload, do not open the window.
+            if args.iter().any(|a| a == cli::REFRESH_ARG) {
+                cli::refresh(app);
+            } else {
+                window::open(app, None)
+            }
         }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -221,6 +228,7 @@ fn main() {
                 tracing::warn!("could not remove the old helper key: {e}");
             }
             first_run_autostart(&handle, &ctx);
+            cli::install_shim();
             #[cfg(debug_assertions)]
             if let Some(token) = auth::dev_token() {
                 auth::sign_in_with_dev_token(&handle, token);
