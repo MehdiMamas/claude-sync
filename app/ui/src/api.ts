@@ -335,6 +335,8 @@ export interface Kinds {
   memory: boolean;
   /** `~/.claude/personal-state`: small settings mods save. */
   state: boolean;
+  /** `~/.claude/settings.json`, without group values and machine-specific values. */
+  settings: boolean;
 }
 export interface DeviceStatus {
   id: string;

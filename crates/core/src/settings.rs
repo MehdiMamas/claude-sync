@@ -508,8 +508,100 @@ fn commands_in(v: &Value, out: &mut Vec<String>) {
     }
 }
 
+/// Drop what cannot work on another machine, from a personal copy of `settings.json`:
+/// `apiKeyHelper`, `permissions.additionalDirectories`, canary overrides, and every string
+/// that is or contains an absolute path (hooks, `statusLine.command`, path lists in `env`,
+/// app-managed marketplace entries). An object with a `command` is dropped whole, so a
+/// `statusLine` never stays half there. Objects and arrays this empties are removed.
+pub fn machine_specific(v: &mut Value) {
+    let canary = canary_pointers(v);
+    for ptr in canary
+        .iter()
+        .map(String::as_str)
+        .chain(["/apiKeyHelper", "/permissions/additionalDirectories"])
+    {
+        remove_at(v, ptr);
+    }
+    if let Value::Object(m) = v {
+        drop_machine_paths(m);
+    }
+}
+
+fn mentions_absolute_path(v: &Value) -> bool {
+    match v {
+        Value::String(s) => has_absolute_path(s),
+        Value::Array(a) => a.iter().any(mentions_absolute_path),
+        Value::Object(m) => m.values().any(mentions_absolute_path),
+        _ => false,
+    }
+}
+
+fn drop_machine_paths(m: &mut Map<String, Value>) {
+    let keys: Vec<String> = m.keys().cloned().collect();
+    for k in keys {
+        let Some(child) = m.get_mut(&k) else { continue };
+        let drop = match child {
+            Value::String(s) => has_absolute_path(s),
+            Value::Object(o) if o.get("command").is_some_and(Value::is_string) => {
+                mentions_absolute_path(child)
+            }
+            Value::Object(o) => {
+                let before = o.len();
+                drop_machine_paths(o);
+                before > 0 && o.is_empty()
+            }
+            Value::Array(a) => {
+                let before = a.len();
+                a.retain(|x| !mentions_absolute_path(x));
+                before > 0 && a.is_empty()
+            }
+            _ => false,
+        };
+        if drop {
+            m.shift_remove(&k);
+        }
+    }
+}
+
+/// Every plain value (or array, or empty object) of an object, by JSON pointer.
+pub fn leaves(v: &Value) -> BTreeMap<String, Value> {
+    fn walk(v: &Value, ptr: &str, out: &mut BTreeMap<String, Value>) {
+        match v {
+            Value::Object(m) if !m.is_empty() => {
+                for (k, x) in m {
+                    walk(x, &join(ptr, k), out);
+                }
+            }
+            _ if ptr.is_empty() => {}
+            _ => {
+                out.insert(ptr.to_string(), v.clone());
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(v, "", &mut out);
+    out
+}
+
+/// `v` with the keys of every object in sorted order.
+pub fn sorted(v: &Value) -> Value {
+    match v {
+        Value::Object(m) => {
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            Value::Object(
+                keys.into_iter()
+                    .map(|k| (k.clone(), sorted(&m[k])))
+                    .collect(),
+            )
+        }
+        Value::Array(a) => Value::Array(a.iter().map(sorted).collect()),
+        other => other.clone(),
+    }
+}
+
 /// `shared` without the keys §8 never applies, each reported in `skipped`.
-fn filter_blocked(shared: &Value, skipped: &mut Vec<String>) -> Value {
+pub(crate) fn filter_blocked(shared: &Value, skipped: &mut Vec<String>) -> Value {
     let mut s = shared.clone();
     let Value::Object(m) = &mut s else { return s };
     if m.shift_remove("apiKeyHelper").is_some() {
