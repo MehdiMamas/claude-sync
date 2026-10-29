@@ -24,6 +24,7 @@ pub fn migrate(paths: &Paths, old: &GroupId, new: &GroupId) -> crate::Result<()>
     if jobs.rename_group(old, new) {
         jobs.save(paths)?;
     }
+    crate::choices::rename_group(paths, old, new)?;
     plugin_install::rename_group(paths, old, new)?;
     notifications::rename_group(paths, old, new)?;
     let mut state = AppState::load(paths)?;

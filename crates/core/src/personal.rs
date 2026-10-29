@@ -41,6 +41,8 @@ pub const README: &str = "README.md";
 pub const CLAUDE_MD: &str = "CLAUDE.md";
 pub const MEMORY: &str = "memory";
 pub const FORMAT: u32 = 1;
+/// The folder under `~/.claude` that `state/**` maps to.
+pub const LOCAL_STATE_DIR: &str = state::LOCAL_DIR;
 /// Larger memory files stay on their device.
 pub const MAX_FILE: usize = 256 * 1024;
 /// All synced files together.
@@ -197,6 +199,10 @@ struct State {
     skipped: Vec<String>,
     devices: Vec<Device>,
     new_devices_join: Option<bool>,
+    /// When it was last turned on here (Unix ms): a "personal sync is off" choice older than
+    /// this is not about this turning on.
+    #[serde(default)]
+    enabled_at_ms: u64,
     /// Hash of the local files after the last sync: unchanged files and remote skip a pass.
     fingerprint: String,
     /// When this device's entry in `devices.json` was last pushed.
@@ -302,10 +308,31 @@ impl Engine {
         self.enable_locked().await
     }
 
-    /// Stop syncing on this device. Local files and the repo stay as they are.
+    /// Stop syncing, on every device: the choice is saved with the others and goes out in a
+    /// last sync, and the other devices turn it off at their next one. New devices don't
+    /// join by themselves any more. Local files and the repo stay as they are.
     pub async fn personal_disable(&self) -> crate::Result<PersonalStatus> {
         let _busy = self.busy.lock().await;
         let mut st = self.load_personal();
+        if st.enabled {
+            crate::choices::set_personal_off(&self.paths, true)?;
+            st.fingerprint.clear();
+            let remote = self.remotes.open(&self.personal_id());
+            let report = self.sync_locked(remote.as_ref(), None, &mut st).await;
+            if report.error.is_none() {
+                let _ = self
+                    .edit_repo_file(FILE, "stop new devices joining", |bytes| {
+                        let mut pf = match bytes {
+                            Some(b) => PersonalFile::parse(b)?,
+                            None => return Err(not_personal(&self.personal_id())),
+                        };
+                        pf.new_devices_join = false;
+                        Ok(pf.to_bytes())
+                    })
+                    .await;
+                st.new_devices_join = Some(false);
+            }
+        }
         st.enabled = false;
         st.decided = true;
         self.save_personal(&st)?;
@@ -517,6 +544,8 @@ impl Engine {
         // off on this device is mistaken for a deletion.
         self.clear_bases()?;
         st.enabled = true;
+        // An "off" from before this moment is not about this turning on.
+        st.enabled_at_ms = crate::choices::now_ms();
         st.decided = true;
         st.fingerprint.clear();
         // An error from before turning it on is old news; a failing sync below writes its own.
@@ -555,6 +584,21 @@ impl Engine {
             Ok(()) => {
                 st.last_sync_unix = Some(now_unix());
                 st.last_error = None;
+                // Choices made on other devices take effect here.
+                match crate::choices::load(&self.paths) {
+                    Ok(c) if c.personal.off && c.personal.ts > st.enabled_at_ms => {
+                        st.enabled = false;
+                        st.decided = true;
+                    }
+                    Ok(c) => {
+                        if c.personal.off {
+                            // Older than turning it on here: no longer true.
+                            let _ = crate::choices::set_personal_off(&self.paths, false);
+                        }
+                        self.apply_group_choices().await;
+                    }
+                    Err(_) => {}
+                }
             }
             Err(e) => {
                 let e = if is_lost_access(&e) {
@@ -1344,14 +1388,22 @@ impl Kind {
 /// logs, which merge as sorted line sets, and `state/**.json` objects that both sides have
 /// with a `ts`, where the newer one wins.
 fn merge_personal<'a>(base: &'a FileSet, local: &'a FileSet, remote: &'a FileSet) -> MergeResult {
+    let choices: BTreeMap<&String, Vec<u8>> = local
+        .iter()
+        .filter(|(p, _)| p.as_str() == crate::choices::REPO_PATH)
+        .filter_map(|(p, l)| Some((p, crate::choices::merge(l, remote.get(p)?)?)))
+        .collect();
     let newer: BTreeMap<&String, &[u8]> = local
         .iter()
-        .filter(|(p, _)| state::is_json(p))
+        .filter(|(p, _)| state::is_json(p) && !choices.contains_key(p))
         .filter_map(|(p, l)| Some((p, state::newer(l, remote.get(p)?)?)))
         .collect();
     let by_lines = |p: &str| lines::is_index(p) || state::is_jsonl(p);
     let three = |p: &str| {
-        !by_lines(p) && p != settings_file::PATH && !newer.keys().any(|k| k.as_str() == p)
+        !by_lines(p)
+            && p != settings_file::PATH
+            && !newer.keys().any(|k| k.as_str() == p)
+            && !choices.keys().any(|k| k.as_str() == p)
     };
     let mut out = merge::three_way(
         &only(base, three),
@@ -1363,6 +1415,12 @@ fn merge_personal<'a>(base: &'a FileSet, local: &'a FileSet, remote: &'a FileSet
             out.to_push.insert((*path).clone(), Some(bytes.to_vec()));
         }
         out.merged.insert((*path).clone(), bytes.to_vec());
+    }
+    for (path, bytes) in &choices {
+        if Some(bytes.as_slice()) != remote.get(*path).map(Vec::as_slice) {
+            out.to_push.insert((*path).clone(), Some(bytes.clone()));
+        }
+        out.merged.insert((*path).clone(), bytes.clone());
     }
     let get_settings = |f: &'a FileSet| f.get(settings_file::PATH);
     let settings = settings_file::merge(

@@ -217,7 +217,7 @@ function form(s: Settings): HTMLElement[] {
       { class: "card", "aria-labelledby": "account-h" },
       h("h2", { id: "account-h" }, "Account"),
       h("p", null, "Signed in to GitHub as ", h("strong", null, store.auth?.login ?? "?"), "."),
-      h("p", { class: "muted small" }, "Signing out removes the token from this computer. Your groups stay on GitHub and the files stay on this device."),
+      h("p", { class: "muted small" }, "Signing out removes the token from this computer. Your groups stay on GitHub and your files stay where they are."),
       h("div", { class: "actions" }, signOut),
     ),
     githubAppCard(s, save),

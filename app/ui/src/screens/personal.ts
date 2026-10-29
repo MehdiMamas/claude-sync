@@ -90,7 +90,7 @@ function body(st: PersonalStatus, show: (st: PersonalStatus) => void): (HTMLElem
   const master = check("p-enabled", "Sync my personal memory between my devices", st.enabled, async (box) => {
     const next = box.checked ? await api.personalEnable() : await api.personalDisable();
     show(next);
-    toast(next.enabled ? "Personal memory is on" : "Personal memory is off on this device");
+    toast(next.enabled ? "Personal memory is on" : "Personal memory is off on all your devices");
   });
   const intro = h(
     "p",
@@ -104,6 +104,7 @@ function body(st: PersonalStatus, show: (st: PersonalStatus) => void): (HTMLElem
       intro,
       st.offer && h("p", null, "Your other devices already share their personal memory. Turn it on to merge it with this device's."),
       master,
+      h("p", { class: "muted small" }, "Turning this off stops it on all your devices."),
     ];
   }
   const setKinds = async (patch: Partial<Kinds>) => show(await api.personalSetKinds({ ...st.kinds, ...patch }));
@@ -112,6 +113,7 @@ function body(st: PersonalStatus, show: (st: PersonalStatus) => void): (HTMLElem
   return [
     intro,
     master,
+    h("p", { class: "muted small" }, "Turning this off stops it on all your devices."),
     check("p-claude-md", "My CLAUDE.md", st.kinds.claudeMd, (b) => setKinds({ claudeMd: b.checked }), "(without the groups' part)"),
     check("p-memory", "Claude's memories", st.kinds.memory, (b) => setKinds({ memory: b.checked }), "(the memory folder of each project)"),
     check(

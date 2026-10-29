@@ -2,6 +2,7 @@
 //! Design: docs/architecture.md. Section numbers below (§N) refer to it.
 
 pub mod apply;
+pub mod choices;
 pub mod claude_cli;
 pub mod conflicts;
 pub mod contents;

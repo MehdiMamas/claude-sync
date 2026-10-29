@@ -399,7 +399,16 @@ Never synced, and reported in Settings as "stays on this device": a file over 25
 
 **When it runs.** After each group sync: a conditional `GET` of the head (`304` costs nothing), and a pass only when the remote moved, the local files changed, this device was renamed, or a day passed (to refresh `lastSeenUnix`). Sync now always runs a pass.
 
-**Turning it on and off.** Settings → Personal memory has the master switch "Sync my personal memory between my devices", the four kinds, the device list (this device marked; rename it with the Device name field; remove an old one), "New devices of mine join automatically", the last sync and "Open repo". Turning it off on a device stops syncing there and leaves its files and the repo alone. A kind turned off is remembered as it was; turned back on, it merges against that, so nothing is lost or re-added by mistake.
+**Turning it on and off.** Settings → Personal memory has the master switch "Sync my personal memory between my devices", the four kinds, the device list (this device marked; rename it with the Device name field; remove an old one), "New devices of mine join automatically", the last sync and "Open repo". Turning it off stops it on all the person's devices (see **Choices** below); it leaves the files and the repo's memories alone. A kind turned off is remembered as it was; turned back on, it merges against that, so nothing is lost or re-added by mistake.
+
+**Choices.** What a person chooses in the app is personal, not per device: turning a group off, the CLAUDE.md review choice for a group, "Run this group's jobs without asking", and turning personal sync off. They live in one file, `~/.claude/personal-state/claude-sync/choices.json` (`state/claude-sync/choices.json` in the repo), written by `choices.rs`:
+
+```
+{"groups": {"owner/repo": {"off": true, "reviewClaudeMd": false, "autoRunJobs": true, "ts": 1760000000000}},
+ "personal": {"off": true, "ts": 1760000000000}}
+```
+
+`ts` is Unix milliseconds. The file merges per key (`choices::merge`), the newer `ts` wins, so two devices changing different groups lose nothing. After each personal sync a device carries out what it has not yet: a group `off` that is not in effect here is applied (`state.json` `disabled` is the effect on this device, the choice is in `choices.json`), and `personal.off` newer than the moment personal sync was turned on here turns it off. Turning personal sync off writes that choice, runs a last sync to send it, and sets `newDevicesJoin` to false; there is no "only here". Without personal sync the file is the local store. The review choice and auto-run are read by the engine and the jobs reconcile straight from the file. Leaving a group clears its entry. Older versions kept these per device (`state.json` `disabled`, `jobs.json` `autoAccept`, `claude-md-review.json` `review`): when `choices.json` does not exist, the first load copies them in with `ts` 0, and they are never read again.
 
 **A new device.** After sign-in, a device that never decided checks for `<login>/claude-sync-personal`. If the repo says `newDevicesJoin: true`, personal memory turns on by itself, the repo and the local files are merged (never overwriting either side's memories), and the app says: "Personal memory from your other devices is on. Turn off in Settings." If it says `false`, the app shows a notice offering to turn it on; "Not now" stops asking on that device. Another account on the same computer starts over with its own repo.
 
