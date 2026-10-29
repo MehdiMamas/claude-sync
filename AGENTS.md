@@ -23,6 +23,12 @@ Every setting lives in exactly one scope: group, personal or project. There are 
 - `relay/`: Vercel web service for updates and feedback (`api/`, `lib/`, `test/`; see `relay/README.md`).
 - `templates/user-repo`: template for a group repo. `docs/`: architecture and releasing.
 
+## Command line
+The app binary is also the CLI (`app/src-tauri/src/cli.rs`, handled before Tauri starts, like `run-job`). Add `--json` for machine output. Exit code: 0 done, 1 failed, 2 wrong usage.
+- `claude-sync status`: login, each group with its state and last sync, personal memory.
+- `claude-sync personal status|enable|disable`: the same as Settings -> Personal memory. After a change the CLI sends `--refresh` to the running app (if any), which reloads its screens.
+- On macOS and Linux the release app links `~/.local/bin/claude-sync` to its binary at startup (only if that folder exists and the name is free). Windows has no shim: run the full path of `claude-sync.exe`. Debug builds add no link; run `target/debug/claude-sync`.
+
 ## Conventions
 - One change per PR; paste the commands you ran with exit codes and counts, and name the OS.
 - Never commit tokens or keys; the secret-scan patterns are in `crates/core/src/secrets.rs`.

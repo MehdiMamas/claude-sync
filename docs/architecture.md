@@ -416,6 +416,10 @@ Never synced, and reported in Settings as "stays on this device": a file over 25
 
 A v0 clone of the personal repo is moved aside by the migration in §10; its CLAUDE.md and memories are not imported, the user turns this feature on instead.
 
+## 11a. Command line
+
+The app binary has headless subcommands next to `run-job`, handled in `main` before Tauri starts (`app/src-tauri/src/cli.rs`): `claude-sync status` and `claude-sync personal enable|disable|status`, each with `--json`. They load the same state and keychain sign-in as the app and call the same core functions as the Settings commands, so there is one code path; the personal lock keeps a CLI call and the app from writing together. After `enable` or `disable` the CLI starts the binary with `--refresh` when another claude-sync app process is running (a `ps` or `tasklist` check, so it never starts a second app); the single-instance handler then emits the `personal` event instead of opening the window. Exit code 0 done, 1 failed with the message on stderr, 2 wrong usage. On macOS and Linux the app adds a `~/.local/bin/claude-sync` link to its binary at startup (release builds only, never over an existing file); Windows has none.
+
 ## 17. Scheduled jobs
 
 A group can ask Claude Code to run a prompt on a schedule on each member's device, for example a twice-weekly refresh of everyone's setup. Code: `crates/core/src/jobs/` (format, consent, reconcile, OS layer, runner), `app/src-tauri/src/jobs.rs` (commands, headless subcommands, notification).
