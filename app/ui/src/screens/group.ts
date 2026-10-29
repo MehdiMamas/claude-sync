@@ -424,7 +424,7 @@ function acceptedJob(id: GroupId, j: JobView, show: (o: JobsOverview) => void): 
   );
 }
 
-/** "Run this group's jobs without asking": per device, off by default. */
+/** "Run this group's jobs without asking": your choice for every device, off by default. */
 function autoAcceptSetting(id: GroupId, o: JobsOverview, show: (o: JobsOverview) => void): HTMLElement {
   const box = h("input", { id: "jobs-auto", type: "checkbox", checked: o.autoAccept, disabled: o.unsupported !== null });
   box.addEventListener("change", () => {
@@ -442,7 +442,7 @@ function autoAcceptSetting(id: GroupId, o: JobsOverview, show: (o: JobsOverview)
       },
     );
   });
-  const warning = "New or changed jobs from this group then run on this device without your review, with the permissions the group gives them (bypassPermissions included). You get a notification each time. Jobs you turned off stay off.";
+  const warning = "New or changed jobs from this group then run on your devices without your review, with the permissions the group gives them (bypassPermissions included). You get a notification each time. Jobs you turned off stay off.";
   return h(
     "div",
     { class: "jobs-auto" },
@@ -595,10 +595,10 @@ function reviewBody(id: GroupId, r: ClaudeMdReview, isHost: boolean): (HTMLEleme
   };
 
   const ask = h("div", { class: "review-ask", hidden: true });
-  // This device's choice: null follows the group.
+  // Your choice (it follows you to every device): null follows the group.
   const choice = h(
     "select",
-    { id: "review-device", "aria-label": "On this device" },
+    { id: "review-device", "aria-label": "Your choice for this group" },
     h("option", { value: "follow" }, "Follow group"),
     h("option", { value: "review" }, "Review first"),
     h("option", { value: "auto" }, "Auto-accept"),
@@ -660,10 +660,10 @@ function reviewBody(id: GroupId, r: ClaudeMdReview, isHost: boolean): (HTMLEleme
   });
   const deviceLine =
     r.reviewOverride === null
-      ? `On this device: follows the group (${r.autoAccept ? "auto-accept" : "review first"})`
+      ? `Your choice: follows the group (${r.autoAccept ? "auto-accept" : "review first"})`
       : r.reviewOverride
-        ? "On this device: review changes first"
-        : "On this device: auto-accept";
+        ? "Your choice: review changes first"
+        : "Your choice: auto-accept";
 
   const useGroup = confirmButton("Use the group's version", "Click again: replace your copy", (btn) =>
     busy(btn, "Replacing…", async () => {
@@ -855,7 +855,7 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
       toggle.addEventListener("click", () =>
         busy(toggle, g.disabled ? "Turning on…" : "Turning off…", async () => {
           await api.setGroupEnabled(id, g.disabled);
-          toast(g.disabled ? `${g.name} is on again.` : `${g.name} is off. Nothing from it applies on this device.`);
+          toast(g.disabled ? `${g.name} is on again.` : `${g.name} is off. Nothing from it applies on your devices.`);
           await load();
         }),
       );

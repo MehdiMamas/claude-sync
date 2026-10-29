@@ -859,8 +859,9 @@ async fn a_device_that_turned_it_off_is_not_turned_back_on() {
         pc.personal_check_new_device().await.unwrap(),
         NewDevice::Nothing
     );
-    // Local files and the repo stay as they are.
-    assert_eq!(repo.current_head(), head);
+    // Local files stay as they are; the repo only learns that it is off (for every device).
+    assert_ne!(repo.current_head(), head);
+    assert!(repo.file(&format!("{KLAWLY_KEY}/a.md")).as_deref() == Some("one\n"));
     assert_eq!(pc.mem(KLAWLY_WIN, "a.md").as_deref(), Some("two\n"));
 
     // On again: what changed meanwhile is merged, not lost.
@@ -1473,4 +1474,98 @@ fn settings_merge_per_pointer_and_the_pushed_version_wins() {
         v,
         json!({"x": 3, "y": 2, "env": {"A": "1", "L": "l", "R": "r"}})
     );
+}
+
+// ---------------------------------------------------------------- choices (#119)
+
+fn join(d: &Dev, groups: &[&str]) {
+    let mut st = crate::state::AppState::load(&d.paths).unwrap();
+    st.groups = groups.iter().map(|g| GroupId::parse(g).unwrap()).collect();
+    st.save(&d.paths).unwrap();
+}
+
+#[tokio::test]
+async fn a_group_turned_off_on_one_device_is_off_on_the_other_after_one_sync() {
+    let world = FakeGitHub::new();
+    let g = GroupId::parse("ana/team").unwrap();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    join(&pc, &["ana/team"]);
+    pc.personal_enable().await.unwrap();
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    join(&mac, &["ana/team"]);
+    mac.personal_enable().await.unwrap();
+
+    pc.set_group_enabled(&g, false).await.unwrap();
+    assert!(crate::state::AppState::load(&pc.paths)
+        .unwrap()
+        .disabled
+        .contains(&g));
+    pc.sync().await;
+    assert!(!crate::state::AppState::load(&mac.paths)
+        .unwrap()
+        .disabled
+        .contains(&g));
+    mac.sync().await;
+    assert!(crate::choices::load(&mac.paths).unwrap().group(&g).off);
+    assert!(crate::state::AppState::load(&mac.paths)
+        .unwrap()
+        .disabled
+        .contains(&g));
+}
+
+#[tokio::test]
+async fn the_review_and_auto_run_choices_follow_too_and_the_newer_one_wins() {
+    let world = FakeGitHub::new();
+    let g = GroupId::parse("ana/team").unwrap();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    join(&pc, &["ana/team"]);
+    pc.personal_enable().await.unwrap();
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    join(&mac, &["ana/team"]);
+    mac.personal_enable().await.unwrap();
+
+    crate::choices::set_group(&pc.paths, &g, |c| {
+        c.review_claude_md = Some(false);
+        c.auto_run_jobs = true;
+    })
+    .unwrap();
+    pc.sync().await;
+    mac.sync().await;
+    let c = crate::choices::load(&mac.paths).unwrap().group(&g);
+    assert_eq!((c.review_claude_md, c.auto_run_jobs), (Some(false), true));
+
+    // Both change it before syncing: the later change wins on both.
+    crate::choices::set_group(&pc.paths, &g, |c| c.auto_run_jobs = false).unwrap();
+    crate::choices::set_group(&mac.paths, &g, |c| c.review_claude_md = Some(true)).unwrap();
+    pc.sync().await;
+    mac.sync().await;
+    pc.sync().await;
+    for d in [&pc, &mac] {
+        let c = crate::choices::load(&d.paths).unwrap().group(&g);
+        assert_eq!(c.review_claude_md, Some(true), "{}", d.device);
+    }
+}
+
+#[tokio::test]
+async fn turning_personal_sync_off_on_one_device_stops_the_other_at_its_next_sync() {
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.personal_enable().await.unwrap();
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    mac.personal_enable().await.unwrap();
+
+    let st = pc.personal_disable().await.unwrap();
+    assert!(!st.enabled);
+    assert_eq!(st.new_devices_join, Some(false));
+    assert!(mac.personal_status().enabled);
+    let report = mac.personal_sync(false).await.unwrap().expect("still on");
+    assert_eq!(report.error, None);
+    assert!(!mac.personal_status().enabled);
+    assert!(mac.personal_sync(false).await.unwrap().is_none());
+
+    // Turning it on again here is newer than the old "off".
+    assert!(mac.personal_enable().await.unwrap().enabled);
+    mac.sync().await;
+    assert!(mac.personal_status().enabled);
+    assert!(!crate::choices::load(&mac.paths).unwrap().personal.off);
 }

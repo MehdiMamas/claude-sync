@@ -37,7 +37,7 @@ export interface GroupStatus {
   proposalMode: boolean;
   /** The ruleset that stops others writing to the group: "on", "unavailable" (GitHub refused), or null for members. */
   hostLock: "on" | "unavailable" | null;
-  /** Turned off on this device: nothing from the group is applied. */
+  /** Turned off (your choice, on every device): nothing from the group is applied. */
   disabled: boolean;
 }
 /** One block of lines another member added to or removed from the group's CLAUDE.md. */
@@ -52,7 +52,7 @@ export interface ReviewItem {
   atUnix: number;
 }
 export interface ClaudeMdReview {
-  /** Review is on for this device (its choice, else the group's setting). */
+  /** Review is on (your choice, else the group's setting). */
   review: boolean;
   /** The group's "Auto-accept CLAUDE.md changes". */
   autoAccept: boolean;
@@ -418,7 +418,7 @@ export interface JobsOverview {
   unsupported: string | null;
   jobs: JobView[];
   problems: JobProblem[];
-  /** "Run this group's jobs without asking" is on for this device. */
+  /** "Run this group's jobs without asking" is on (your choice, on every device). */
   autoAccept: boolean;
 }
 export interface AppInfo {

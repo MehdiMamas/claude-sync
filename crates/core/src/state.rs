@@ -11,7 +11,9 @@ pub struct AppState {
     pub groups: Vec<crate::GroupId>,
     pub poll_seconds: Option<u64>,
     pub paused: bool,
-    /// Joined groups turned off on this device: nothing of them is applied or synced.
+    /// Joined groups whose turned-off state is applied on this device: nothing of them is
+    /// applied or synced. What the person chose is in `choices`; this is the effect that was
+    /// carried out here, so a choice made on another device is applied at the next sync.
     #[serde(default)]
     pub disabled: std::collections::BTreeSet<crate::GroupId>,
     /// Sign in with the GitHub App (per-repo access, issue #39) instead of the OAuth App

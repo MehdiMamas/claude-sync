@@ -9,7 +9,8 @@
 //! - `<state_dir>/logs/jobs/<id>/<UTC stamp>.log`: the output of each run (last 20 kept).
 //!
 //! A member can also let a group's jobs through without asking ("Run this group's jobs
-//! without asking", off by default, per device): reconcile then accepts new and changed jobs
+//! without asking", off by default, a personal choice that follows you to every device, see
+//! `choices`): reconcile then accepts new and changed jobs
 //! of that group itself and reports them, so the app can say what was added or changed.
 //!
 //! Job ids are global on a device (they name the OS task): when two groups use the same id,
@@ -334,7 +335,8 @@ fn yes() -> bool {
 pub struct JobsState {
     #[serde(default)]
     pub jobs: BTreeMap<String, Record>,
-    /// Groups whose new and changed jobs this device accepts without asking.
+    /// Before choices followed the person to every device (`crate::choices`) this held the
+    /// groups whose jobs run without asking. Only read once, when `choices.json` is made.
     #[serde(default)]
     pub auto_accept: BTreeSet<GroupId>,
 }
@@ -391,10 +393,6 @@ impl JobsState {
         let mut changed = false;
         for r in self.jobs.values_mut().filter(|r| r.group == *old) {
             r.group = new.clone();
-            changed = true;
-        }
-        if self.auto_accept.remove(old) {
-            self.auto_accept.insert(new.clone());
             changed = true;
         }
         changed
@@ -472,7 +470,7 @@ pub struct ReconcileReport {
     pub registered: Vec<String>,
     pub unregistered: Vec<String>,
     pub errors: Vec<String>,
-    /// Jobs accepted without asking, because their group is in [`JobsState::auto_accept`].
+    /// Jobs accepted without asking, because the group's "run without asking" choice is on.
     pub auto_accepted: Vec<AutoAccepted>,
 }
 
@@ -557,7 +555,7 @@ impl Jobs<'_> {
     pub fn overview(&self, group: &GroupId) -> crate::Result<JobsOverview> {
         let (jobs, problems, _) = self.all()?;
         let state = JobsState::load(self.paths)?;
-        let auto_accept = state.auto_accept.contains(group);
+        let auto_accept = crate::choices::load(self.paths)?.group(group).auto_run_jobs;
         let views = jobs
             .iter()
             .filter(|j| &j.group == group)
@@ -608,13 +606,7 @@ impl Jobs<'_> {
                 "you are not in {group} on this device"
             )));
         }
-        let mut state = JobsState::load(self.paths)?;
-        if on {
-            state.auto_accept.insert(group.clone());
-        } else {
-            state.auto_accept.remove(group);
-        }
-        state.save(self.paths)?;
+        crate::choices::set_group(self.paths, group, |c| c.auto_run_jobs = on)?;
         self.reconcile(false)
     }
 
@@ -702,13 +694,12 @@ impl Jobs<'_> {
                 state.jobs.remove(&id);
             }
         }
-        // Rejoining a group starts with asking again.
-        state.auto_accept.retain(|g| joined.contains(g));
-
+        // Leaving a group clears its choices (`forget`), so rejoining starts with asking again.
+        let auto = crate::choices::load(self.paths)?;
         // Groups whose jobs run without asking: accept their new and changed versions. A job
         // the member turned off stays off.
         for job in &jobs {
-            if !state.auto_accept.contains(&job.group) || state.accepted(job) {
+            if !auto.group(&job.group).auto_run_jobs || state.accepted(job) {
                 continue;
             }
             let rec = state
@@ -1045,13 +1036,14 @@ pub(crate) mod tests {
         let r = e.jobs().reconcile(false).unwrap();
         assert!(r.auto_accepted.is_empty());
         assert!(e.registered().is_empty());
-        assert!(JobsState::load(&e.paths).unwrap().auto_accept.is_empty());
+        assert!(crate::choices::load(&e.paths).unwrap().groups.is_empty());
         let o = e.jobs().overview(&g).unwrap();
         assert!(!o.auto_accept);
         assert!(!o.jobs[0].accepted);
         // An older jobs.json without the field still loads.
         std::fs::write(state_file(&e.paths), br#"{"jobs":{}}"#).unwrap();
         assert!(JobsState::load(&e.paths).unwrap().auto_accept.is_empty());
+        assert!(!e.jobs().overview(&g).unwrap().auto_accept);
     }
 
     #[test]
@@ -1090,13 +1082,15 @@ pub(crate) mod tests {
         // Nothing new: nothing to report.
         assert!(e.jobs().reconcile(false).unwrap().auto_accepted.is_empty());
 
-        // Off: what was accepted stays; leaving forgets the setting.
+        // Off: what was accepted stays. The choice is saved with the person's other choices.
         e.jobs().set_auto_accept(&g, false).unwrap();
         assert_eq!(e.registered(), ["digest", "setup-scout"]);
-        e.jobs().set_auto_accept(&g, true).unwrap();
-        e.groups(&[(&other, None)]);
-        e.jobs().reconcile(false).unwrap();
-        assert!(JobsState::load(&e.paths).unwrap().auto_accept.is_empty());
+        assert!(
+            !crate::choices::load(&e.paths)
+                .unwrap()
+                .group(&g)
+                .auto_run_jobs
+        );
     }
 
     #[test]

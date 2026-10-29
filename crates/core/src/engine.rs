@@ -678,8 +678,9 @@ impl Engine {
         Ok(())
     }
 
-    /// Turn a joined group off or back on on this device. Off takes everything it applied
-    /// away (membership and the group's folder stay); on applies the last
+    /// Turn a joined group off or back on. The choice is yours, not this device's: it is saved
+    /// in `choices` and your other devices follow at their next personal sync. Off takes
+    /// everything it applied away (membership and the group's folder stay); on applies the last
     /// synced version again and syncs. Nothing is pushed while off.
     pub async fn set_group_enabled(
         &self,
@@ -688,6 +689,32 @@ impl Engine {
     ) -> crate::Result<ApplyReport> {
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
+        crate::choices::set_group(&self.paths, id, |c| c.off = !enabled)?;
+        self.apply_group_off(id, !enabled).await
+    }
+
+    /// Carry out the group choices saved in `choices` that are not in effect here yet (for
+    /// example a group turned off on another device). The busy lock is held by the caller.
+    pub(crate) async fn apply_group_choices(&self) {
+        let (Ok(choices), Ok(state)) = (
+            crate::choices::load(&self.paths),
+            AppState::load(&self.paths),
+        ) else {
+            return;
+        };
+        for id in &state.groups {
+            let off = choices.group(id).off;
+            if state.disabled.contains(id) != off {
+                if let Err(e) = self.apply_group_off(id, off).await {
+                    tracing::warn!(group = %id, error = %e, "could not apply a choice made on another device");
+                }
+            }
+        }
+    }
+
+    /// Put the group off (`off`) or on in effect on this machine.
+    async fn apply_group_off(&self, id: &GroupId, off: bool) -> crate::Result<ApplyReport> {
+        let enabled = !off;
         let mut state = AppState::load(&self.paths)?;
         if state.disabled.contains(id) != enabled {
             return Ok(ApplyReport::default());
@@ -922,6 +949,7 @@ impl Engine {
         let _busy = self.busy.lock().await;
         self.require_joined(id)?;
         let mut st = self.require_review(id)?;
+        crate::choices::set_group(&self.paths, id, |c| c.review_claude_md = on)?;
         st.review = on;
         self.accept_if_unreviewed(id, &mut st)?;
         self.claude_md_review(id)
@@ -1667,6 +1695,13 @@ impl Engine {
         state.groups.retain(|g| g != id);
         state.disabled.remove(id);
         state.save(&self.paths)?;
+        // Leaving forgets the group's choices; rejoining starts from the defaults.
+        if crate::choices::load(&self.paths)?
+            .groups
+            .contains_key(&id.to_string())
+        {
+            crate::choices::set_group(&self.paths, id, |c| *c = Default::default())?;
+        }
         remove_dir_if_exists(&self.paths.group_dir(id))?;
         Ok(applied)
     }
@@ -1731,8 +1766,14 @@ impl Engine {
         self.paths.group_dir(id).join(review::FILE)
     }
 
+    /// The review state, with the CLAUDE.md review choice from `choices` (the file's own
+    /// `review` is the old per-device value, which `choices` took over).
     fn load_review(&self, id: &GroupId) -> crate::Result<Option<ReviewState>> {
-        ReviewState::load(&self.review_file(id))
+        let choices = crate::choices::load(&self.paths)?;
+        Ok(ReviewState::load(&self.review_file(id))?.map(|mut st| {
+            st.review = choices.group(id).review_claude_md;
+            st
+        }))
     }
 
     fn require_review(&self, id: &GroupId) -> crate::Result<ReviewState> {
