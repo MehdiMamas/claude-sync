@@ -260,7 +260,12 @@ fn main() {
             label,
             event: WindowEvent::Destroyed,
             ..
-        } if label == window::LABEL => window::closed(app),
+        } if label == window::LABEL => {
+            updates::mark_shown();
+            window::closed(app)
+        }
+        // System quit or logout: install a downloaded update too.
+        RunEvent::Exit => updates::install_pending(app),
         // Dock icon clicked (macOS) while no window is showing.
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => window::open(app, None),
