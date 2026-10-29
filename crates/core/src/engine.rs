@@ -542,6 +542,7 @@ impl Engine {
         }
         state.groups = order.clone();
         state.save(&self.paths)?;
+        self.record_order()?;
         for id in &order {
             out.groups.push(self.sync_group(id, None).await.0);
         }
@@ -606,6 +607,7 @@ impl Engine {
             .commit(&head, &files, &self.message("create group"))
             .await?;
         let status = self.join_locked(&id).await?;
+        self.record_joined(&id)?;
         if let (Some(text), Some(true)) = (&shared, share.map(|s| s.remove_own)) {
             // The group exists either way; a failure here only leaves the text twice.
             if let Err(e) = self.remove_own_claude_md(&id, text) {
@@ -624,13 +626,33 @@ impl Engine {
     pub async fn accept_invitation(&self, invitation_id: u64) -> crate::Result<GroupStatus> {
         let _busy = self.busy.lock().await;
         let id = self.remotes.accept_invitation(invitation_id).await?;
-        self.join_locked(&id).await
+        let status = self.join_locked(&id).await?;
+        self.record_joined(&id)?;
+        Ok(status)
     }
 
     /// Join a group repo this user already has access to.
     pub async fn join(&self, id: &GroupId) -> crate::Result<GroupStatus> {
         let _busy = self.busy.lock().await;
-        self.join_locked(id).await
+        let status = self.join_locked(id).await?;
+        self.record_joined(id)?;
+        Ok(status)
+    }
+
+    /// Save that the person joined `id` (a choice that follows them to every device) and the
+    /// order of their groups.
+    fn record_joined(&self, id: &GroupId) -> crate::Result<()> {
+        crate::choices::set_group(&self.paths, id, |c| c.member = Some(true))?;
+        self.record_order()
+    }
+
+    fn record_order(&self) -> crate::Result<()> {
+        let list = AppState::load(&self.paths)?
+            .groups
+            .iter()
+            .map(|g| g.to_string())
+            .collect();
+        crate::choices::set_order(&self.paths, list)
     }
 
     /// Group repos this user can access but has not joined on this device.
@@ -693,22 +715,82 @@ impl Engine {
         self.apply_group_off(id, !enabled).await
     }
 
-    /// Carry out the group choices saved in `choices` that are not in effect here yet (for
-    /// example a group turned off on another device). The busy lock is held by the caller.
+    /// Carry out the choices saved in `choices` that are not in effect here yet (for example a
+    /// group joined, left or turned off on another device). The busy lock is held by the caller.
     pub(crate) async fn apply_group_choices(&self) {
-        let (Ok(choices), Ok(state)) = (
-            crate::choices::load(&self.paths),
-            AppState::load(&self.paths),
-        ) else {
+        let Ok(choices) = crate::choices::load(&self.paths) else {
+            return;
+        };
+        // Joined or left on another device. A failed join shows in the log and is tried
+        // again at the next sync.
+        for (key, g) in &choices.groups {
+            let (Some(id), Ok(state)) = (GroupId::parse(key), AppState::load(&self.paths)) else {
+                continue;
+            };
+            let joined = state.groups.contains(&id);
+            match g.member {
+                Some(true) if !joined => {
+                    if let Err(e) = self.join_locked(&id).await {
+                        tracing::warn!(group = %id, error = %e, "could not join a group joined on another device");
+                    }
+                }
+                Some(false) if joined => {
+                    let left = self.forget(&id).and_then(|_| {
+                        crate::choices::set_group(&self.paths, &id, |c| c.member = Some(false))
+                    });
+                    if let Err(e) = left {
+                        tracing::warn!(group = %id, error = %e, "could not leave a group left on another device");
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.apply_group_order(&choices.order.list).await;
+        let Ok(state) = AppState::load(&self.paths) else {
             return;
         };
         for id in &state.groups {
-            let off = choices.group(id).off;
-            if state.disabled.contains(id) != off {
-                if let Err(e) = self.apply_group_off(id, off).await {
+            let g = choices.group(id);
+            if state.disabled.contains(id) != g.off {
+                if let Err(e) = self.apply_group_off(id, g.off).await {
                     tracing::warn!(group = %id, error = %e, "could not apply a choice made on another device");
                 }
             }
+            for line in &g.dropped_lines {
+                // Fails when the copy has no such line: it is out already.
+                let _ = self.drop_group_line(id, line);
+            }
+        }
+    }
+
+    /// Put the joined groups in `list`'s order (groups it does not name follow, in their order).
+    async fn apply_group_order(&self, list: &[String]) {
+        let Ok(mut state) = AppState::load(&self.paths) else {
+            return;
+        };
+        let mut order: Vec<GroupId> = Vec::new();
+        for id in list.iter().filter_map(|k| GroupId::parse(k)) {
+            if state.groups.contains(&id) && !order.contains(&id) {
+                order.push(id);
+            }
+        }
+        let rest: Vec<GroupId> = state
+            .groups
+            .iter()
+            .filter(|g| !order.contains(g))
+            .cloned()
+            .collect();
+        order.extend(rest);
+        if order == state.groups {
+            return;
+        }
+        state.groups.clone_from(&order);
+        if let Err(e) = state.save(&self.paths) {
+            tracing::warn!(error = %e, "could not save the group order");
+            return;
+        }
+        for id in &order {
+            self.sync_group(id, None).await;
         }
     }
 
@@ -749,10 +831,14 @@ impl Engine {
         Ok(applied)
     }
 
-    /// Leave on this device: remove managed content. Does not change membership.
+    /// Leave the group: remove managed content. Your other devices leave it at their next
+    /// personal sync; membership on GitHub does not change.
     pub async fn leave(&self, id: &GroupId) -> crate::Result<ApplyReport> {
         let _busy = self.busy.lock().await;
-        self.forget(id)
+        let applied = self.forget(id)?;
+        crate::choices::set_group(&self.paths, id, |c| c.member = Some(false))?;
+        self.record_order()?;
+        Ok(applied)
     }
 
     pub fn local_edits(&self) -> crate::Result<Vec<LocalEdit>> {
@@ -1091,6 +1177,7 @@ impl Engine {
         let before = st.accepted.clone();
         st.reset();
         self.write_accepted(id, &mut st, &before, &[], true)?;
+        crate::choices::set_group(&self.paths, id, |c| c.dropped_lines.clear())?;
         let mut status = self.load_status(id);
         if status.shared.remove(group::CLAUDE_MD) {
             self.save_status(id, &status)?;
@@ -1681,6 +1768,9 @@ impl Engine {
         report.error = Some(match self.forget(id) {
             Ok(applied) => {
                 report.apply = applied;
+                if let Err(e) = self.record_order() {
+                    tracing::warn!(error = %e, "could not save the group order");
+                }
                 format!("access to {id} is gone; its files were removed from this machine")
             }
             Err(e) => format!("access to {id} is gone, but removing its files failed: {e}"),

@@ -365,8 +365,8 @@ pub async fn set_auto_accept(
 pub async fn run_now(ctx: Arc<Ctx>, group: GroupId, id: String) -> Result<JobsOverview, Error> {
     blocking(move || {
         let job = with_jobs(&ctx.paths, "run job", |j| j.find(&group, &id))?;
-        let state = JobsState::load(&ctx.paths).map_err(|e| e.to_string())?;
-        if !state.accepted(&job) {
+        let choices = claude_sync_core::choices::load(&ctx.paths).map_err(|e| e.to_string())?;
+        if !choices.job_accepted(&job) {
             return Err("accept the job first".into());
         }
         if run::is_running(&ctx.paths, &job) {

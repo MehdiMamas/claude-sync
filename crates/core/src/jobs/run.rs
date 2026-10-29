@@ -190,14 +190,17 @@ impl Jobs<'_> {
         exec: &dyn Exec,
     ) -> crate::Result<Option<LastRun>> {
         let job = self.find(group, id)?;
-        let state = JobsState::load(self.paths)?;
-        if !state.accepted(&job) {
+        let choices = crate::choices::load(self.paths)?;
+        if !choices.job_accepted(&job) {
             return Err(crate::Error::Invalid(format!(
-                "job {id:?} is not accepted in its current version on this device"
+                "job {id:?} is not accepted in its current version"
             )));
         }
-        let rec = state.of(&job).expect("accepted");
-        if !manual && !rec.enabled {
+        let state = JobsState::load(self.paths)?;
+        let rec = state.of(&job).ok_or_else(|| {
+            crate::Error::Invalid(format!("job {id:?} is not set up on this device yet"))
+        })?;
+        if !manual && choices.group(group).off_jobs.contains(id) {
             return Err(crate::Error::Invalid(format!("job {id:?} is turned off")));
         }
         let start = now_unix();
