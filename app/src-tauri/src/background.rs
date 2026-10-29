@@ -356,7 +356,11 @@ async fn update_loop(app: AppHandle) {
         if let Err(e) = updates::check_and_download(&app).await {
             tracing::info!("update check: {e}");
         }
-        tokio::time::sleep(Duration::from_secs(config::UPDATES_EVERY_SECONDS)).await;
+        // Once a minute until the next check; install a downloaded update at a quiet moment.
+        for _ in 0..(config::UPDATES_EVERY_SECONDS / 60).max(1) {
+            updates::install_if_quiet(&app).await;
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
     }
 }
 
