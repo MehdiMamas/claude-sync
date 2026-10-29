@@ -718,6 +718,9 @@ impl Engine {
     /// Carry out the choices saved in `choices` that are not in effect here yet (for example a
     /// group joined, left or turned off on another device). The busy lock is held by the caller.
     pub(crate) async fn apply_group_choices(&self) {
+        if self.backfill_choices().is_err() {
+            return;
+        }
         let Ok(choices) = crate::choices::load(&self.paths) else {
             return;
         };
@@ -761,6 +764,50 @@ impl Engine {
                 let _ = self.drop_group_line(id, line);
             }
         }
+    }
+
+    /// One-time fill for a choices.json written before membership, order, jobs and app
+    /// choices existed (v0.1.13): copy in the old per-device values, only where missing.
+    fn backfill_choices(&self) -> crate::Result<()> {
+        let state = AppState::load(&self.paths)?;
+        let jobs = crate::jobs::JobsState::load(&self.paths).unwrap_or_default();
+        let choices = crate::choices::load(&self.paths)?;
+        for id in &state.groups {
+            let g = choices.group(id);
+            let missing_jobs: Vec<_> = jobs
+                .jobs
+                .iter()
+                .filter(|(job, r)| {
+                    r.group == *id && r.accepted.is_some() && !g.accepted_jobs.contains_key(*job)
+                })
+                .collect();
+            if g.member.is_some() && missing_jobs.is_empty() {
+                continue;
+            }
+            crate::choices::set_group(&self.paths, id, |c| {
+                if c.member.is_none() {
+                    c.member = Some(true);
+                }
+                for (job, r) in &missing_jobs {
+                    if let Some(hash) = &r.accepted {
+                        c.accepted_jobs.insert((*job).clone(), hash.clone());
+                        if !r.enabled {
+                            c.off_jobs.insert((*job).clone());
+                        }
+                    }
+                }
+            })?;
+        }
+        if choices.order.ts == 0 && choices.order.list.is_empty() && !state.groups.is_empty() {
+            self.record_order()?;
+        }
+        if choices.app.ts == 0 && (state.paused || state.poll_seconds.is_some()) {
+            crate::choices::set_app(&self.paths, |a| {
+                a.paused = state.paused;
+                a.interval_secs = state.poll_seconds;
+            })?;
+        }
+        Ok(())
     }
 
     /// Put the joined groups in `list`'s order (groups it does not name follow, in their order).

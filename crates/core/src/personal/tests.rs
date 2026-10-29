@@ -1671,3 +1671,32 @@ async fn pause_and_the_interval_set_on_one_device_are_in_choices_on_the_other() 
     pc.sync().await;
     assert!(!crate::choices::load(&pc.paths).unwrap().app.paused);
 }
+
+#[tokio::test]
+async fn a_choices_file_from_v0_1_13_is_filled_in_once() {
+    let world = FakeGitHub::new();
+    let (g1, _) = group_with(&world, &["ana"]);
+    let (g2, _) = group_with(&world, &["bo", "ana"]);
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.join(&g1).await.unwrap();
+    pc.join(&g2).await.unwrap();
+    // What v0.1.13 left behind: choices with only off and ts, and the old jobs.json.
+    let old = serde_json::json!({"groups": {
+        g1.to_string(): {"off": false, "ts": 5},
+        g2.to_string(): {"off": false, "ts": 5}}});
+    std::fs::write(crate::choices::file(&pc.paths), old.to_string()).unwrap();
+    let jobs = serde_json::json!({"jobs": {"setup-scout": {
+        "group": {"owner": g1.owner, "repo": g1.repo}, "accepted": "abc123", "enabled": false}}});
+    std::fs::write(crate::jobs::state_file(&pc.paths), jobs.to_string()).unwrap();
+
+    pc.apply_group_choices().await;
+
+    let c = crate::choices::load(&pc.paths).unwrap();
+    assert_eq!(c.group(&g1).member, Some(true));
+    assert_eq!(c.group(&g2).member, Some(true));
+    assert_eq!(c.order.list, [g1.to_string(), g2.to_string()]);
+    assert_eq!(c.group(&g1).accepted_jobs["setup-scout"], "abc123");
+    assert!(c.group(&g1).off_jobs.contains("setup-scout"));
+    let joined = crate::state::AppState::load(&pc.paths).unwrap().groups;
+    assert_eq!(joined, [g1, g2], "no group was left");
+}
