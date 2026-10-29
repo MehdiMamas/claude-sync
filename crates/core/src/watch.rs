@@ -591,6 +591,43 @@ mod tests {
     }
 
     #[test]
+    fn gitignored_files_are_not_local_edits() {
+        let (_t, paths) = env();
+        let a = g("a");
+        apply_group(&paths, &a, std::slice::from_ref(&a), &plugin_files()).unwrap();
+        let mp = paths.marketplaces_dir().join("mods");
+        write(&mp.join("router/cache/.gitignore"), b"*\n");
+        write(&mp.join("router/cache/x.txt"), b"x\n");
+        write(&mp.join(".gitignore"), b"*.log\n");
+        write(&mp.join("router/a/b/x.log"), b"x\n");
+        let paths_of: Vec<String> = local_edits(&paths)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
+        assert_eq!(paths_of, vec!["plugins/mods/.gitignore"]);
+    }
+
+    #[test]
+    fn claude_code_generated_mod_files_are_not_local_edits() {
+        let (_t, paths) = env();
+        let a = g("a");
+        apply_group(&paths, &a, std::slice::from_ref(&a), &plugin_files()).unwrap();
+        let mp = paths.marketplaces_dir().join("mods");
+        write(
+            &mp.join("mods/m/.claude-plugin/types/claude-code/index.d.ts"),
+            b"x\n",
+        );
+        write(&mp.join("mods/m/tsconfig.json"), b"{}\n");
+        assert!(local_edits(&paths).unwrap().is_empty());
+        write(&mp.join("mods/m/hooks/new.ts"), b"export {}\n");
+        assert_eq!(
+            local_edits(&paths).unwrap(),
+            vec![edit(&a, "plugins/mods/mods/m/hooks/new.ts", false)]
+        );
+    }
+
+    #[test]
     fn real_paths_map_back_to_the_configured_root() {
         let aliases = vec![(
             PathBuf::from("/private/var/x/.claude"),
