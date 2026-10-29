@@ -1357,6 +1357,39 @@ async fn a_git_clone_personal_state_syncs_only_claude_sync() {
 }
 
 #[tokio::test]
+async fn a_git_clone_personal_state_clears_old_review_entries() {
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.personal_enable().await.unwrap();
+    let entry = |path: &str| ConflictInfo {
+        path: path.into(),
+        saved_to: String::new(),
+        at_unix: 1,
+    };
+    let mut st = pc.load_personal();
+    st.conflicts = vec![
+        entry("state/AGENTS.md"),
+        entry(CLAUDE_MD),
+        entry("state/claude-sync/note.json"),
+    ];
+    pc.save_personal(&st).unwrap();
+
+    // Without .git nothing is cleared.
+    pc.sync().await;
+    assert_eq!(pc.personal_status().conflicts.len(), 3);
+
+    std::fs::create_dir_all(pc.state_path(".git")).unwrap();
+    pc.sync().await;
+    let paths: Vec<String> = pc
+        .personal_status()
+        .conflicts
+        .into_iter()
+        .map(|c| c.path)
+        .collect();
+    assert_eq!(paths, [CLAUDE_MD, "state/claude-sync/note.json"]);
+}
+
+#[tokio::test]
 async fn without_git_all_of_personal_state_still_syncs() {
     let world = FakeGitHub::new();
     let pc = dev(&world, "ana", "pc", WIN_HOME);
