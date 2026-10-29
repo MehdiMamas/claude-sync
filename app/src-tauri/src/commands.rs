@@ -703,6 +703,22 @@ pub fn set_settings(app: AppHandle, ctx: CtxState, settings: SettingsPatch) -> R
             s.github_app = g;
         }
     });
+    if settings.paused.is_some() || poll.is_some() || settings.autostart.is_some() {
+        // These are your choices, not this device's: your other devices follow.
+        if let Err(e) = claude_sync_core::choices::set_app(&ctx.paths, |a| {
+            if let Some(p) = settings.paused {
+                a.paused = p;
+            }
+            if let Some(p) = poll {
+                a.interval_secs = Some(p);
+            }
+            if let Some(on) = settings.autostart {
+                a.start_at_login = Some(on);
+            }
+        }) {
+            tracing::warn!("could not save the settings choice: {e}");
+        }
+    }
     if renamed {
         ctx.reset_engine();
     }

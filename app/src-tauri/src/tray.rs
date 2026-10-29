@@ -65,6 +65,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 if let Err(e) = ctx.update_state(|s| s.paused = paused) {
                     tracing::warn!("pause not saved: {e}");
                 }
+                if let Err(e) =
+                    claude_sync_core::choices::set_app(&ctx.paths, |a| a.paused = paused)
+                {
+                    tracing::warn!("pause choice not saved: {e}");
+                }
                 background::refresh_status(app);
                 ctx.wake.notify_one();
             }

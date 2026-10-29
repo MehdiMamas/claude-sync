@@ -58,6 +58,7 @@ pub async fn after_sync(app: &AppHandle, full: bool) {
     else {
         return;
     };
+    apply_app_choices(app);
     for c in &report.conflicts {
         notify::show(
             app,
@@ -71,6 +72,44 @@ pub async fn after_sync(app: &AppHandle, full: bool) {
         );
     }
     emit(app, &engine.personal_status());
+}
+
+/// Pause, the check interval and start at login chosen on another device take effect here.
+fn apply_app_choices(app: &AppHandle) {
+    use tauri_plugin_autostart::ManagerExt;
+    let ctx = app.state::<std::sync::Arc<crate::ctx::Ctx>>();
+    let Ok(c) = claude_sync_core::choices::load(&ctx.paths) else {
+        return;
+    };
+    let a = c.app;
+    if a.ts == 0 && !a.paused && a.interval_secs.is_none() && a.start_at_login.is_none() {
+        return;
+    }
+    let fresh = claude_sync_core::state::AppState::load(&ctx.paths).ok();
+    if let Err(e) = ctx.update_state(|s| {
+        // The engine may have joined or left groups meanwhile; keep what it saved.
+        if let Some(f) = fresh {
+            s.groups = f.groups;
+            s.disabled = f.disabled;
+        }
+        s.paused = a.paused;
+        if a.interval_secs.is_some() {
+            s.poll_seconds = a.interval_secs;
+        }
+    }) {
+        tracing::warn!("could not apply the settings choice: {e}");
+    }
+    if let Some(on) = a.start_at_login {
+        let al = app.autolaunch();
+        if al.is_enabled().unwrap_or(on) != on {
+            let r = if on { al.enable() } else { al.disable() };
+            if let Err(e) = r {
+                tracing::warn!("could not change start at login: {e}");
+            }
+        }
+    }
+    crate::background::refresh_status(app);
+    ctx.wake.notify_one();
 }
 
 fn emit(app: &AppHandle, status: &PersonalStatus) {

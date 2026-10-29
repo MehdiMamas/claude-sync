@@ -4,7 +4,7 @@
 claude-sync: a small Tauri desktop app (Windows, macOS, beta Linux) that shares a Claude Code setup (settings, `CLAUDE.md`, skills, agents, commands, plugin marketplaces) with a group through a private GitHub repo. See `README.md`; design in `docs/architecture.md` (keep it in step with your change).
 
 ## Scopes
-Every setting lives in exactly one scope: group, personal or project. There are no per-device choices; choices made in the app (group off, CLAUDE.md review, run jobs without asking, personal sync off) are personal and live in `state/claude-sync/choices.json` (`crates/core/src/choices.rs`, architecture §16); values that can't work on another machine (absolute paths, `apiKeyHelper`, secrets) are dropped automatically.
+Every setting lives in exactly one scope: group, personal or project. There are no per-device choices; choices made in the app (group off, CLAUDE.md review, jobs accepted, lines kept, joined groups and their order, pause, interval, start at login, personal sync off) are personal and live in `state/claude-sync/choices.json` (`crates/core/src/choices.rs`, architecture §16); values that can't work on another machine (absolute paths, `apiKeyHelper`, secrets) are dropped automatically.
 
 ## Setup
 - Needs Rust (stable), Node 22 or later and pnpm.

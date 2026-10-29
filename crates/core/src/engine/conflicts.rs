@@ -69,23 +69,23 @@ impl Engine {
         Ok(conflicts::incoming(&incoming, &texts))
     }
 
-    /// Take `line` out of what Claude reads from `source` on this device only. For a group,
-    /// the line is declined like a change under review (§7a): "Use the group's version"
-    /// brings it back. For the user's own text, the file is backed up first.
+    /// Take `line` out of what Claude reads from `source`. For a group, the line is declined
+    /// like a change under review (§7a) and saved in `choices`, so the person's other devices
+    /// leave it out too; "Use the group's version" brings it back. For the user's own text,
+    /// the file is backed up first.
     pub async fn drop_claude_md_line(&self, source: &Source, line: &str) -> crate::Result<()> {
         let _busy = self.busy.lock().await;
         match source {
             Source::Group { id } => {
                 self.require_joined(id)?;
-                let mut st = self.require_review(id)?;
-                let before = st.accepted.clone();
-                let item = st.drop_line(line, now_unix()).ok_or_else(|| {
-                    Error::Invalid(format!(
-                        "{}'s CLAUDE.md on this device no longer has that line",
-                        self.source_name(source)
-                    ))
+                self.drop_group_line(id, line)?;
+                let line = line.trim().to_string();
+                crate::choices::set_group(&self.paths, id, |c| {
+                    if !c.dropped_lines.contains(&line) {
+                        c.dropped_lines.push(line);
+                    }
                 })?;
-                self.write_accepted(id, &mut st, &before, &[item], false)
+                Ok(())
             }
             Source::Own => {
                 let line = line.trim();
@@ -107,6 +107,20 @@ impl Engine {
                 }
             }
         }
+    }
+
+    /// Decline `line` of the group's CLAUDE.md copy on this device. An error when the copy
+    /// no longer has it.
+    pub(crate) fn drop_group_line(&self, id: &GroupId, line: &str) -> crate::Result<()> {
+        let mut st = self.require_review(id)?;
+        let before = st.accepted.clone();
+        let item = st.drop_line(line, now_unix()).ok_or_else(|| {
+            Error::Invalid(format!(
+                "{}'s CLAUDE.md on this device no longer has that line",
+                self.source_name(&Source::Group { id: id.clone() })
+            ))
+        })?;
+        self.write_accepted(id, &mut st, &before, &[item], false)
     }
 
     /// Replace `line` with `text` (several lines, or none to remove it). For a group this is

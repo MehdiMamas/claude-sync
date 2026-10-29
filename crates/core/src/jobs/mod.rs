@@ -329,7 +329,8 @@ fn yes() -> bool {
     true
 }
 
-/// `jobs.json`: what this device decided about each job.
+/// `jobs.json`: what this device did for each job (the OS task). What the person decided is in
+/// `choices`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobsState {
@@ -345,10 +346,11 @@ pub struct JobsState {
 #[serde(rename_all = "camelCase")]
 pub struct Record {
     pub group: GroupId,
-    /// [`Job::consent_hash`] of the version the member accepted.
-    #[serde(default)]
+    /// Before choices followed the person to every device (`crate::choices`) these two held
+    /// the accepted hash and the on/off toggle. Only read once, when `choices.json` is made.
+    #[serde(default, skip_serializing)]
     pub accepted: Option<String>,
-    #[serde(default = "yes")]
+    #[serde(default = "yes", skip_serializing)]
     pub enabled: bool,
     /// The `claude` binary, resolved when the task was registered.
     #[serde(default)]
@@ -402,12 +404,6 @@ impl JobsState {
     /// same id says nothing about this job.
     pub fn of(&self, job: &Job) -> Option<&Record> {
         self.jobs.get(&job.id).filter(|r| r.group == job.group)
-    }
-
-    /// Accepted in exactly this version.
-    pub fn accepted(&self, job: &Job) -> bool {
-        self.of(job)
-            .is_some_and(|r| r.accepted.as_deref() == Some(&*job.consent_hash()))
     }
 }
 
@@ -555,13 +551,15 @@ impl Jobs<'_> {
     pub fn overview(&self, group: &GroupId) -> crate::Result<JobsOverview> {
         let (jobs, problems, _) = self.all()?;
         let state = JobsState::load(self.paths)?;
-        let auto_accept = crate::choices::load(self.paths)?.group(group).auto_run_jobs;
+        let choices = crate::choices::load(self.paths)?;
+        let auto_accept = choices.group(group).auto_run_jobs;
+        let mine = choices.group(group);
         let views = jobs
             .iter()
             .filter(|j| &j.group == group)
             .map(|job| {
                 let rec = state.of(job);
-                let accepted = state.accepted(job);
+                let accepted = choices.job_accepted(job);
                 let last_run = run::LastRun::load(self.paths, &job.id);
                 JobView {
                     id: job.id.clone(),
@@ -576,8 +574,8 @@ impl Jobs<'_> {
                     report: job.report.clone(),
                     hash: job.consent_hash(),
                     accepted,
-                    changed: !accepted && rec.is_some_and(|r| r.accepted.is_some()),
-                    enabled: rec.is_none_or(|r| r.enabled),
+                    changed: !accepted && mine.accepted_jobs.contains_key(&job.id),
+                    enabled: !mine.off_jobs.contains(&job.id),
                     registered: accepted && rec.is_some_and(|r| r.registered.is_some()),
                     error: rec.and_then(|r| r.error.clone()),
                     running: run::is_running(self.paths, job),
@@ -619,6 +617,10 @@ impl Jobs<'_> {
                 "job {id:?} changed while you were looking at it; review it again"
             )));
         }
+        crate::choices::set_group(self.paths, group, |c| {
+            c.accepted_jobs.insert(id.to_string(), job.consent_hash());
+            c.off_jobs.remove(id);
+        })?;
         let mut state = JobsState::load(self.paths)?;
         let rec = state
             .jobs
@@ -629,8 +631,6 @@ impl Jobs<'_> {
             rec.group = group.clone();
             rec.registered = None;
         }
-        rec.accepted = Some(job.consent_hash());
-        rec.enabled = true;
         state.save(self.paths)?;
         self.reconcile(false)
     }
@@ -642,16 +642,22 @@ impl Jobs<'_> {
         on: bool,
     ) -> crate::Result<ReconcileReport> {
         let job = self.find(group, id)?;
-        let mut state = JobsState::load(self.paths)?;
-        match state.jobs.get_mut(id).filter(|r| r.group == job.group) {
-            Some(rec) if rec.accepted.is_some() => rec.enabled = on,
-            _ => {
-                return Err(crate::Error::Invalid(format!(
-                    "job {id:?} is not accepted on this device"
-                )))
-            }
+        if !crate::choices::load(self.paths)?
+            .group(group)
+            .accepted_jobs
+            .contains_key(&job.id)
+        {
+            return Err(crate::Error::Invalid(format!(
+                "job {id:?} is not accepted yet"
+            )));
         }
-        state.save(self.paths)?;
+        crate::choices::set_group(self.paths, group, |c| {
+            if on {
+                c.off_jobs.remove(id);
+            } else {
+                c.off_jobs.insert(id.to_string());
+            }
+        })?;
         self.reconcile(false)
     }
 
@@ -695,24 +701,20 @@ impl Jobs<'_> {
             }
         }
         // Leaving a group clears its choices (`forget`), so rejoining starts with asking again.
-        let auto = crate::choices::load(self.paths)?;
+        let mut choices = crate::choices::load(self.paths)?;
         // Groups whose jobs run without asking: accept their new and changed versions. A job
         // the member turned off stays off.
         for job in &jobs {
-            if !auto.group(&job.group).auto_run_jobs || state.accepted(job) {
+            if !choices.group(&job.group).auto_run_jobs || choices.job_accepted(job) {
                 continue;
             }
-            let rec = state
-                .jobs
-                .entry(job.id.clone())
-                .or_insert_with(|| Record::new(&job.group));
-            let changed = rec.group == job.group && rec.accepted.is_some();
-            if rec.group != job.group {
-                rec.group = job.group.clone();
-                rec.registered = None;
-                rec.enabled = true;
-            }
-            rec.accepted = Some(job.consent_hash());
+            let changed = choices
+                .group(&job.group)
+                .accepted_jobs
+                .contains_key(&job.id);
+            choices = crate::choices::set_group(self.paths, &job.group, |c| {
+                c.accepted_jobs.insert(job.id.clone(), job.consent_hash());
+            })?;
             report.auto_accepted.push(AutoAccepted {
                 group: job.group.clone(),
                 id: job.id.clone(),
@@ -722,11 +724,22 @@ impl Jobs<'_> {
         }
 
         for job in &jobs {
-            let accepted = state.accepted(job);
+            let accepted = choices.job_accepted(job);
+            if accepted {
+                let rec = state
+                    .jobs
+                    .entry(job.id.clone())
+                    .or_insert_with(|| Record::new(&job.group));
+                if rec.group != job.group {
+                    rec.group = job.group.clone();
+                    rec.registered = None;
+                }
+            }
             let Some(rec) = state.jobs.get_mut(&job.id).filter(|r| r.group == job.group) else {
                 continue;
             };
-            if !(accepted && rec.enabled) {
+            let on = !choices.group(&job.group).off_jobs.contains(&job.id);
+            if !(accepted && on) {
                 unregister(&job.id, rec, &mut report);
                 continue;
             }
@@ -1036,7 +1049,12 @@ pub(crate) mod tests {
         let r = e.jobs().reconcile(false).unwrap();
         assert!(r.auto_accepted.is_empty());
         assert!(e.registered().is_empty());
-        assert!(crate::choices::load(&e.paths).unwrap().groups.is_empty());
+        assert!(
+            !crate::choices::load(&e.paths)
+                .unwrap()
+                .group(&g)
+                .auto_run_jobs
+        );
         let o = e.jobs().overview(&g).unwrap();
         assert!(!o.auto_accept);
         assert!(!o.jobs[0].accepted);
@@ -1091,6 +1109,71 @@ pub(crate) mod tests {
                 .group(&g)
                 .auto_run_jobs
         );
+    }
+
+    /// Send `from`'s choices to `to` the way personal sync does.
+    fn sync_choices(from: &Env, to: &Env) {
+        let l = std::fs::read(crate::choices::file(&to.paths)).unwrap_or_default();
+        let r = std::fs::read(crate::choices::file(&from.paths)).unwrap();
+        let bytes = crate::choices::merge(&l, &r).unwrap_or(r);
+        crate::state::write_atomic(&crate::choices::file(&to.paths), &bytes).unwrap();
+    }
+
+    #[test]
+    fn a_job_accepted_on_one_device_runs_on_the_other_until_it_changes() {
+        let (pc, mac) = (Env::new(), Env::new());
+        let g = group("a");
+        pc.groups(&[(&g, Some(SCOUT))]);
+        mac.groups(&[(&g, Some(SCOUT))]);
+        pc.jobs()
+            .accept(&g, "setup-scout", &hash_of(&pc, &g, "setup-scout"))
+            .unwrap();
+        assert!(mac.registered().is_empty());
+        sync_choices(&pc, &mac);
+        let r = mac.jobs().reconcile(false).unwrap();
+        assert!(r.auto_accepted.is_empty(), "no asking");
+        assert_eq!(mac.registered(), ["setup-scout"]);
+        assert!(mac.jobs().overview(&g).unwrap().jobs[0].accepted);
+
+        // The job changes: both ask again.
+        let changed = SCOUT.replace("unattended", "unattended now");
+        for e in [&pc, &mac] {
+            e.groups(&[(&g, Some(&changed))]);
+            e.jobs().reconcile(false).unwrap();
+            let v = &e.jobs().overview(&g).unwrap().jobs[0];
+            assert!(!v.accepted && v.changed);
+            assert!(e.registered().is_empty());
+        }
+
+        // Turned off on one device, off on the other.
+        pc.jobs()
+            .accept(&g, "setup-scout", &hash_of(&pc, &g, "setup-scout"))
+            .unwrap();
+        pc.jobs().set_enabled(&g, "setup-scout", false).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        sync_choices(&pc, &mac);
+        mac.jobs().reconcile(false).unwrap();
+        let v = &mac.jobs().overview(&g).unwrap().jobs[0];
+        assert!(v.accepted && !v.enabled);
+        assert!(mac.registered().is_empty());
+    }
+
+    #[test]
+    fn old_accepted_and_off_jobs_are_copied_into_choices_once() {
+        let e = Env::new();
+        let g = group("a");
+        e.groups(&[(&g, Some(SCOUT))]);
+        let hash = hash_of(&e, &g, "setup-scout");
+        let old = serde_json::json!({"jobs": {"setup-scout": {
+            "group": {"owner": "acme", "repo": "a"}, "accepted": hash, "enabled": false}}});
+        std::fs::write(state_file(&e.paths), old.to_string()).unwrap();
+        // Finding the job already made an (empty) choices file; start from the old files.
+        let _ = std::fs::remove_file(crate::choices::file(&e.paths));
+        let c = crate::choices::load(&e.paths).unwrap().group(&g);
+        assert_eq!(c.accepted_jobs["setup-scout"], hash);
+        assert!(c.off_jobs.contains("setup-scout") && c.ts == 0);
+        let v = &e.jobs().overview(&g).unwrap().jobs[0];
+        assert!(v.accepted && !v.enabled);
     }
 
     #[test]

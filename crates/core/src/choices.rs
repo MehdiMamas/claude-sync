@@ -4,15 +4,20 @@
 //! personal sync carries to every device of the account (`state/claude-sync/choices.json`):
 //!
 //! ```json
-//! { "groups": { "owner/repo": { "off": true, "reviewClaudeMd": false, "autoRunJobs": true, "ts": 1760000000000 } },
-//!   "personal": { "off": true, "ts": 1760000000000 } }
+//! { "groups": { "owner/repo": { "off": true, "reviewClaudeMd": false, "autoRunJobs": true,
+//!                                "acceptedJobs": { "job-id": "<hash>" }, "offJobs": ["job-id"],
+//!                                "droppedLines": ["a line"], "member": true, "ts": 1760000000000 } },
+//!   "personal": { "off": true, "ts": 1760000000000 },
+//!   "order": { "list": ["owner/repo"], "ts": 1760000000000 },
+//!   "app": { "paused": false, "intervalSecs": 60, "startAtLogin": true, "ts": 1760000000000 } }
 //! ```
 //!
 //! `ts` is Unix milliseconds. Two devices' files merge per key: the newer `ts` wins (see
 //! [`merge`]). Without personal sync the file is simply the local store.
 //!
-//! Older versions kept these per device (`state.json` `disabled`, `jobs.json` `autoAccept`,
-//! `claude-md-review.json` `review`). The first [`load`] with no file copies those values in;
+//! Older versions kept these per device (`state.json` `disabled`, `groups`, `paused` and
+//! `pollSeconds`, `jobs.json` `autoAccept`, `accepted` and `enabled`, `claude-md-review.json`
+//! `review`). The first [`load`] with no file copies those values in;
 //! after that the old fields are never read.
 use crate::jobs::JobsState;
 use crate::review::{self, ReviewState};
@@ -20,7 +25,7 @@ use crate::state::{now_unix, write_json, AppState};
 use crate::{GroupId, Paths};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 /// Path inside the personal repo.
@@ -43,7 +48,35 @@ pub struct GroupChoice {
     pub review_claude_md: Option<bool>,
     /// Run the group's jobs without asking.
     pub auto_run_jobs: bool,
+    /// Job id -> [`crate::jobs::Job::consent_hash`] of the version accepted. A changed job
+    /// has another hash, so it asks again.
+    pub accepted_jobs: BTreeMap<String, String>,
+    /// Accepted jobs turned off.
+    pub off_jobs: BTreeSet<String>,
+    /// Lines of the group's CLAUDE.md left out ("Keep one" on a clash).
+    pub dropped_lines: Vec<String>,
+    /// `Some(true)`: joined; `Some(false)`: left (the entry stays as the record of it);
+    /// `None`: no choice recorded.
+    pub member: Option<bool>,
     /// Unix milliseconds of the last change.
+    pub ts: u64,
+}
+
+/// The order of the joined groups (first wins collisions).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Order {
+    pub list: Vec<String>,
+    pub ts: u64,
+}
+
+/// Pause, the check interval and start at login. `None`: no choice made yet.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AppChoice {
+    pub paused: bool,
+    pub interval_secs: Option<u64>,
+    pub start_at_login: Option<bool>,
     pub ts: u64,
 }
 
@@ -60,6 +93,8 @@ pub struct PersonalChoice {
 pub struct Choices {
     pub groups: BTreeMap<String, GroupChoice>,
     pub personal: PersonalChoice,
+    pub order: Order,
+    pub app: AppChoice,
     /// Keys a newer version wrote are kept.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -72,6 +107,14 @@ impl Choices {
             .get(&id.to_string())
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// The job is accepted in exactly this version.
+    pub fn job_accepted(&self, job: &crate::jobs::Job) -> bool {
+        self.groups
+            .get(&job.group.to_string())
+            .and_then(|g| g.accepted_jobs.get(&job.id))
+            .is_some_and(|h| *h == *job.consent_hash())
     }
 }
 
@@ -103,7 +146,7 @@ pub fn load(paths: &Paths) -> crate::Result<Choices> {
         return Ok(c);
     }
     let c = legacy(paths)?;
-    if !c.groups.is_empty() {
+    if c != Choices::default() {
         write_json(&file(paths), &c)?;
     }
     Ok(c)
@@ -115,18 +158,35 @@ fn legacy(paths: &Paths) -> crate::Result<Choices> {
     let jobs = JobsState::load(paths).unwrap_or_default();
     let mut c = Choices::default();
     for id in &state.groups {
-        let g = GroupChoice {
+        let mut g = GroupChoice {
             off: state.disabled.contains(id),
             review_claude_md: ReviewState::load(&paths.group_dir(id).join(review::FILE))
                 .ok()
                 .flatten()
                 .and_then(|r| r.review),
             auto_run_jobs: jobs.auto_accept.contains(id),
-            ts: 0,
+            member: Some(true),
+            ..GroupChoice::default()
         };
-        if g != GroupChoice::default() {
-            c.groups.insert(id.to_string(), g);
+        for (job, rec) in jobs.jobs.iter().filter(|(_, r)| r.group == *id) {
+            if let Some(hash) = &rec.accepted {
+                g.accepted_jobs.insert(job.clone(), hash.clone());
+                if !rec.enabled {
+                    g.off_jobs.insert(job.clone());
+                }
+            }
         }
+        c.groups.insert(id.to_string(), g);
+    }
+    if !state.groups.is_empty() {
+        c.order.list = state.groups.iter().map(|g| g.to_string()).collect();
+    }
+    if state.paused || state.poll_seconds.is_some() {
+        c.app = AppChoice {
+            paused: state.paused,
+            interval_secs: state.poll_seconds,
+            ..AppChoice::default()
+        };
     }
     Ok(c)
 }
@@ -142,6 +202,29 @@ pub fn set_group(
     let before = g.ts;
     change(g);
     g.ts = stamp(before);
+    write_json(&file(paths), &c)?;
+    Ok(c)
+}
+
+/// Save the order of the joined groups; nothing changes when it is the same.
+pub fn set_order(paths: &Paths, list: Vec<String>) -> crate::Result<()> {
+    let mut c = load(paths)?;
+    if c.order.list != list {
+        c.order = Order {
+            list,
+            ts: stamp(c.order.ts),
+        };
+        write_json(&file(paths), &c)?;
+    }
+    Ok(())
+}
+
+/// Change the app choices (pause, interval, start at login) and save.
+pub fn set_app(paths: &Paths, change: impl FnOnce(&mut AppChoice)) -> crate::Result<Choices> {
+    let mut c = load(paths)?;
+    let before = c.app.ts;
+    change(&mut c.app);
+    c.app.ts = stamp(before);
     write_json(&file(paths), &c)?;
     Ok(c)
 }
@@ -183,6 +266,12 @@ pub fn merge(local: &[u8], remote: &[u8]) -> Option<Vec<u8>> {
     }
     if l.personal.ts > out.personal.ts {
         out.personal = l.personal;
+    }
+    if l.order.ts > out.order.ts {
+        out.order = l.order;
+    }
+    if l.app.ts > out.app.ts {
+        out.app = l.app;
     }
     let mut bytes = serde_json::to_vec_pretty(&out).ok()?;
     bytes.push(b'\n');
@@ -287,5 +376,48 @@ mod tests {
         assert!(out.groups["a/z"].off, "only remote has it");
         assert!(out.personal.off, "remote is newer");
         assert!(merge(b"nope", &remote).is_none());
+    }
+
+    #[test]
+    fn migrates_membership_order_and_app_settings() {
+        let (_t, p) = paths();
+        let (g1, g2) = (id("a/one"), id("a/two"));
+        AppState {
+            groups: vec![g2.clone(), g1.clone()],
+            paused: true,
+            poll_seconds: Some(120),
+            ..AppState::default()
+        }
+        .save(&p)
+        .unwrap();
+        let c = load(&p).unwrap();
+        assert_eq!(c.group(&g1).member, Some(true));
+        assert_eq!(c.order.list, ["a/two", "a/one"]);
+        assert_eq!(c.order.ts, 0);
+        assert!(c.app.paused && c.app.interval_secs == Some(120) && c.app.start_at_login.is_none());
+    }
+
+    #[test]
+    fn merge_takes_the_newer_order_and_app_whole() {
+        let mk = |list: &[&str], ots: u64, paused: bool, ats: u64| {
+            let c = Choices {
+                order: Order {
+                    list: list.iter().map(|s| s.to_string()).collect(),
+                    ts: ots,
+                },
+                app: AppChoice {
+                    paused,
+                    ts: ats,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            serde_json::to_vec(&c).unwrap()
+        };
+        let local = mk(&["a/x", "a/y"], 5, true, 1);
+        let remote = mk(&["a/y", "a/x"], 3, false, 4);
+        let out: Choices = serde_json::from_slice(&merge(&local, &remote).unwrap()).unwrap();
+        assert_eq!(out.order.list, ["a/x", "a/y"], "local order is newer");
+        assert!(!out.app.paused, "remote app choice is newer");
     }
 }
