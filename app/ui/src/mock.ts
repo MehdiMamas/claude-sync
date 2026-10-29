@@ -101,7 +101,6 @@ const mehdiContents: GroupContents = {
       ["model-router@claude-mods", true],
       ["session-manager@claude-mods", false],
     ],
-    keptLocal: false,
   },
   claudeMd: "C:/Users/me/.claude-sync/groups/mehdimamas__claude-sync-data/CLAUDE.md",
 };
@@ -112,7 +111,7 @@ const acmeContents: GroupContents = {
   agents: [],
   commands: [],
   outputStyles: [],
-  settings: { keys: [], enabledPlugins: [], keptLocal: false },
+  settings: { keys: [], enabledPlugins: [] },
   claudeMd: null,
 };
 
@@ -485,9 +484,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   edit_claude_md_line: (a) => {
     if ((a.text as string).includes("ghp_")) throw "the new text holds a token; take it out first";
     clashes = clashes.filter((c) => !(sameSource(c.a.source, a.source as ClashSource) && c.a.text === a.line));
-  },
-  keep_setting: (a) => {
-    clashes = clashes.filter((c) => c.pointer !== a.pointer);
   },
   copy_preview: (a) => copyPreview(a.to as GroupId),
   copy_to_group: (a) => {

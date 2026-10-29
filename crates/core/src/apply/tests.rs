@@ -500,51 +500,7 @@ fn a_folder_where_a_managed_file_was_is_a_collision() {
     assert!(home(&e, "agents/reviewer.md").is_dir());
 }
 
-// ---------------------------------------------------------------- keep local / undo
-
-#[test]
-fn keep_local_stops_managing_a_file() {
-    let e = env();
-    let a = g("a");
-    apply_group(&e.paths, &a, only(&a), &tree()).unwrap();
-    put(&home(&e, "agents/reviewer.md"), b"mine now\n");
-    keep_local(&e.paths, &a, "agents/reviewer.md").unwrap();
-    let mut files = tree();
-    files.insert("agents/reviewer.md".into(), b"reviewer v2\n".to_vec());
-    let r = apply_group(&e.paths, &a, only(&a), &files).unwrap();
-    assert!(r.written.is_empty() && r.collisions.is_empty(), "{r:?}");
-    assert_eq!(
-        read(&home(&e, "agents/reviewer.md")).unwrap(),
-        b"mine now\n"
-    );
-    assert!(!local_files(&e.paths, &a)
-        .unwrap()
-        .contains_key("agents/reviewer.md"));
-    assert!(excluded_paths(&e.paths, &a)
-        .unwrap()
-        .contains("agents/reviewer.md"));
-    // Removing the group leaves it: it is the user's file now.
-    remove_group(&e.paths, &a).unwrap();
-    assert_eq!(
-        read(&home(&e, "agents/reviewer.md")).unwrap(),
-        b"mine now\n"
-    );
-}
-
-#[test]
-fn keep_local_rejects_unmanaged_paths() {
-    let e = env();
-    let (a, b) = (g("a"), g("b"));
-    apply_group(&e.paths, &a, &[a.clone(), b.clone()], &tree()).unwrap();
-    assert!(matches!(
-        keep_local(&e.paths, &a, "agents/none.md"),
-        Err(crate::Error::Invalid(_))
-    ));
-    assert!(matches!(
-        keep_local(&e.paths, &b, "agents/reviewer.md"),
-        Err(crate::Error::Invalid(_))
-    ));
-}
+// ---------------------------------------------------------------- undo
 
 #[test]
 fn undo_puts_the_group_version_back() {
@@ -804,11 +760,6 @@ fn edited_claude_md_copy_is_a_local_edit() {
     );
     undo(&e.paths, &a, CLAUDE_MD, Some(b"A\r\n")).unwrap();
     assert_eq!(read(&copy).unwrap(), b"A\r\n");
-    // Keep local: the copy is no longer updated, but stays imported.
-    keep_local(&e.paths, &a, CLAUDE_MD).unwrap();
-    apply_group(&e.paths, &a, only(&a), &set(&[(CLAUDE_MD, b"A v2\n")])).unwrap();
-    assert_eq!(read(&copy).unwrap(), b"A\r\n");
-    assert!(!local_files(&e.paths, &a).unwrap().contains_key(CLAUDE_MD));
     assert!(String::from_utf8(read(&home(&e, CLAUDE_MD)).unwrap())
         .unwrap()
         .contains("a/CLAUDE.md"));
@@ -976,59 +927,6 @@ fn settings_value_the_user_changed_is_kept_and_read_back() {
         settings_json(&e),
         json!({"model": "opus", "mine": 1, "theme": "light"})
     );
-}
-
-#[test]
-fn settings_keep_local_pointer_is_not_applied_again() {
-    let e = env();
-    let a = g("a");
-    apply_group(
-        &e.paths,
-        &a,
-        only(&a),
-        &shared(json!({"model": "opus", "theme": "light"})),
-    )
-    .unwrap();
-    let mut s = settings_json(&e);
-    s["model"] = json!("haiku");
-    put(&home(&e, "settings.json"), &settings::to_bytes(&s));
-    keep_local(&e.paths, &a, "settings.shared.json#/model").unwrap();
-    let r = apply_group(
-        &e.paths,
-        &a,
-        only(&a),
-        &shared(json!({"model": "fable", "theme": "light"})),
-    )
-    .unwrap();
-    assert_eq!(settings_json(&e)["model"], json!("haiku"));
-    assert!(
-        r.settings_skipped
-            .iter()
-            .any(|m| m == "model: kept local on this device; not applied"),
-        "{r:?}"
-    );
-    assert!(!load_owned(&e.paths).unwrap()["owner/a"]
-        .values
-        .contains_key("/model"));
-    // Removing the group leaves the kept value.
-    remove_group(&e.paths, &a).unwrap();
-    assert_eq!(settings_json(&e), json!({"model": "haiku"}));
-}
-
-#[test]
-fn settings_keep_local_all() {
-    let e = env();
-    let a = g("a");
-    apply_group(&e.paths, &a, only(&a), &shared(json!({"model": "opus"}))).unwrap();
-    keep_local(&e.paths, &a, SHARED_SETTINGS).unwrap();
-    apply_group(&e.paths, &a, only(&a), &shared(json!({"model": "fable"}))).unwrap();
-    assert_eq!(settings_json(&e), json!({"model": "opus"}));
-    assert!(!local_files(&e.paths, &a)
-        .unwrap()
-        .contains_key(SHARED_SETTINGS));
-    assert!(excluded_paths(&e.paths, &a)
-        .unwrap()
-        .contains(SHARED_SETTINGS));
 }
 
 #[test]
@@ -1598,13 +1496,6 @@ fn a_file_added_in_the_marketplace_folder_is_a_local_change() {
     apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
     assert!(target_of(&e.paths, new).exists());
 
-    // Keep local: no longer listed, and it stays.
-    keep_local(&e.paths, &a, new).unwrap();
-    assert!(crate::watch::local_edits(&e.paths).unwrap().is_empty());
-    apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
-    assert!(target_of(&e.paths, new).exists());
-    assert!(!local_files(&e.paths, &a).unwrap().contains_key(new));
-
     // Undo of another new file removes it (with a backup).
     let other = "plugins/mods/notes.md";
     put(&target_of(&e.paths, other), b"draft\n");
@@ -1838,26 +1729,64 @@ fn off_on_off_restores_the_files_exactly() {
     assert_eq!(user_state(&e), pre);
 }
 
+// ------------------------------------------------ manifests from before Keep local was removed
+
 #[test]
-fn keep_local_survives_off_and_on() {
+fn an_old_manifest_with_keep_local_follows_the_group_again_with_a_backup() {
     let e = env();
     let a = g("a");
-    seed_user(&e);
-    apply_group(&e.paths, &a, only(&a), &group_files()).unwrap();
-    keep_local(&e.paths, &a, "agents/reviewer.md").unwrap();
-    keep_local(&e.paths, &a, "settings.shared.json#/model").unwrap();
-    let kept = |e: &Env| {
-        Manifest::load(&e.paths).unwrap().groups["owner/a"]
-            .keep_local
-            .clone()
-    };
-    let before = kept(&e);
-    assert_eq!(before.len(), 2);
+    let mut files = tree();
+    files.extend(shared(json!({"model": "opus", "theme": "light"})));
+    apply_group(&e.paths, &a, only(&a), &files).unwrap();
+    // What the removed "Keep local" left behind: the file is the user's, the model is
+    // theirs and no longer owned, and the manifest lists both paths.
+    put(&home(&e, "agents/reviewer.md"), b"mine now\n");
+    let mut s = settings_json(&e);
+    s["model"] = json!("haiku");
+    put(&home(&e, "settings.json"), &settings::to_bytes(&s));
+    let mpath = e.paths.state_dir.join(MANIFEST_FILE);
+    let mut m: Value = serde_json::from_slice(&read(&mpath).unwrap()).unwrap();
+    m["files"]
+        .as_object_mut()
+        .unwrap()
+        .remove("agents/reviewer.md");
+    m["groups"]["owner/a"]["keepLocal"] =
+        json!(["agents/reviewer.md", "settings.shared.json#/model"]);
+    put(&mpath, &serde_json::to_vec(&m).unwrap());
+    let mut owned = load_owned(&e.paths).unwrap();
+    owned.get_mut("owner/a").unwrap().values.remove("/model");
+    save_owned(&e.paths, &owned).unwrap();
 
-    disable_group(&e.paths, &a).unwrap();
-    assert_eq!(kept(&e), before);
-    apply_group(&e.paths, &a, only(&a), &group_files()).unwrap();
-    assert_eq!(kept(&e), before);
-    // A kept setting is the user's own value now: off and on leave it be.
-    assert_eq!(settings_json(&e)["model"], "opus");
+    let mut v2 = files.clone();
+    v2.insert("agents/reviewer.md".into(), b"reviewer v2\n".to_vec());
+    let r = apply_group(&e.paths, &a, only(&a), &v2).unwrap();
+    assert_eq!(
+        read(&home(&e, "agents/reviewer.md")).unwrap(),
+        b"reviewer v2\n"
+    );
+    assert_eq!(settings_json(&e)["model"], json!("opus"));
+    assert!(r.collisions.is_empty(), "{r:?}");
+    let note = r.rejoined_note.expect("a one-time notice");
+    assert!(
+        note.contains("agents/reviewer.md") && note.contains("backups"),
+        "{note}"
+    );
+    assert!(backups(&e)
+        .iter()
+        .any(|p| read(p).as_deref() == Some(&b"mine now\n"[..])));
+    assert!(backups(&e)
+        .iter()
+        .any(|p| read(p).is_some_and(|b| String::from_utf8_lossy(&b).contains("haiku"))));
+    // The field is gone from the manifest, so the notice shows once.
+    let saved: Value = serde_json::from_slice(&read(&mpath).unwrap()).unwrap();
+    assert!(saved["groups"]["owner/a"].get("keepLocal").is_none());
+    assert!(Manifest::load(&e.paths)
+        .unwrap()
+        .files
+        .contains_key("agents/reviewer.md"));
+    let again = apply_group(&e.paths, &a, only(&a), &v2).unwrap();
+    assert!(
+        again.rejoined_note.is_none() && again.written.is_empty(),
+        "{again:?}"
+    );
 }

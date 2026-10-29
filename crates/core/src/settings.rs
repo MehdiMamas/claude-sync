@@ -95,7 +95,7 @@ pub fn to_bytes(v: &Value) -> Vec<u8> {
 
 /// `shared` without the given pointers. Each pointer that was present is reported as
 /// `"<key path>: <reason>"`. The apply layer uses it for keys an earlier group owns
-/// and for pointers the user chose to keep local.
+/// and for the marketplaces the app bundles.
 pub fn without(shared: &Value, ptrs: &[(String, String)]) -> (Value, Vec<String>) {
     let mut out = shared.clone();
     let mut skipped = Vec::new();
@@ -242,7 +242,7 @@ pub fn restore(local: &Value, owned: &Owned, under: &str) -> Value {
     out
 }
 
-/// Remove the subtree at `ptr` from what `owned` tracks (the "Keep local" action).
+/// Remove the subtree at `under` from what `owned` tracks.
 pub fn forget(owned: &mut Owned, under: &str) {
     let inside = |p: &str| under.is_empty() || p == under || p.starts_with(&format!("{under}/"));
     owned.values.retain(|p, _| !inside(p));
@@ -766,7 +766,7 @@ mod tests {
     // ---- cases carried over from the v0 CLI ----
 
     #[test]
-    fn v0_ten_merges_keep_local_only_keys() {
+    fn v0_ten_merges_leave_local_only_keys() {
         let mut local = json!({"localOnly": {"machine": "A", "list": [1, 2]}, "permissions": {"allow": ["Local"]}});
         let mut owned = Owned::default();
         for i in 1..=10 {

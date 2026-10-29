@@ -2,7 +2,7 @@
 // this group shares with another group or the user's own CLAUDE.md, or contradicts, and
 // settings two groups set differently; "Copy to another group" copies this group's content
 // to another group the user is in.
-import { api, errorText, type Clash, type ClashSide, type ClashSource, type CopyFile, type CopyPreview, type GroupId, type GroupStatus } from "../api";
+import { api, errorText, type Clash, type ClashSide, type CopyFile, type CopyPreview, type GroupId, type GroupStatus } from "../api";
 import { clashesOf, clashTitle, compose, isGroup, keys, sameGroup, sections, warning } from "../copy";
 import { busy, errorBox, h, replace, spinner, toast } from "../dom";
 import { store } from "../store";
@@ -69,24 +69,16 @@ function clashItem(c: Clash, applies: boolean): HTMLElement {
       await api.dropClaudeMdLine(other.source, other.text);
       return other.source.kind === "own" ? "Taken out of your CLAUDE.md (backed up first)" : `Left out of ${other.name}'s CLAUDE.md on this device`;
     });
-  const groupOf = (s: ClashSource) => (s.kind === "group" ? s.id : null);
 
   if (c.kind === "setting") {
-    const [a, b] = [groupOf(c.a.source), groupOf(c.b.source)];
-    const keep = (k: GroupId | null, d: GroupId | null, s: ClashSide, label: string) =>
-      a && b && k && d && act(label, "Saving…", async () => {
-        await api.keepSetting(k, d, c.pointer ?? "");
-        return `${s.name}'s value applies on this device`;
-      });
     return h(
       "li",
       { class: "clash" },
       h("div", { class: "row-title" }, clashTitle(c)),
       sideRow(c.a, applies ? "applies now" : undefined),
       sideRow(c.b, applies ? undefined : "applies now"),
-      h("div", { class: "actions" }, keep(a, b, c.a, keepLabel(c.a)), keep(b, a, c.b, `Use ${c.b.name}'s`)),
       explainButton("collision", "Explain", () => clashText(c)),
-      h("p", { class: "muted small" }, "The other group's value stays in that group; it is just not applied on this device."),
+      h("p", { class: "muted small" }, `${c.a.name}'s value is used because it comes first in your group order. To use ${c.b.name}'s instead, move that group up.`),
     );
   }
 

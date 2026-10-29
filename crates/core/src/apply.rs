@@ -4,7 +4,7 @@
 //! On disk (all under `Paths::state_dir`):
 //! - `manifest.json`: every file the app wrote into `~/.claude` (path -> group, SHA-256),
 //!   plus per group: the hash of its `CLAUDE.md` copy and `settings.shared.json` copy,
-//!   the paths kept local on this device, and the paths it ships that are not applied here.
+//!   and the paths it ships that are not applied here.
 //! - `settings-owned.json`: per group, the settings values and array items the app set.
 //! - `groups/<owner>__<repo>/CLAUDE.md` and `.../settings.shared.json`: the group's files
 //!   as last applied, byte for byte.
@@ -32,7 +32,7 @@ pub const MANIFEST_FILE: &str = "manifest.json";
 pub const SETTINGS_OWNED_FILE: &str = "settings-owned.json";
 pub const CLAUDE_MD: &str = "CLAUDE.md";
 pub const SHARED_SETTINGS: &str = "settings.shared.json";
-/// `keep_local` / `undo` / `LocalEdit` path for one settings value:
+/// `undo` / `LocalEdit` path for one settings value:
 /// `settings.shared.json#/permissions/allow` (a JSON pointer after the `#`).
 pub const SETTINGS_POINTER_PREFIX: &str = "settings.shared.json#";
 pub const BLOCK_BEGIN: &str = "<!-- claude-sync:begin (managed, do not edit inside) -->";
@@ -63,6 +63,9 @@ pub struct ApplyReport {
     /// A plugin file or a bundled marketplace's `settings.json` entry changed: open Claude
     /// Code sessions need `/reload-plugins` (or a restart) to see it.
     pub plugins_changed: bool,
+    /// One-time notice: paths this device had stopped managing ("Keep local", removed) now
+    /// follow the group again, and where the old copies went.
+    pub rejoined_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,10 +120,10 @@ pub struct GroupEntry {
     /// SHA-256 of the group's `settings.shared.json` as last applied.
     #[serde(default)]
     pub settings: Option<String>,
-    /// Paths this device stopped managing ("Keep local"): file paths, `CLAUDE.md`,
-    /// `settings.shared.json`, or `settings.shared.json#<pointer>`.
-    #[serde(default)]
-    pub keep_local: BTreeSet<String>,
+    /// Read from manifests written before "Keep local" was removed; never written back.
+    /// The first apply makes these paths follow the group again ([`apply_group`]).
+    #[serde(default, rename = "keepLocal", skip_serializing)]
+    legacy_keep_local: BTreeSet<String>,
     /// Paths the group ships that the last apply did not put on this machine
     /// (collisions, unsafe or unknown paths).
     #[serde(default)]
@@ -165,13 +168,7 @@ pub fn apply_group(
     m.order = order.to_vec();
     entry.excluded.clear();
     entry.disabled = false;
-    // A kept path the group no longer ships is forgotten; settings pointers stay, and so do
-    // new plugin files kept on this device while they exist.
-    entry.keep_local.retain(|k| {
-        k.starts_with(SETTINGS_POINTER_PREFIX)
-            || files.contains_key(k)
-            || (group::marketplace_of(k).is_some() && exists_any(&target_of(paths, k)))
-    });
+    let rejoined = rejoin_legacy_keep_local(paths, group, &mut entry, &m, files, &mut backups)?;
     let rank = |g: &GroupId| order.iter().position(|x| x == g);
     let my_rank = rank(group);
     let placed = marketplaces::plan(&m, group, order, files, &mut report);
@@ -179,7 +176,7 @@ pub fn apply_group(
     // 1. Managed tree files, and the files of the marketplaces placed here.
     let mut desired = BTreeSet::new();
     for (rel, bytes) in files {
-        if rel == CLAUDE_MD || rel == SHARED_SETTINGS || entry.keep_local.contains(rel) {
+        if rel == CLAUDE_MD || rel == SHARED_SETTINGS {
             continue;
         }
         let plugin = group::marketplace_of(rel);
@@ -310,10 +307,6 @@ pub fn apply_group(
         .map(|(p, f)| (p.clone(), f.clone()))
         .collect();
     for (rel, mf) in dropped {
-        if entry.keep_local.contains(&rel) {
-            m.files.remove(&rel);
-            continue;
-        }
         let (root, sub) = locate(paths, &rel);
         match delete_if_unchanged(root, &sub, &mf.sha256)? {
             Deleted::Yes => {
@@ -330,33 +323,31 @@ pub fn apply_group(
     prune_dirs(paths, &mut m)?;
 
     // 3. The group's CLAUDE.md copy.
-    if !entry.keep_local.contains(CLAUDE_MD) {
-        let copy = paths.group_dir(group).join(CLAUDE_MD);
-        match files.get(CLAUDE_MD) {
-            Some(bytes) => {
-                let sha = sha256_hex(bytes);
-                let cur = read_file(&copy)?.map(|b| sha256_hex(&b));
-                let edited = entry.claude_md.as_deref() == Some(sha.as_str())
-                    && cur.as_deref() != Some(sha.as_str());
-                if cur.as_deref() != Some(sha.as_str()) && !edited {
-                    write_atomic(&copy, bytes)?;
-                    push_unique(&mut report.written, CLAUDE_MD);
-                }
-                entry.claude_md = Some(sha);
+    let copy = paths.group_dir(group).join(CLAUDE_MD);
+    match files.get(CLAUDE_MD) {
+        Some(bytes) => {
+            let sha = sha256_hex(bytes);
+            let cur = read_file(&copy)?.map(|b| sha256_hex(&b));
+            let edited = entry.claude_md.as_deref() == Some(sha.as_str())
+                && cur.as_deref() != Some(sha.as_str());
+            if cur.as_deref() != Some(sha.as_str()) && !edited {
+                write_atomic(&copy, bytes)?;
+                push_unique(&mut report.written, CLAUDE_MD);
             }
-            None => {
-                if let Some(old) = entry.claude_md.take() {
-                    match read_file(&copy)? {
-                        Some(cur) if sha256_hex(&cur) != old => {
-                            entry.claude_md = Some(old);
-                            push_unique(&mut report.kept, CLAUDE_MD);
-                        }
-                        Some(_) => {
-                            remove_counted(&copy)?;
-                            push_unique(&mut report.removed, CLAUDE_MD);
-                        }
-                        None => {}
+            entry.claude_md = Some(sha);
+        }
+        None => {
+            if let Some(old) = entry.claude_md.take() {
+                match read_file(&copy)? {
+                    Some(cur) if sha256_hex(&cur) != old => {
+                        entry.claude_md = Some(old);
+                        push_unique(&mut report.kept, CLAUDE_MD);
                     }
+                    Some(_) => {
+                        remove_counted(&copy)?;
+                        push_unique(&mut report.removed, CLAUDE_MD);
+                    }
+                    None => {}
                 }
             }
         }
@@ -365,29 +356,84 @@ pub fn apply_group(
     update_claude_md_block(paths, &mut m, &mut backups, &mut report)?;
 
     // 4. settings.shared.json -> settings.json. A bundled marketplace's entry is the app's.
-    if !entry.keep_local.contains(SHARED_SETTINGS) {
-        let bundled: BTreeSet<String> = m.marketplaces.keys().chain(&placed).cloned().collect();
-        let entry = m.groups.get_mut(&gkey).expect("inserted above");
-        apply_settings(
-            paths,
-            group,
-            order,
-            files.get(SHARED_SETTINGS),
-            &bundled,
-            entry,
-            &mut backups,
-            &mut report,
-        )?;
-    }
+    let bundled: BTreeSet<String> = m.marketplaces.keys().chain(&placed).cloned().collect();
+    let entry = m.groups.get_mut(&gkey).expect("inserted above");
+    apply_settings(
+        paths,
+        group,
+        order,
+        files.get(SHARED_SETTINGS),
+        &bundled,
+        entry,
+        &mut backups,
+        &mut report,
+    )?;
 
     // 5. extraKnownMarketplaces entries for the marketplaces placed here.
     marketplaces::register(paths, group, &placed, &mut m, &mut backups, &mut report)?;
     report.plugins_changed |= touches_plugins(&report);
 
+    if !rejoined.is_empty() {
+        let mut note = format!("These now follow the group again: {}.", rejoined.join(", "));
+        if let Some(dir) = backups.dir() {
+            note.push_str(&format!(" Your old copies are in {}.", dir.display()));
+        }
+        report.rejoined_note = Some(note);
+    }
+
     if m != before {
         m.save(paths)?;
     }
     Ok(report)
+}
+
+/// Manifests from before "Keep local" was removed list paths this device stopped
+/// managing. Make each follow the group again: the local copy is backed up, then replaced
+/// by the normal apply. Returns the names for the one-time notice.
+fn rejoin_legacy_keep_local(
+    paths: &Paths,
+    group: &GroupId,
+    entry: &mut GroupEntry,
+    m: &Manifest,
+    files: &FileSet,
+    backups: &mut Backups,
+) -> crate::Result<Vec<String>> {
+    let mut names = Vec::new();
+    for k in std::mem::take(&mut entry.legacy_keep_local) {
+        if let Some(ptr) = k.strip_prefix(SETTINGS_POINTER_PREFIX) {
+            // Ownership was dropped when it was kept; the merge sets it again and backs
+            // up settings.json when it changes.
+            names.push(format!("settings ({})", settings::display(ptr)));
+        } else if k == SHARED_SETTINGS {
+            names.push("settings".into());
+        } else if k == CLAUDE_MD {
+            let Some(bytes) = files.get(CLAUDE_MD) else {
+                continue;
+            };
+            let copy = paths.group_dir(group).join(CLAUDE_MD);
+            if let Some(cur) = read_file(&copy)?.filter(|c| c != bytes) {
+                backups.save(&format!("{}/{CLAUDE_MD}", group.dir_name()), &cur)?;
+                // The next write replaces the copy instead of treating it as an edit.
+                entry.claude_md = None;
+                names.push(CLAUDE_MD.into());
+            }
+        } else if let Some(bytes) = files.get(&k) {
+            if !is_managed_target(&k) || m.files.contains_key(&k) {
+                continue;
+            }
+            let (root, sub) = locate(paths, &k);
+            let target = target_path(root, &sub);
+            if blocked_by_user(root, &sub) {
+                continue;
+            }
+            if let Some(cur) = read_file(&target)?.filter(|c| c != bytes) {
+                backups.save(&k, &cur)?;
+                remove_counted(&target)?;
+                names.push(k);
+            }
+        }
+    }
+    Ok(names)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -434,18 +480,8 @@ fn apply_settings(
         }
     };
 
-    // Pointers this group must not set: kept local here, or owned by an earlier group.
-    let mut filters: Vec<(String, String)> = entry
-        .keep_local
-        .iter()
-        .filter_map(|k| k.strip_prefix(SETTINGS_POINTER_PREFIX))
-        .map(|p| {
-            (
-                p.to_string(),
-                "kept local on this device; not applied".to_string(),
-            )
-        })
-        .collect();
+    // Pointers this group must not set: owned by an earlier group.
+    let mut filters: Vec<(String, String)> = Vec::new();
     let rank = |g: &str| order.iter().position(|x| x.to_string() == g);
     let my_rank = rank(&gkey);
     // Pointers an earlier group owns: this group may have owned them before a reorder.
@@ -531,7 +567,7 @@ fn read_settings_file(file: &Path) -> Result<(Value, Option<Vec<u8>>), String> {
 }
 
 /// The group's files as they are on this machine right now, read back from `~/.claude`
-/// (the "local" side of the three-way merge). Paths set to "keep local" are left out.
+/// (the "local" side of the three-way merge).
 ///
 /// - Managed files: their current bytes; a managed file the user deleted is missing.
 /// - New files the user added inside a marketplace folder this group placed.
@@ -541,7 +577,7 @@ fn read_settings_file(file: &Path) -> Result<(Value, Option<Vec<u8>>), String> {
 ///   where the user deleted it (`settings::reconstruct`). With no such edit it is the
 ///   applied copy byte for byte, so the merge sees "unchanged".
 ///
-/// Paths in [`excluded_paths`] (kept local, collisions, unsafe) are never returned; the
+/// Paths in [`excluded_paths`] (collisions, unsafe) are never returned; the
 /// engine must treat them as unchanged (local = base) so they are not pushed as deletes.
 pub fn local_files(paths: &Paths, group: &GroupId) -> crate::Result<FileSet> {
     let m = Manifest::load(paths)?;
@@ -553,7 +589,7 @@ pub fn local_files(paths: &Paths, group: &GroupId) -> crate::Result<FileSet> {
     let mut out = FileSet::new();
     for (rel, mf) in &m.files {
         let (root, sub) = locate(paths, rel);
-        if mf.group != *group || entry.keep_local.contains(rel) || blocked_by_user(root, &sub) {
+        if mf.group != *group || blocked_by_user(root, &sub) {
             continue;
         }
         if let Some(b) = read_file(&target_path(root, &sub))? {
@@ -565,12 +601,12 @@ pub fn local_files(paths: &Paths, group: &GroupId) -> crate::Result<FileSet> {
             out.insert(rel, b);
         }
     }
-    if entry.claude_md.is_some() && !entry.keep_local.contains(CLAUDE_MD) {
+    if entry.claude_md.is_some() {
         if let Some(b) = read_file(&paths.group_dir(group).join(CLAUDE_MD))? {
             out.insert(CLAUDE_MD.into(), b);
         }
     }
-    if entry.settings.is_some() && !entry.keep_local.contains(SHARED_SETTINGS) {
+    if entry.settings.is_some() {
         if let Some(raw) = read_file(&paths.group_dir(group).join(SHARED_SETTINGS))? {
             let owned = load_owned(paths)?
                 .remove(&group.to_string())
@@ -601,7 +637,7 @@ pub fn added_plugin_files(
     marketplaces::new_files(paths, m, group)
 }
 
-/// Paths the group ships that this device does not manage: kept local, collisions, and
+/// Paths the group ships that this device does not manage: collisions, and
 /// paths the apply layer does not place (unsafe or unknown). [`local_files`] leaves them
 /// out; the engine should use the base version for them as the local side.
 pub fn excluded_paths(paths: &Paths, group: &GroupId) -> crate::Result<BTreeSet<String>> {
@@ -611,14 +647,7 @@ pub fn excluded_paths(paths: &Paths, group: &GroupId) -> crate::Result<BTreeSet<
         .get(&group.to_string())
         .cloned()
         .unwrap_or_default();
-    let mut out = entry.excluded;
-    out.extend(
-        entry
-            .keep_local
-            .into_iter()
-            .filter(|k| !k.starts_with(SETTINGS_POINTER_PREFIX)),
-    );
-    Ok(out)
+    Ok(entry.excluded)
 }
 
 /// The group moved to a new `owner/repo` (a rename or transfer, §10): re-key everything the
@@ -694,8 +723,7 @@ pub fn remove_group(paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport
 
 /// Turn a joined group off on this device: everything it applied is taken away again
 /// (managed files, the `CLAUDE.md` import line, the settings it set, the marketplace
-/// registrations) exactly as [`remove_group`] does, but the membership stays: Keep-local
-/// choices, the group folder and the group's copies are kept, and bundled marketplace
+/// registrations) exactly as [`remove_group`] does, but the membership stays: the group folder and the group's copies are kept, and bundled marketplace
 /// folders stay on disk so running Claude Code sessions keep their loaded plugin code.
 /// [`apply_group`] turns it back on.
 pub fn disable_group(paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport> {
@@ -798,48 +826,6 @@ fn unapply_settings(
     Ok(())
 }
 
-/// Stop managing `path` on this device (the "Keep local" action, §7).
-/// `path` is a managed file, `CLAUDE.md`, `settings.shared.json` (all of this group's
-/// settings) or `settings.shared.json#<pointer>` (one value). The local content stays as
-/// it is and becomes the user's; the group's version is no longer applied here.
-pub fn keep_local(paths: &Paths, group: &GroupId, path: &str) -> crate::Result<()> {
-    let mut m = Manifest::load(paths)?;
-    let gkey = group.to_string();
-    let mut entry = m.groups.get(&gkey).cloned().unwrap_or_default();
-    if let Some(ptr) = path.strip_prefix(SETTINGS_POINTER_PREFIX) {
-        let mut owned_all = load_owned(paths)?;
-        if let Some(o) = owned_all.get_mut(&gkey) {
-            settings::forget(o, ptr);
-            if o.is_empty() {
-                owned_all.remove(&gkey);
-            }
-        }
-        save_owned(paths, &owned_all)?;
-    } else if path == SHARED_SETTINGS {
-        let mut owned_all = load_owned(paths)?;
-        if owned_all.remove(&gkey).is_some() {
-            save_owned(paths, &owned_all)?;
-        }
-    } else if path == CLAUDE_MD {
-        // The copy and the import line stay; the copy is no longer updated.
-    } else {
-        match m.files.get(path) {
-            Some(mf) if mf.group == *group => {
-                m.files.remove(path);
-            }
-            None if marketplaces::is_new_file(paths, &m, group, path) => {}
-            _ => {
-                return Err(crate::Error::Invalid(format!(
-                    "{path} is not managed for group {group}"
-                )))
-            }
-        }
-    }
-    entry.keep_local.insert(path.to_string());
-    m.groups.insert(gkey, entry);
-    m.save(paths)
-}
-
 /// Write the group's `CLAUDE.md` copy as `copy` and record `accepted` as the version the app
 /// wrote (§7a): the watcher compares the copy with `accepted`, so differences the user
 /// declined are not local edits, and a `copy` that differs from `accepted` (an unshared
@@ -854,9 +840,6 @@ pub fn write_claude_md(
     let mut m = Manifest::load(paths)?;
     let mut backups = Backups::new(paths);
     let entry = m.groups.entry(group.to_string()).or_default();
-    if entry.keep_local.contains(CLAUDE_MD) {
-        return Ok(());
-    }
     let file = paths.group_dir(group).join(CLAUDE_MD);
     let cur = read_file(&file)?;
     if cur.as_deref() != Some(copy) {
@@ -1448,6 +1431,10 @@ impl Backups {
             dir: None,
             saved: BTreeSet::new(),
         }
+    }
+    /// The folder this run's backups went to, once something was saved.
+    pub(crate) fn dir(&self) -> Option<&Path> {
+        self.dir.as_deref()
     }
     pub(crate) fn save(&mut self, rel: &str, bytes: &[u8]) -> io::Result<()> {
         if !self.saved.insert(rel.to_string()) {

@@ -96,8 +96,6 @@ export interface GroupContents {
     keys: string[];
     /** `[<plugin>@<marketplace>, on]` */
     enabledPlugins: [string, boolean][];
-    /** This device stopped applying the group's settings. */
-    keptLocal: boolean;
   };
   /** The group's CLAUDE.md copy, when it has one. */
   claudeMd: string | null;
@@ -110,6 +108,8 @@ export interface ApplyReport {
   kept: string[];
   skipped: string[];
   pluginsChanged: boolean;
+  /** One-time notice: paths that stopped following the group (the old per-device choice) follow it again. */
+  rejoinedNote: string | null;
 }
 export interface GroupSyncReport {
   id: GroupId;
@@ -251,7 +251,7 @@ export interface LocalEdit {
   path: string;
   deleted: boolean;
 }
-export type EditAction = "share" | "keepLocal" | "undo";
+export type EditAction = "share" | "undo";
 export interface Status {
   state: "signedOut" | "expired" | "paused" | "syncing" | "ok" | "error" | "idle";
   text: string;
@@ -520,7 +520,6 @@ export const api = {
   claudeMdCheck: (group: GroupId, text: string, from: GroupId | null) => call<Clash[]>("claude_md_check", { group, text, from }),
   dropClaudeMdLine: (source: ClashSource, line: string) => call<void>("drop_claude_md_line", { source, line }),
   editClaudeMdLine: (source: ClashSource, line: string, text: string) => call<void>("edit_claude_md_line", { source, line, text }),
-  keepSetting: (keep: GroupId, drop: GroupId, pointer: string) => call<void>("keep_setting", { keep, drop, pointer }),
   copyPreview: (from: GroupId, to: GroupId) => call<CopyPreview>("copy_preview", { from, to }),
   copyToGroup: (from: GroupId, to: GroupId, request: CopyRequest) => call<Copied>("copy_to_group", { from, to, request }),
   getSettings: () => call<Settings>("get_settings"),

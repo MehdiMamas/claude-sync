@@ -257,7 +257,6 @@ function contentsBody(c: GroupContents): (HTMLElement | false)[] {
         h("p", null, "Sets in your settings.json: ", codes(c.settings.keys)),
         on.length > 0 && h("p", { class: "small" }, "Turns on: ", codes(on)),
         off.length > 0 && h("p", { class: "small" }, "Turns off: ", codes(off)),
-        c.settings.keptLocal && h("p", { class: "muted small" }, "You kept your own settings on this device, so these are not applied."),
       ),
     c.claudeMd !== null &&
       h(

@@ -137,6 +137,15 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
                         &body,
                     );
                 }
+                if let Some(note) = &g.apply.rejoined_note {
+                    notify::show(
+                        app,
+                        Kind::Group,
+                        Some(&g.id),
+                        "Back in step with the group",
+                        note,
+                    );
+                }
                 if g.lost_access {
                     notify::show(app, Kind::Group, Some(&g.id), "Group access ended", &format!("You no longer have access to {}. Its files were removed from this machine (a backup was kept).", g.id));
                 }
