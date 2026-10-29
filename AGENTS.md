@@ -3,6 +3,9 @@
 ## What it is
 claude-sync: a small Tauri desktop app (Windows, macOS, beta Linux) that shares a Claude Code setup (settings, `CLAUDE.md`, skills, agents, commands, plugin marketplaces) with a group through a private GitHub repo. See `README.md`; design in `docs/architecture.md` (keep it in step with your change).
 
+## Scopes
+Every setting lives in exactly one scope: group, personal or project. There are no per-device choices; values that can't work on another machine (absolute paths, `apiKeyHelper`, secrets) are dropped automatically.
+
 ## Setup
 - Needs Rust (stable), Node 22 or later and pnpm.
 - Run the app: `pnpm -C app/ui install`, `pnpm -C app install`, `pnpm -C app tauri dev`.
