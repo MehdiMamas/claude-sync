@@ -265,6 +265,11 @@ pub enum NewDevice {
     Offer,
 }
 
+/// With a git-clone `personal-state`, `state/**` outside `state/claude-sync/` is not synced.
+fn state_skipped(path: &str) -> bool {
+    path.starts_with("state/") && !path.starts_with("state/claude-sync/")
+}
+
 /// The files on this device, and what is held back.
 #[derive(Debug, Default)]
 struct LocalScan {
@@ -630,7 +635,8 @@ impl Engine {
         let base_dir = self.personal_dir().join("base");
         let mut base = load_base_dir(&base_dir)?;
         let kinds = st.kinds;
-        let keep = |p: &str| kinds.syncs(p);
+        let git_state = self.state_is_git_clone();
+        let keep = |p: &str| kinds.syncs(p) && !(git_state && state_skipped(p));
         let mut attempt = 0;
         let notes = loop {
             if head.is_empty() {
@@ -952,6 +958,15 @@ impl Engine {
         Ok(())
     }
 
+    /// `~/.claude/personal-state` is a git clone of its own: only `state/claude-sync/` syncs.
+    fn state_is_git_clone(&self) -> bool {
+        self.paths
+            .claude_home
+            .join(state::LOCAL_DIR)
+            .join(".git")
+            .exists()
+    }
+
     /// `~/.claude/personal-state/**` as `state/**`, held back by the same rules as memory.
     fn scan_state(&self, out: &mut LocalScan) -> crate::Result<()> {
         let root = self.paths.claude_home.join(state::LOCAL_DIR);
@@ -961,6 +976,7 @@ impl Engine {
                 .push(format!("{}/: not synced, its folder is a link", state::DIR));
             return Ok(());
         }
+        let git_state = self.state_is_git_clone();
         let mut total: usize = out.files.values().map(Vec::len).sum();
         let mut dirs = vec![root.clone()];
         while let Some(dir) = dirs.pop() {
@@ -979,6 +995,9 @@ impl Engine {
                     .map(|c| c.as_os_str().to_string_lossy().into_owned())
                     .collect();
                 let repo_path = format!("{}/{}", state::DIR, rel.join("/"));
+                if git_state && rel[0] != "claude-sync" {
+                    continue;
+                }
                 let kind = entry.file_type()?;
                 if kind.is_symlink() {
                     out.held.insert(repo_path.clone());
