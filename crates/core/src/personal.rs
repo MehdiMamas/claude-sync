@@ -8,11 +8,14 @@
 //! - `CLAUDE.md`: the user's own text of `~/.claude/CLAUDE.md`
 //! - `memory/<key>/**`: `~/.claude/projects/<folder>/memory/**`, keyed by `keys::key_for`
 //! - `state/**`: `~/.claude/personal-state/**`, small state that mods save (see `state`)
+//! - `settings.json`: your own `~/.claude/settings.json` without what groups set and what
+//!   cannot work on another machine (see `settings_file`)
 //!
 //! Local state lives in `<state_dir>/personal/` (`state.json`, `base/`).
 pub(crate) mod claude_md;
 pub mod keys;
 mod lines;
+mod settings_file;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -55,7 +58,7 @@ const SEEN_EVERY_SECS: u64 = 24 * 3600;
 pub fn is_personal_path(path: &str) -> bool {
     let segs: Vec<&str> = path.split('/').collect();
     match segs.as_slice() {
-        [FILE | DEVICES | README | CLAUDE_MD] => true,
+        [FILE | DEVICES | README | CLAUDE_MD | settings_file::PATH] => true,
         [MEMORY, key, rest @ ..] => {
             !rest.is_empty()
                 && keys::is_key(key)
@@ -78,6 +81,8 @@ pub struct Kinds {
     pub memory: bool,
     /// `~/.claude/personal-state/**`.
     pub state: bool,
+    /// `~/.claude/settings.json`, without group values and machine-specific values.
+    pub settings: bool,
 }
 
 impl Default for Kinds {
@@ -86,6 +91,7 @@ impl Default for Kinds {
             claude_md: true,
             memory: true,
             state: true,
+            settings: true,
         }
     }
 }
@@ -266,6 +272,8 @@ struct LocalScan {
     notes: Vec<String>,
     /// Key -> the folder under `projects/` it uses on this device.
     folders: BTreeMap<String, String>,
+    /// What groups set in `settings.json`, when that kind is on.
+    settings_skip: Option<settings_file::Skip>,
 }
 
 impl LocalScan {
@@ -611,6 +619,9 @@ impl Engine {
             let mut scan = self.scan_local(&kinds)?;
             self.hold_secrets(&mut scan, &base_v);
             let mut local = scan.files.clone();
+            if let Some(skip) = &scan.settings_skip {
+                settings_file::keep_skipped(&mut local, &base_v, skip);
+            }
             let held: Vec<String> = base_v
                 .keys()
                 .chain(local.keys())
@@ -776,6 +787,9 @@ impl Engine {
         if kinds.state {
             self.scan_state(&mut out)?;
         }
+        if kinds.settings {
+            self.scan_settings(&mut out)?;
+        }
         if !kinds.memory {
             return Ok(out);
         }
@@ -855,6 +869,41 @@ impl Engine {
             }
         }
         Ok(out)
+    }
+
+    /// `~/.claude/settings.json` as `settings.json`, without what groups set or what is machine-specific.
+    fn scan_settings(&self, out: &mut LocalScan) -> crate::Result<()> {
+        let skip = settings_file::skip_set(&self.paths)?;
+        out.settings_skip = Some(skip.clone());
+        let file = self.paths.claude_home.join("settings.json");
+        let path = settings_file::PATH;
+        match std::fs::symlink_metadata(&file) {
+            Ok(md) if !md.is_file() => {
+                out.held.insert(path.into());
+                out.notes
+                    .push(format!("{path}: not synced, it is a link or a folder"));
+            }
+            Ok(md) if md.len() as usize > MAX_FILE => {
+                out.held.insert(path.into());
+                out.notes.push(too_large(path));
+            }
+            Ok(_) => match crate::settings::parse_object(&std::fs::read(&file)?) {
+                Some(real) => {
+                    if let Some(bytes) = settings_file::bytes_of(&settings_file::view(&real, &skip))
+                    {
+                        out.files.insert(path.into(), bytes);
+                    }
+                }
+                None => {
+                    out.held.insert(path.into());
+                    out.notes
+                        .push(format!("{path}: not synced, it is not one JSON object"));
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        Ok(())
     }
 
     /// `~/.claude/personal-state/**` as `state/**`, held back by the same rules as memory.
@@ -977,6 +1026,12 @@ impl Engine {
                 written.push(path.clone());
                 continue;
             }
+            if path == settings_file::PATH {
+                if self.write_settings(local.get(path), want, &backup_root, scan)? {
+                    written.push(path.clone());
+                }
+                continue;
+            }
             let (under_home, stop, folder) = if let Some(rel) = path.strip_prefix("state/") {
                 (
                     format!("{}/{rel}", state::LOCAL_DIR),
@@ -1028,6 +1083,43 @@ impl Engine {
             written.push(path.clone());
         }
         Ok(written)
+    }
+
+    /// Move the real `settings.json` from the view it had to the merged one, with a backup.
+    fn write_settings(
+        &self,
+        old: Option<&Vec<u8>>,
+        new: Option<&Vec<u8>>,
+        backup_root: &Path,
+        scan: &mut LocalScan,
+    ) -> crate::Result<bool> {
+        let file = self.paths.claude_home.join("settings.json");
+        let existing = match std::fs::read(&file) {
+            Ok(b) => Some(b),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.into()),
+        };
+        let mut real = match &existing {
+            Some(b) => match crate::settings::parse_object(b) {
+                Some(v) => v,
+                None => return Ok(false),
+            },
+            None => Value::Object(Map::new()),
+        };
+        let skip = match scan.settings_skip.clone() {
+            Some(s) => s,
+            None => settings_file::skip_set(&self.paths)?,
+        };
+        let before = real.clone();
+        settings_file::apply(&mut real, old, new, &skip);
+        if real == before {
+            return Ok(false);
+        }
+        if let Some(old) = &existing {
+            write_atomic(&backup_root.join(settings_file::PATH), old)?;
+        }
+        write_atomic(&file, &crate::settings::to_bytes(&real))?;
+        Ok(true)
     }
 
     /// Put `synced` under this device's managed block, with a backup of the old file.
@@ -1105,6 +1197,7 @@ impl Engine {
             Kind::ClaudeMd.off_dir(),
             Kind::Memory.off_dir(),
             Kind::State.off_dir(),
+            Kind::Settings.off_dir(),
         ] {
             remove_dir_if_exists(&dir.join(name))?;
         }
@@ -1210,16 +1303,18 @@ enum Kind {
     ClaudeMd,
     Memory,
     State,
+    Settings,
 }
 
 impl Kind {
-    const ALL: [Kind; 3] = [Kind::ClaudeMd, Kind::Memory, Kind::State];
+    const ALL: [Kind; 4] = [Kind::ClaudeMd, Kind::Memory, Kind::State, Kind::Settings];
 
     fn on(self, kinds: &Kinds) -> bool {
         match self {
             Kind::ClaudeMd => kinds.claude_md,
             Kind::Memory => kinds.memory,
             Kind::State => kinds.state,
+            Kind::Settings => kinds.settings,
         }
     }
 
@@ -1228,6 +1323,7 @@ impl Kind {
             Kind::ClaudeMd => path == CLAUDE_MD,
             Kind::Memory => path.starts_with("memory/"),
             Kind::State => path.starts_with("state/"),
+            Kind::Settings => path == settings_file::PATH,
         }
     }
 
@@ -1237,6 +1333,7 @@ impl Kind {
             Kind::ClaudeMd => "off-claude-md",
             Kind::Memory => "off-memory",
             Kind::State => "off-state",
+            Kind::Settings => "off-settings",
         }
     }
 }
@@ -1251,7 +1348,9 @@ fn merge_personal<'a>(base: &'a FileSet, local: &'a FileSet, remote: &'a FileSet
         .filter_map(|(p, l)| Some((p, state::newer(l, remote.get(p)?)?)))
         .collect();
     let by_lines = |p: &str| lines::is_index(p) || state::is_jsonl(p);
-    let three = |p: &str| !by_lines(p) && !newer.keys().any(|k| k.as_str() == p);
+    let three = |p: &str| {
+        !by_lines(p) && p != settings_file::PATH && !newer.keys().any(|k| k.as_str() == p)
+    };
     let mut out = merge::three_way(
         &only(base, three),
         &only(local, three),
@@ -1262,6 +1361,19 @@ fn merge_personal<'a>(base: &'a FileSet, local: &'a FileSet, remote: &'a FileSet
             out.to_push.insert((*path).clone(), Some(bytes.to_vec()));
         }
         out.merged.insert((*path).clone(), bytes.to_vec());
+    }
+    let get_settings = |f: &'a FileSet| f.get(settings_file::PATH);
+    let settings = settings_file::merge(
+        get_settings(base),
+        get_settings(local),
+        get_settings(remote),
+    );
+    if settings.as_ref() != get_settings(remote) {
+        out.to_push
+            .insert(settings_file::PATH.into(), settings.clone());
+    }
+    if let Some(bytes) = settings {
+        out.merged.insert(settings_file::PATH.into(), bytes);
     }
     let indexes: BTreeSet<&String> = base
         .keys()
@@ -1364,6 +1476,8 @@ fn readme(login: &str) -> String {
          under your home folder\n\
          - `state/`: small settings your mods save in `~/.claude/personal-state/`, such as \
          opus-only mode\n\
+         - `settings.json`: your own `~/.claude/settings.json` without what groups set and \
+         what cannot work on another machine\n\
          - `devices.json`: the devices that sync this repo\n\n\
          Keep this repo private. Turn syncing off in the app's Settings.\n"
     )

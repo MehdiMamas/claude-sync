@@ -182,7 +182,7 @@ pub(super) fn register(
 }
 
 /// Files the user added on this device inside a marketplace folder `group` placed: not in
-/// the manifest, allowlisted, not kept local or excluded. They show up as local edits.
+/// the manifest, allowlisted, not excluded. They show up as local edits.
 pub(super) fn new_files(
     paths: &Paths,
     m: &Manifest,
@@ -201,10 +201,7 @@ pub(super) fn new_files(
         }
         walk(&dir, &prefix, &mut out)?;
     }
-    out.retain(|rel| {
-        !m.files.contains_key(rel)
-            && entry.is_none_or(|e| !e.keep_local.contains(rel) && !e.excluded.contains(rel))
-    });
+    out.retain(|rel| !m.files.contains_key(rel) && entry.is_none_or(|e| !e.excluded.contains(rel)));
     Ok(out)
 }
 

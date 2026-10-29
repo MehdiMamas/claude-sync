@@ -9,7 +9,6 @@
 //! of a group's line commits, and that change reaches the group's other members through
 //! their review like any other.
 use super::{read_base_file, read_group_file, Engine};
-use crate::apply::SETTINGS_POINTER_PREFIX;
 use crate::conflicts::{self, Conflict, SettingsFile, Source, Text};
 use crate::remote::Changes;
 use crate::state::{now_unix, AppState};
@@ -183,36 +182,6 @@ impl Engine {
         }
     }
 
-    /// Settle a setting two groups set differently: `keep`'s value applies, `drop`'s is kept
-    /// local on this device (not applied) until the user undoes it.
-    pub async fn keep_setting(
-        &self,
-        keep: &GroupId,
-        drop: &GroupId,
-        pointer: &str,
-    ) -> crate::Result<()> {
-        if keep == drop || !pointer.starts_with('/') {
-            return Err(Error::Invalid(format!(
-                "{pointer:?} is not a setting to keep"
-            )));
-        }
-        let _busy = self.busy.lock().await;
-        self.require_joined(keep)?;
-        self.require_joined(drop)?;
-        self.apply.keep_local(
-            &self.paths,
-            drop,
-            &format!("{SETTINGS_POINTER_PREFIX}{pointer}"),
-        )?;
-        // The group that kept the value applies it now that the other let go.
-        for id in [drop, keep] {
-            if let (_, Some(e)) = self.sync_group(id, None).await {
-                return Err(e);
-            }
-        }
-        Ok(())
-    }
-
     /// Each joined group's `CLAUDE.md` as Claude reads it here, in join order, then the
     /// user's own text.
     pub(super) fn claude_md_texts(&self) -> crate::Result<Vec<Text>> {
@@ -241,8 +210,7 @@ impl Engine {
         Ok(out)
     }
 
-    /// Each joined group's `settings.shared.json` as last synced, in join order, with the
-    /// values this device keeps local. Groups that do not sync settings are left out.
+    /// Each joined group's `settings.shared.json` as last synced, in join order. Groups that do not sync settings are left out.
     fn settings_files(&self) -> crate::Result<Vec<SettingsFile>> {
         let mut out = Vec::new();
         for id in AppState::load(&self.paths)?.groups {
@@ -251,8 +219,7 @@ impl Engine {
                 && read_group_file(&id, &base.files)
                     .map(|(gf, _)| gf.sync.settings)
                     .unwrap_or(false);
-            let kept = self.apply.kept_local(&self.paths, &id)?;
-            if !syncs || kept.contains(group::SHARED_SETTINGS) {
+            if !syncs {
                 continue;
             }
             let Some(json) = base
@@ -266,11 +233,6 @@ impl Engine {
                 name: self.group_status(&id).name,
                 id,
                 json,
-                kept: kept
-                    .iter()
-                    .filter_map(|k| k.strip_prefix(SETTINGS_POINTER_PREFIX))
-                    .map(str::to_string)
-                    .collect(),
             });
         }
         Ok(out)
@@ -295,7 +257,6 @@ mod tests {
     use super::*;
     use crate::conflicts::Kind;
     use crate::engine::tests::{device, group_repo, Device};
-    use crate::engine::ApplyLayer;
     use crate::remote::fake::{FakeGitHub, FakeRepo};
 
     /// `bo` in two groups: "Friends" (hosted by `bo`, though the repo id says ana; joined first) and
@@ -494,35 +455,6 @@ mod tests {
         let ana = device(&world, "ana", "mac");
         ana.engine.join(&friends).await.unwrap();
         assert_eq!(ana.apply.file(&friends, group::CLAUDE_MD).unwrap(), text);
-    }
-
-    #[tokio::test]
-    async fn keeping_a_groups_setting_lets_the_other_go_on_this_device() {
-        let (_, bo, [(friends, _), (crew, crew_repo)]) = two_groups().await;
-        let commits = crew_repo.commits().len();
-        bo.engine
-            .keep_setting(&crew, &friends, "/model")
-            .await
-            .unwrap();
-        assert!(bo
-            .apply
-            .kept_local(&bo.engine.paths, &friends)
-            .unwrap()
-            .contains("settings.shared.json#/model"));
-        let kinds: Vec<Kind> = bo
-            .engine
-            .conflicts()
-            .unwrap()
-            .iter()
-            .map(|c| c.kind)
-            .collect();
-        assert!(!kinds.contains(&Kind::Setting), "{kinds:?}");
-        assert_eq!(crew_repo.commits().len(), commits, "nothing is pushed");
-        assert!(bo
-            .engine
-            .keep_setting(&crew, &crew, "/model")
-            .await
-            .is_err());
     }
 
     #[tokio::test]

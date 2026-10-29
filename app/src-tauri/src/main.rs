@@ -171,7 +171,6 @@ fn main() {
             commands::claude_md_check,
             commands::drop_claude_md_line,
             commands::edit_claude_md_line,
-            commands::keep_setting,
             commands::copy_preview,
             commands::copy_to_group,
             commands::sync_now,

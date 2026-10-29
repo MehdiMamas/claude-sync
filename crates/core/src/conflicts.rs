@@ -71,9 +71,6 @@ pub struct SettingsFile {
     pub id: GroupId,
     pub name: String,
     pub json: Value,
-    /// Pointers this device keeps local for this group: they are not applied, so they do
-    /// not clash.
-    pub kept: Vec<String>,
 }
 
 /// Most clashes reported at once; the list is for a person to go through.
@@ -301,12 +298,6 @@ fn walk(v: &Value, at: &str, arrays: bool, out: &mut Vec<(String, Value)>) {
     }
 }
 
-fn kept(file: &SettingsFile, pointer: &str) -> bool {
-    file.kept
-        .iter()
-        .any(|k| pointer == k || pointer.starts_with(&format!("{k}/")))
-}
-
 /// Values two groups set differently, in join order: side `a` is the earlier group, whose
 /// value applies on this device.
 pub fn settings(files: &[SettingsFile]) -> Vec<Conflict> {
@@ -318,7 +309,7 @@ pub fn settings(files: &[SettingsFile]) -> Vec<Conflict> {
                 let Some((_, vb)) = all[j].iter().find(|(p, _)| p == ptr) else {
                     continue;
                 };
-                if va == vb || kept(fa, ptr) || kept(fb, ptr) {
+                if va == vb {
                     continue;
                 }
                 let side = |f: &SettingsFile, v: &Value| Side {
@@ -491,21 +482,18 @@ mod tests {
 
     #[test]
     fn settings_clash_on_plain_values_only() {
-        let file = |owner: &str, json: Value, kept: &[&str]| SettingsFile {
+        let file = |owner: &str, json: Value| SettingsFile {
             id: GroupId::new(owner, "claude-sync-data"),
             name: owner.into(),
             json,
-            kept: kept.iter().map(|k| k.to_string()).collect(),
         };
         let a = file(
             "ana",
             json!({"model": "opus", "permissions": {"allow": ["a"], "defaultMode": "plan"}, "env": {"X": "1"}, "same": true}),
-            &[],
         );
         let b = file(
             "cy",
             json!({"model": "sonnet", "permissions": {"allow": ["b"], "defaultMode": "acceptEdits"}, "env": {"X": "2"}, "same": true}),
-            &["/env"],
         );
         let got: Vec<(Option<String>, String, String)> = settings(&[a, b])
             .into_iter()
@@ -524,6 +512,7 @@ mod tests {
                     "\"plan\"".into(),
                     "\"acceptEdits\"".into()
                 ),
+                (Some("/env/X".into()), "\"1\"".into(), "\"2\"".into()),
             ]
         );
     }

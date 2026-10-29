@@ -597,23 +597,6 @@ pub async fn edit_claude_md_line(
     Ok(())
 }
 
-/// Settle a setting two groups set differently: `keep`'s value applies on this device.
-#[tauri::command]
-pub async fn keep_setting(
-    app: AppHandle,
-    ctx: CtxState<'_>,
-    keep: GroupId,
-    drop: GroupId,
-    pointer: String,
-) -> Res<()> {
-    let e = ctx.engine()?;
-    e.keep_setting(&keep, &drop, &pointer)
-        .await
-        .map_err(guard::logged("conflicts"))?;
-    background::refresh_status(&app);
-    Ok(())
-}
-
 /// What copying from `from` to `to` would bring (§7b).
 #[tauri::command]
 pub async fn copy_preview(ctx: CtxState<'_>, from: GroupId, to: GroupId) -> Res<CopyPreview> {

@@ -148,6 +148,7 @@ fn personal_paths() {
         DEVICES,
         README,
         CLAUDE_MD,
+        "settings.json",
         "memory/home/MEMORY.md",
         "memory/home-Projects-x/MEMORY.md",
         "memory/home-Projects-x/notes/a.md",
@@ -162,7 +163,6 @@ fn personal_paths() {
         "memory/tmp/x.md",
         "memory/home-AppData-Local-Temp/x.md",
         "agents/a.md",
-        "settings.json",
         "skills/x/SKILL.md",
         "group.json",
     ] {
@@ -884,6 +884,7 @@ async fn kinds_choose_what_syncs() {
         claude_md: true,
         memory: false,
         state: true,
+        settings: true,
     })
     .await
     .unwrap();
@@ -904,6 +905,7 @@ async fn kinds_choose_what_syncs() {
         claude_md: false,
         memory: true,
         state: true,
+        settings: true,
     })
     .await
     .unwrap();
@@ -1293,13 +1295,15 @@ async fn personal_state_syncs_between_devices() {
 #[test]
 fn kinds_default_includes_state() {
     assert!(Kinds::default().state);
+    assert!(Kinds::default().settings);
     let old: Kinds = serde_json::from_str(r#"{"claudeMd":true,"memory":false}"#).unwrap();
     assert_eq!(
         old,
         Kinds {
             claude_md: true,
             memory: false,
-            state: true
+            state: true,
+            settings: true
         }
     );
 }
@@ -1312,6 +1316,7 @@ async fn state_off_keeps_state_local() {
         claude_md: true,
         memory: true,
         state: false,
+        settings: true,
     })
     .await
     .unwrap();
@@ -1322,4 +1327,129 @@ async fn state_off_keeps_state_local() {
     repo.set_file("state/other.json", MODE_OLD);
     pc.sync().await;
     assert_eq!(pc.state("other.json"), None);
+}
+
+// ---------------------------------------------------------------- settings.json
+
+impl Dev {
+    fn settings_value(&self) -> serde_json::Value {
+        let b = std::fs::read(self.home().join("settings.json")).unwrap_or(b"{}".to_vec());
+        serde_json::from_slice(&b).unwrap()
+    }
+    fn set_settings(&self, v: serde_json::Value) {
+        write_atomic(
+            &self.home().join("settings.json"),
+            &crate::settings::to_bytes(&v),
+        )
+        .unwrap();
+    }
+    fn set_group_owned(&self, ptr: &str, v: serde_json::Value) {
+        let mut owned = crate::settings::Owned::default();
+        owned.values.insert(ptr.into(), v);
+        let all = BTreeMap::from([("org/team".to_string(), owned)]);
+        write_atomic(
+            &self.paths.state_dir.join(crate::apply::SETTINGS_OWNED_FILE),
+            &serde_json::to_vec(&all).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+fn repo_settings(repo: &FakeRepo) -> serde_json::Value {
+    serde_json::from_str(&repo.file("settings.json").expect("settings.json pushed")).unwrap()
+}
+
+#[tokio::test]
+async fn collect_drops_group_values_secrets_and_machine_values() {
+    use serde_json::json;
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.set_settings(json!({
+        "env": {
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000",
+            "GROUP_KEY": "from-group",
+            "TOKEN": "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+            "CLAUDE_CODE_PLUGIN_DIRS": "/Users/ana/x/mods/a"
+        },
+        "apiKeyHelper": "/bin/key",
+        "statusLine": {"type": "command", "command": "/Users/ana/bin/status.sh"},
+        "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/Users/ana/h.sh"}]}]},
+        "permissions": {"additionalDirectories": ["/x/y"], "defaultMode": "plan"},
+        "theme": "dark"
+    }));
+    pc.set_group_owned("/env/GROUP_KEY", json!("from-group"));
+    pc.personal_enable().await.unwrap();
+    let repo = personal_repo(&world, "ana");
+    assert_eq!(
+        repo_settings(&repo),
+        json!({
+            "env": {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000"},
+            "permissions": {"defaultMode": "plan"},
+            "theme": "dark"
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_setting_follows_to_the_other_machine_and_group_keys_win() {
+    use serde_json::json;
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.set_settings(json!({"theme": "dark"}));
+    pc.personal_enable().await.unwrap();
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    mac.set_settings(json!({
+        "statusLine": {"type": "command", "command": "/Users/ana/mac.sh"},
+        "model": "mac-model"
+    }));
+    mac.set_group_owned("/model", json!("mac-model"));
+    mac.personal_enable().await.unwrap();
+    pc.set_settings(json!({"theme": "dark", "model": "mine",
+        "env": {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1"}}));
+    pc.sync().await;
+    mac.sync().await;
+    let m = mac.settings_value();
+    assert_eq!(m["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "1");
+    assert_eq!(m["theme"], "dark");
+    // The group's value stays, and the machine's own statusLine is untouched.
+    assert_eq!(m["model"], "mac-model");
+    assert_eq!(m["statusLine"]["command"], "/Users/ana/mac.sh");
+    assert!(personal_backups(&mac)
+        .iter()
+        .any(|(p, _)| p == "settings.json"));
+}
+
+#[tokio::test]
+async fn a_removed_setting_goes_only_while_unchanged() {
+    use serde_json::json;
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.set_settings(json!({"a": 1, "b": 1, "keep": true}));
+    pc.personal_enable().await.unwrap();
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    mac.personal_enable().await.unwrap();
+    assert_eq!(mac.settings_value()["a"], 1);
+    mac.set_settings(json!({"a": 1, "b": 2, "keep": true}));
+    pc.set_settings(json!({"keep": true}));
+    pc.sync().await;
+    mac.sync().await;
+    let m = mac.settings_value();
+    assert_eq!(m.get("a"), None);
+    assert_eq!(m["b"], 2, "a changed value is not removed");
+    assert_eq!(m["keep"], true);
+}
+
+#[test]
+fn settings_merge_per_pointer_and_the_pushed_version_wins() {
+    use serde_json::json;
+    let b = |v: serde_json::Value| Some(crate::settings::to_bytes(&v));
+    let base = b(json!({"x": 1, "y": 1, "env": {"A": "1"}}));
+    let local = b(json!({"x": 2, "y": 1, "env": {"A": "1", "L": "l"}}));
+    let remote = b(json!({"x": 3, "y": 2, "env": {"A": "1", "R": "r"}}));
+    let out = settings_file::merge(base.as_ref(), local.as_ref(), remote.as_ref()).unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(
+        v,
+        json!({"x": 3, "y": 2, "env": {"A": "1", "L": "l", "R": "r"}})
+    );
 }

@@ -62,8 +62,6 @@ pub struct SettingsInfo {
     pub keys: Vec<String>,
     /// Its `enabledPlugins` entries: `<plugin>@<marketplace>` -> on.
     pub enabled_plugins: Vec<(String, bool)>,
-    /// This device stopped applying the group's settings ("Keep local").
-    pub kept_local: bool,
 }
 
 /// Biggest file read for a description. Frontmatter sits at the top.
@@ -179,7 +177,6 @@ pub fn group_contents(paths: &Paths, group: &GroupId) -> crate::Result<GroupCont
             }
         }
     }
-    out.settings.kept_local = entry.keep_local.contains(SHARED_SETTINGS);
     let md = gdir.join(CLAUDE_MD);
     if entry.claude_md.is_some() && md.is_file() {
         let md = std::path::absolute(&md).unwrap_or(md);
@@ -433,7 +430,6 @@ mod tests {
             c.settings.enabled_plugins,
             vec![("router@mods".into(), true), ("manager@mods".into(), false)]
         );
-        assert!(!c.settings.kept_local);
         let md = c.claude_md.expect("CLAUDE.md copy");
         assert!(md.ends_with("CLAUDE.md") && Path::new(&md).is_file());
 
@@ -449,7 +445,6 @@ mod tests {
             v["settings"]["enabledPlugins"][0],
             json!(["router@mods", true])
         );
-        assert_eq!(v["settings"]["keptLocal"], false);
     }
 
     #[test]

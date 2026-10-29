@@ -26,7 +26,6 @@ pub struct LocalEdit {
 #[serde(rename_all = "camelCase")]
 pub enum EditAction {
     Share,
-    KeepLocal,
     Undo,
 }
 
@@ -56,9 +55,6 @@ pub fn local_edits(paths: &Paths) -> crate::Result<Vec<LocalEdit>> {
         let Some(sha) = &entry.claude_md else {
             continue;
         };
-        if entry.keep_local.contains(CLAUDE_MD) {
-            continue;
-        }
         match read_file(&paths.group_dir(&group).join(CLAUDE_MD))? {
             None => out.push(edit(&group, CLAUDE_MD, true)),
             Some(b) if apply::sha256_hex(&b) != *sha => out.push(edit(&group, CLAUDE_MD, false)),
@@ -107,7 +103,6 @@ fn read_file(p: &Path) -> std::io::Result<Option<Vec<u8>>> {
 }
 
 /// Run the user's choice for one edit on this device.
-/// - `KeepLocal`: stop managing it here (`apply::keep_local`).
 /// - `Undo`: put the group's version back (`apply::undo`); `group_version` is the group's
 ///   current content of `edit.path` (`None` if the group does not have it). Settings
 ///   values are restored from the ownership record.
@@ -120,7 +115,6 @@ pub fn resolve(
     group_version: Option<&[u8]>,
 ) -> crate::Result<()> {
     match action {
-        EditAction::KeepLocal => apply::keep_local(paths, &edit.group, &edit.path),
         EditAction::Undo => apply::undo(paths, &edit.group, &edit.path, group_version),
         EditAction::Share => Err(crate::Error::Invalid(
             "Share is done by the engine: it pushes apply::local_files".into(),
@@ -448,33 +442,6 @@ mod tests {
                 false
             )]
         );
-    }
-
-    #[test]
-    fn keep_local_removes_the_edit_and_keeps_the_content() {
-        let (_t, paths, a) = setup();
-        let p = paths.claude_home.join("agents/reviewer.md");
-        write(&p, b"mine\n");
-        set_settings(
-            &paths,
-            json!({"model": "haiku", "permissions": {"allow": ["Read"]}}),
-        );
-        for e in local_edits(&paths).unwrap() {
-            resolve(&paths, &e, EditAction::KeepLocal, None).unwrap();
-        }
-        assert_eq!(local_edits(&paths).unwrap(), vec![]);
-        assert_eq!(fs::read(&p).unwrap(), b"mine\n");
-        // The group's next version does not overwrite it.
-        let mut f = files();
-        f.insert("agents/reviewer.md".into(), b"v2\n".to_vec());
-        f.insert(SHARED_SETTINGS.into(), br#"{"model": "fable"}"#.to_vec());
-        apply_group(&paths, &a, std::slice::from_ref(&a), &f).unwrap();
-        assert_eq!(fs::read(&p).unwrap(), b"mine\n");
-        let s: serde_json::Value =
-            serde_json::from_slice(&fs::read(paths.claude_home.join("settings.json")).unwrap())
-                .unwrap();
-        assert_eq!(s["model"], json!("haiku"));
-        assert_eq!(local_edits(&paths).unwrap(), vec![]);
     }
 
     #[test]

@@ -121,6 +121,13 @@ function body(st: PersonalStatus, show: (st: PersonalStatus) => void): (HTMLElem
       (b) => setKinds({ state: b.checked }),
       "Small settings your mods save, such as opus-only mode.",
     ),
+    check(
+      "p-settings",
+      "My settings (~/.claude/settings.json)",
+      st.kinds.settings,
+      (b) => setKinds({ settings: b.checked }),
+      "Without what your groups set and anything tied to this machine, such as file paths.",
+    ),
     st.newDevicesJoin !== null &&
       check("p-join", "New devices of mine join automatically", st.newDevicesJoin, async (b) => {
         show(await api.personalSetNewDevicesJoin(b.checked));

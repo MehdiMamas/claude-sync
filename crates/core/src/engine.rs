@@ -209,9 +209,8 @@ pub trait ApplyLayer: Send + Sync {
     ) -> crate::Result<ApplyReport>;
     fn remove_group(&self, paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport>;
     /// Take everything the group applied away again, keeping what a re-apply needs
-    /// (Keep-local choices, bundled plugin folders).
+    /// (bundled plugin folders).
     fn disable_group(&self, paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport>;
-    fn keep_local(&self, paths: &Paths, group: &GroupId, path: &str) -> crate::Result<()>;
     /// Put the group's version (`None`: the group does not have it) of `path` back.
     fn undo(
         &self,
@@ -230,14 +229,8 @@ pub trait ApplyLayer: Send + Sync {
         copy: &[u8],
         accepted: &[u8],
     ) -> crate::Result<()>;
-    /// Paths the group ships that this device does not manage (kept local, collisions,
-    /// unsafe). The engine uses the base version as their local side.
+    /// Paths the group ships that this device does not manage (collisions, unsafe). The engine uses the base version as their local side.
     fn excluded_paths(&self, _paths: &Paths, _group: &GroupId) -> crate::Result<BTreeSet<String>> {
-        Ok(BTreeSet::new())
-    }
-    /// Paths and settings pointers (`settings.shared.json#/model`) this device keeps local
-    /// for the group.
-    fn kept_local(&self, _paths: &Paths, _group: &GroupId) -> crate::Result<BTreeSet<String>> {
         Ok(BTreeSet::new())
     }
 }
@@ -264,9 +257,6 @@ impl ApplyLayer for FsApply {
     fn disable_group(&self, paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport> {
         crate::apply::disable_group(paths, group)
     }
-    fn keep_local(&self, paths: &Paths, group: &GroupId, path: &str) -> crate::Result<()> {
-        crate::apply::keep_local(paths, group, path)
-    }
     fn undo(
         &self,
         paths: &Paths,
@@ -290,13 +280,6 @@ impl ApplyLayer for FsApply {
     }
     fn excluded_paths(&self, paths: &Paths, group: &GroupId) -> crate::Result<BTreeSet<String>> {
         crate::apply::excluded_paths(paths, group)
-    }
-    fn kept_local(&self, paths: &Paths, group: &GroupId) -> crate::Result<BTreeSet<String>> {
-        Ok(crate::apply::Manifest::load(paths)?
-            .groups
-            .remove(&group.to_string())
-            .map(|e| e.keep_local)
-            .unwrap_or_default())
     }
 }
 
@@ -696,7 +679,7 @@ impl Engine {
     }
 
     /// Turn a joined group off or back on on this device. Off takes everything it applied
-    /// away (membership, Keep-local choices and the group's folder stay); on applies the last
+    /// away (membership and the group's folder stay); on applies the last
     /// synced version again and syncs. Nothing is pushed while off.
     pub async fn set_group_enabled(
         &self,
@@ -774,13 +757,6 @@ impl Engine {
                     (_, Some(e)) => Err(e),
                     (_, None) => Ok(()),
                 }
-            }
-            EditAction::KeepLocal => {
-                self.apply.keep_local(&self.paths, id, &edit.path)?;
-                if whole_file {
-                    status.shared.remove(file);
-                }
-                self.save_status(id, &status)
             }
             EditAction::Undo => {
                 if whole_file {
@@ -1539,7 +1515,7 @@ impl Engine {
     /// The local side of the merge. The apply layer reads managed files back; the engine
     /// supplies the rest from the base: repo-only files (group file, schedules), paths the apply layer did
     /// not write (collisions), paths missing locally that the user did not choose to delete
-    /// (kept local, or not readable back), and plugin files grown over the size cap (noted
+    /// (not readable back), and plugin files grown over the size cap (noted
     /// in `too_large`). Also returns the group's `CLAUDE.md` copy as it is on disk, which
     /// review handles (§7a).
     fn local_view(
@@ -1549,7 +1525,7 @@ impl Engine {
         status: &Status,
         keep: impl Fn(&str) -> bool,
         too_large: &mut Vec<String>,
-    ) -> crate::Result<(FileSet, LocalCopy)> {
+    ) -> crate::Result<(FileSet, Option<Vec<u8>>)> {
         let mut local: FileSet = self
             .apply
             .local_files(&self.paths, id)?
@@ -1558,10 +1534,7 @@ impl Engine {
             .collect();
         let mut held = self.apply.excluded_paths(&self.paths, id)?;
         held.extend(status.collisions.iter().map(|c| c.path().to_string()));
-        let copy = match held.contains(group::CLAUDE_MD) {
-            true => LocalCopy::Held,
-            false => LocalCopy::Copy(local.get(group::CLAUDE_MD).cloned()),
-        };
+        let copy = local.get(group::CLAUDE_MD).cloned();
         for (p, bytes) in &local {
             if group::too_large(p, bytes.len()) {
                 too_large.push(group::too_large_note(p));
@@ -1806,7 +1779,7 @@ impl Engine {
         base: &Base,
         head: &Head,
         remote_files: &FileSet,
-        copy: LocalCopy,
+        copy: Option<Vec<u8>>,
         shared: bool,
         report: &mut GroupSyncReport,
     ) -> crate::Result<MdPass> {
@@ -1826,26 +1799,21 @@ impl Engine {
         } else {
             vec![unknown_step(&new, head)]
         };
-        let held = matches!(copy, LocalCopy::Held);
         let choice = st.review;
         let auto_accept =
             read_group_file(id, remote_files).map_or(true, |(gf, _)| gf.auto_accept_claude_md);
         let review_on = choice.unwrap_or(!auto_accept);
-        // A copy kept local is not this device's concern: the group's text is accepted.
-        st.review = Some(review_on && !held);
+        st.review = Some(review_on);
         let before = st.accepted.clone();
         let mut pulled = st.pull(&steps);
         // The group (or this device) went to auto-accept: what waited is accepted now.
-        if !review_on && !held {
+        if !review_on {
             pulled.applied.extend(st.accept(None));
         }
         st.review = choice;
         report.review.extend(pulled.new);
 
-        let copy = match copy {
-            LocalCopy::Copy(c) => c.map(|b| String::from_utf8_lossy(&b).into_owned()),
-            LocalCopy::Held => None,
-        };
+        let copy = copy.map(|b| String::from_utf8_lossy(&b).into_owned());
         let current = match copy {
             // An unshared edit stays; the changes applied this pass go into it too.
             Some(c) if c != before => {
@@ -1864,7 +1832,7 @@ impl Engine {
             None => None,
         };
         let push = match &current {
-            _ if !shared || held => None,
+            _ if !shared => None,
             // A shared delete.
             None => new_bytes.map(|_| None),
             Some(c) => {
@@ -1965,14 +1933,6 @@ impl Engine {
 
 /// Commits read one by one to attribute `CLAUDE.md` changes when several people pushed.
 const MAX_HISTORY_WALK: usize = 20;
-
-/// The group's `CLAUDE.md` copy as the merge found it.
-enum LocalCopy {
-    /// Not managed on this device ("Keep local").
-    Held,
-    /// `None`: missing.
-    Copy(Option<Vec<u8>>),
-}
 
 /// What review decided for one pass.
 struct MdPass {
@@ -2217,7 +2177,7 @@ mod tests {
     use std::sync::Mutex;
 
     /// `~/.claude` of one device, in memory. Paths in `collide` belong to the user and are never
-    /// written; kept paths stop being managed. Like the real apply, a file edited locally is
+    /// written. Like the real apply, a file edited locally is
     /// left alone while the group's version stays the one last applied.
     #[derive(Default)]
     pub(super) struct StubApply {
@@ -2229,9 +2189,6 @@ mod tests {
         local: HashMap<GroupId, FileSet>,
         /// The group's version of each file as last applied.
         applied: HashMap<GroupId, FileSet>,
-        kept: BTreeSet<String>,
-        /// What `keep_local` was called with, per group.
-        kept_in: HashMap<GroupId, BTreeSet<String>>,
         collide: BTreeSet<String>,
         removed: Vec<GroupId>,
         disabled: Vec<GroupId>,
@@ -2273,7 +2230,7 @@ mod tests {
             let files = st.local.get(group).cloned().unwrap_or_default();
             Ok(files
                 .into_iter()
-                .filter(|(p, _)| !st.kept.contains(p) && !st.collide.contains(p))
+                .filter(|(p, _)| !st.collide.contains(p))
                 .collect())
         }
         fn apply_group(
@@ -2297,7 +2254,7 @@ mod tests {
                     report
                         .collisions
                         .push(Collision::UserFile { path: path.clone() });
-                } else if !st.kept.contains(path) {
+                } else {
                     if applied.get(path) == Some(bytes) && old.get(path) != Some(bytes) {
                         // Edited locally, the group's version did not change.
                         if let Some(mine) = old.get(path) {
@@ -2311,10 +2268,8 @@ mod tests {
                     new.insert(path.clone(), bytes.clone());
                 }
             }
-            for (path, bytes) in old {
-                if st.kept.contains(&path) {
-                    new.insert(path, bytes);
-                } else if !new.contains_key(&path) {
+            for (path, _) in old {
+                if !new.contains_key(&path) {
                     report.removed.push(path);
                 }
             }
@@ -2355,21 +2310,6 @@ mod tests {
             };
             Ok(())
         }
-        fn keep_local(&self, _: &Paths, group: &GroupId, path: &str) -> crate::Result<()> {
-            let mut st = self.st.lock().unwrap();
-            st.kept_in
-                .entry(group.clone())
-                .or_default()
-                .insert(path.into());
-            if !path.starts_with(crate::apply::SETTINGS_POINTER_PREFIX) {
-                st.kept.insert(path.into());
-            }
-            Ok(())
-        }
-        fn kept_local(&self, _: &Paths, group: &GroupId) -> crate::Result<BTreeSet<String>> {
-            let st = self.st.lock().unwrap();
-            Ok(st.kept_in.get(group).cloned().unwrap_or_default())
-        }
         fn write_claude_md(
             &self,
             _: &Paths,
@@ -2378,9 +2318,6 @@ mod tests {
             accepted: &[u8],
         ) -> crate::Result<()> {
             let mut st = self.st.lock().unwrap();
-            if st.kept.contains(group::CLAUDE_MD) {
-                return Ok(());
-            }
             let path = String::from(group::CLAUDE_MD);
             let local = st.local.entry(group.clone()).or_default();
             local.insert(path.clone(), copy.to_vec());
@@ -3398,23 +3335,6 @@ mod tests {
             .unwrap();
         assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "base\n");
         assert_eq!(commit_count(&repo), before);
-    }
-
-    #[tokio::test]
-    async fn keep_local_stops_managing_the_path() {
-        let (_, id, repo, bo) = joined().await;
-        let before = commit_count(&repo);
-        bo.apply.edit(&id, "agents/a.md", "mine\n");
-        bo.engine
-            .resolve_edit(&edit(&id, "agents/a.md"), EditAction::KeepLocal)
-            .await
-            .unwrap();
-        assert!(bo.apply.st.lock().unwrap().kept.contains("agents/a.md"));
-        repo.set_file(group::CLAUDE_MD, "# New\n");
-        bo.engine.sync_all().await.unwrap();
-        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "mine\n");
-        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
-        assert_eq!(commit_count(&repo), before + 1, "only the test's commit");
     }
 
     // The group's CLAUDE.md through review (§7a).

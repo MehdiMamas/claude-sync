@@ -117,7 +117,7 @@ impl Engine {
     }
 
     /// Take the lines of `shared` out of the user's own `CLAUDE.md` text. Only once the
-    /// group's `CLAUDE.md` is applied on this device (not kept local), so nothing is lost.
+    /// group's `CLAUDE.md` is applied on this device, so nothing is lost.
     /// The managed block and import lines stay; the old file is backed up first.
     pub(super) fn remove_own_claude_md(&self, id: &GroupId, shared: &str) -> crate::Result<bool> {
         if !self
@@ -183,7 +183,6 @@ mod tests {
     use super::*;
     use crate::apply::{block_lines, BLOCK_BEGIN, BLOCK_END};
     use crate::engine::tests::{device, fake_scanner, group_repo, joined_host, Device};
-    use crate::engine::ApplyLayer;
     use crate::group::GroupFile;
     use crate::remote::fake::FakeGitHub;
     use std::sync::{Arc, Mutex};
@@ -440,22 +439,5 @@ mod tests {
             repo.file(group::CLAUDE_MD).unwrap(),
             "# Friends\n\nBe kind.\n\n## From bo\n\nUse tabs.\n"
         );
-    }
-
-    #[tokio::test]
-    async fn the_users_text_stays_when_the_group_copy_is_kept_local() {
-        let (_, id, _, bo) = joined_host().await;
-        let before = write_own(&bo, "Use tabs.\n");
-        bo.apply
-            .keep_local(&bo.engine.paths, &id, group::CLAUDE_MD)
-            .unwrap();
-        let done = bo
-            .engine
-            .share_claude_md(&id, &share("Use tabs.\n", true))
-            .await
-            .unwrap();
-        assert!(done.appended && !done.removed_own);
-        assert_eq!(read_own(&bo), before);
-        assert!(backups(&bo).is_empty());
     }
 }

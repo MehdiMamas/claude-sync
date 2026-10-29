@@ -9,7 +9,6 @@ export const PLUGINS_CHANGED = "Plugins changed. Run /reload-plugins in open Cla
 
 const ACTIONS: { action: EditAction; label: string; done: string }[] = [
   { action: "share", label: "Share with group", done: "Shared with the group" },
-  { action: "keepLocal", label: "Keep local", done: "Kept on this device only" },
   { action: "undo", label: "Undo", done: "Restored the group's version" },
 ];
 
