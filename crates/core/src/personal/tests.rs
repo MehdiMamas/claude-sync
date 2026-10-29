@@ -1555,6 +1555,8 @@ async fn turning_personal_sync_off_on_one_device_stops_the_other_at_its_next_syn
     pc.personal_enable().await.unwrap();
     let mac = dev(&world, "ana", "mac", MAC_HOME);
     mac.personal_enable().await.unwrap();
+    // Stamps are milliseconds; in the same one the two would tie (and the remote wins).
+    std::thread::sleep(std::time::Duration::from_millis(5));
 
     let st = pc.personal_disable().await.unwrap();
     assert!(!st.enabled);
