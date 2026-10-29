@@ -233,3 +233,20 @@ pub fn quit(app: &AppHandle) {
     install_pending(app);
     app.exit(0);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MIN: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn quiet_now_cases() {
+        let now = Instant::now() + 60 * MIN;
+        assert!(!quiet_now(true, false, None, now));
+        assert!(!quiet_now(false, true, None, now));
+        assert!(!quiet_now(false, false, Some(now - 5 * MIN), now));
+        assert!(quiet_now(false, false, Some(now - 11 * MIN), now));
+        assert!(quiet_now(false, false, None, now));
+    }
+}
