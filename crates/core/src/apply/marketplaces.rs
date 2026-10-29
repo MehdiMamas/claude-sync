@@ -12,6 +12,7 @@ use super::{
 };
 use crate::paths::MARKETPLACES;
 use crate::{group, settings, FileSet, GroupId, Paths};
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
@@ -199,7 +200,7 @@ pub(super) fn new_files(
         if blocked_by_user(&paths.state_dir, &format!("{MARKETPLACES}/{name}/x")) {
             continue;
         }
-        walk(&dir, &prefix, &mut out)?;
+        walk(&dir, &prefix, &mut Vec::new(), &mut out)?;
     }
     out.retain(|rel| !m.files.contains_key(rel) && entry.is_none_or(|e| !e.excluded.contains(rel)));
     Ok(out)
@@ -216,14 +217,49 @@ pub(super) fn is_new_file(paths: &Paths, m: &Manifest, group: &GroupId, path: &s
         && exists_any(&super::target_of(paths, path))
 }
 
+/// Claude Code writes these into a mod folder itself: `.claude-plugin/types/**` and
+/// `mods/<name>/tsconfig.json`. `rel` is `plugins/<marketplace>/<path>`.
+fn is_generated(rel: &str) -> bool {
+    let r: Vec<&str> = rel.split('/').skip(2).collect();
+    r.windows(2).any(|w| w == [".claude-plugin", "types"])
+        || (r.len() == 3 && r[0] == "mods" && r[2] == "tsconfig.json")
+}
+
 /// Regular files under `dir` as `<prefix>/<relative path>`, skipping links, temp files of
-/// an atomic write, and anything the allowlist refuses (`.git`, `node_modules`, ...).
-fn walk(dir: &Path, prefix: &str, out: &mut Vec<String>) -> crate::Result<()> {
+/// an atomic write, anything the allowlist refuses (`.git`, `node_modules`, ...), files
+/// Claude Code generates, and paths a `.gitignore` in the tree (`ignores`) matches.
+fn walk(
+    dir: &Path,
+    prefix: &str,
+    ignores: &mut Vec<Gitignore>,
+    out: &mut Vec<String>,
+) -> crate::Result<()> {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e.into()),
     };
+    let own = dir.join(".gitignore");
+    let mut b = GitignoreBuilder::new(dir);
+    let pushed = own.is_file() && b.add(&own).is_none();
+    if pushed {
+        if let Ok(g) = b.build() {
+            ignores.push(g);
+        }
+    }
+    let result = walk_entries(entries, prefix, ignores, out);
+    if pushed {
+        ignores.pop();
+    }
+    result
+}
+
+fn walk_entries(
+    entries: fs::ReadDir,
+    prefix: &str,
+    ignores: &mut Vec<Gitignore>,
+    out: &mut Vec<String>,
+) -> crate::Result<()> {
     for e in entries {
         let e = e?;
         let Some(name) = e.file_name().to_str().map(str::to_owned) else {
@@ -231,13 +267,20 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<String>) -> crate::Result<()> {
         };
         let rel = format!("{prefix}/{name}");
         let ft = e.file_type()?;
-        if ft.is_symlink() {
+        if ft.is_symlink() || is_generated(&rel) {
             continue;
         }
-        if ft.is_dir() {
+        let path = e.path();
+        let is_dir = ft.is_dir();
+        if ignores.iter().any(|g| {
+            path.starts_with(g.path()) && g.matched_path_or_any_parents(&path, is_dir).is_ignore()
+        }) {
+            continue;
+        }
+        if is_dir {
             // A folder whose files can never sync is not worth walking.
             if group::is_allowlisted(&format!("{rel}/x")) {
-                walk(&e.path(), &rel, out)?;
+                walk(&path, &rel, ignores, out)?;
             }
         } else if ft.is_file()
             && !name.contains(".claude-sync-tmp-")

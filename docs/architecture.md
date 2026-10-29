@@ -105,6 +105,7 @@ A group can bundle Claude Code plugin marketplaces (issue #30). `plugins/<market
 
 - **Valid marketplace.** The folder name matches `[a-z0-9][a-z0-9-]*`, and `plugins/<marketplace>/.claude-plugin/marketplace.json` exists with `"name"` equal to the folder name. Otherwise the marketplace is not installed and the sync report says why.
 - **Allowlist.** Any path below `plugins/<marketplace>/` syncs, dot-files included (`.claude-plugin/`, `.gitignore`), except `.git`, `.DS_Store`, `.env` / `.env.*` and anything under `node_modules`. The usual path checks still apply (no `..`, no Windows-reserved names).
+- **Generated and ignored.** `.gitignore` files inside a group tree are honoured when looking for local edits, and Claude Code's generated mod files (`.claude-plugin/types/**`, `mods/<name>/tsconfig.json`) are never synced.
 - **Size cap.** A plugin file over 1 MiB is neither placed nor shared. It is reported, and Share refuses it.
 - **Trust.** Plugins run code (hooks, MCP servers, scripts) on every member's machine. The join screens and the group README say so: "Plugins in this group run code on every member's machine; only join groups whose members you trust."
 - Where the files go and how Claude Code finds them is in §7 and §8. Which plugins are on stays in `settings.shared.json` (`enabledPlugins`).
