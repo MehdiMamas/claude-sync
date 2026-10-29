@@ -1536,6 +1536,8 @@ async fn the_review_and_auto_run_choices_follow_too_and_the_newer_one_wins() {
 
     // Both change it before syncing: the later change wins on both.
     crate::choices::set_group(&pc.paths, &g, |c| c.auto_run_jobs = false).unwrap();
+    // Stamps are milliseconds; in the same one the two would tie (and the remote wins).
+    std::thread::sleep(std::time::Duration::from_millis(5));
     crate::choices::set_group(&mac.paths, &g, |c| c.review_claude_md = Some(true)).unwrap();
     pc.sync().await;
     mac.sync().await;

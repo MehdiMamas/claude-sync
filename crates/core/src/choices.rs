@@ -221,9 +221,11 @@ mod tests {
             load(&p).unwrap().group(&id("a/other")),
             GroupChoice::default()
         );
-        assert!(file(&p)
-            .to_string_lossy()
-            .contains("personal-state/claude-sync"));
+        assert!(file(&p).ends_with(
+            std::path::Path::new("personal-state")
+                .join("claude-sync")
+                .join(file(&p).file_name().unwrap())
+        ));
     }
 
     #[test]
