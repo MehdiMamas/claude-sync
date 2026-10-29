@@ -872,6 +872,27 @@ async fn a_device_that_turned_it_off_is_not_turned_back_on() {
 }
 
 #[tokio::test]
+async fn turning_it_on_clears_an_old_error() {
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.set_mem(KLAWLY_WIN, "a.md", "one\n");
+    pc.personal_enable().await.unwrap();
+    let repo = personal_repo(&world, "ana");
+
+    // A sync fails while the repo is public, and the error is kept.
+    repo.set_private(false);
+    pc.personal_sync(false).await.unwrap();
+    assert!(pc.personal_status().last_error.is_some());
+
+    // Fixed and turned on again: the old error is gone.
+    repo.set_private(true);
+    pc.personal_disable().await.unwrap();
+    let st = pc.personal_enable().await.unwrap();
+    assert_eq!(st.last_error, None);
+    assert_eq!(pc.personal_status().last_error, None);
+}
+
+#[tokio::test]
 async fn kinds_choose_what_syncs() {
     let world = FakeGitHub::new();
     let pc = dev(&world, "ana", "pc", WIN_HOME);

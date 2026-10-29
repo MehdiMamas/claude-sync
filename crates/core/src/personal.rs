@@ -519,6 +519,8 @@ impl Engine {
         st.enabled = true;
         st.decided = true;
         st.fingerprint.clear();
+        // An error from before turning it on is old news; a failing sync below writes its own.
+        st.last_error = None;
         self.save_personal(&st)?;
         let report = self.sync_locked(remote.as_ref(), Some(head), &mut st).await;
         if let Some(e) = report.error {
