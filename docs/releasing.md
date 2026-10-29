@@ -83,7 +83,7 @@ The relay answers a platform only when its bundle and `.sig` are both in the rel
 
 ## Linux
 
-No Linux release yet. `ci.yml` compiles, lints and tests on Ubuntu, but the app cannot keep a sign-in there: the `keyring` crate in `crates/core` has no Linux backend enabled, so it falls back to its in-memory mock store (see architecture.md §13). Before a Linux release: enable a Linux keyring backend, test the app on a Linux desktop, add `linux` to `relay/lib/assets.ts` (`claude-sync_<version>_linux_x86_64.AppImage` and its `.sig`, plus a `.deb`), and add an `ubuntu-22.04` or `ubuntu-24.04` leg (`--bundles appimage,deb`) to `release.yml`.
+Releases build Windows, macOS and Linux (Linux is beta). `ci.yml` compiles, lints and tests on Ubuntu, but the app cannot keep a sign-in there: the `keyring` crate in `crates/core` has no Linux backend enabled, so it falls back to its in-memory mock store (see architecture.md §13). Before a Linux release: enable a Linux keyring backend, test the app on a Linux desktop, add `linux` to `relay/lib/assets.ts` (`claude-sync_<version>_linux_x86_64.AppImage` and its `.sig`, plus a `.deb`), and add an `ubuntu-22.04` or `ubuntu-24.04` leg (`--bundles appimage,deb`) to `release.yml`.
 
 ## Local Windows build
 
