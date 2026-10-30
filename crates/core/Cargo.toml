@@ -19,6 +19,7 @@ rustls.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
 base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 keyring = { version = "3", features = ["windows-native", "apple-native"] }
 regex = "1"
 ignore = "0.4"

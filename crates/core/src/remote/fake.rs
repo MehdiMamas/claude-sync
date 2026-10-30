@@ -79,6 +79,7 @@ impl State {
             commit: c.sha.clone(),
             tree: c.tree.clone(),
             date: None,
+            etag: None,
         })
     }
     fn files(&self) -> FileSet {

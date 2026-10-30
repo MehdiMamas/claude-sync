@@ -23,6 +23,7 @@ import { busy, confirmButton, errorBox, h, relTime, replace, spinner, toast } fr
 import { countReview, go, onRefresh, store } from "../store";
 import { claudeMdCard } from "./claude-md";
 import { conflictsCard, copyCard } from "./conflicts";
+import { syncError } from "../limit";
 import { historyCard } from "./history";
 import { explainButton } from "./helper";
 
@@ -875,7 +876,7 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
       const contents = api.groupContents(g.id);
       replace(
         body,
-        g.lastError && h("div", { class: "error", role: "alert" }, g.lastError),
+        syncError(g) && h("div", { class: "error", role: "alert" }, syncError(g)),
         hostNotice(g),
         reviewCard(g.id, g.isHost),
         (g.isHost || g.proposalMode) && proposalsCard(g),

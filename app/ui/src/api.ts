@@ -23,6 +23,8 @@ export interface GroupStatus {
   invited: string[];
   lastSyncUnix: number | null;
   lastError: string | null;
+  /** Unix time GitHub's rate limit lifts, while the last sync was stopped by it. */
+  rateLimitedUntil: number | null;
   conflicts: ConflictInfo[];
   collisions: Collision[];
   /** Only on the status a join returns: plugin files were placed or changed. */
@@ -362,6 +364,8 @@ export interface PersonalStatus {
   newDevicesJoin: boolean | null;
   lastSyncUnix: number | null;
   lastError: string | null;
+  /** Unix time GitHub's rate limit lifts, while the last sync was stopped by it. */
+  rateLimitedUntil: number | null;
   conflicts: ConflictInfo[];
   /** Files left out of the last sync and why. */
   skipped: string[];

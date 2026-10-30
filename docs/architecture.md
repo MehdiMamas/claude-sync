@@ -153,6 +153,9 @@ The engine talks to GitHub's REST API only. It never needs `git` on the machine.
 
 **Remote changes.**
 - Poll `GET /repos/{o}/{r}/commits/{default-branch}` every 60 s (configurable) with `If-None-Match`. A `304` is free against the rate limit.
+- Every GET goes through one in-memory cache in `GitHub` (URL to ETag and body, 256 entries, shared by clones): a repeat GET sends `If-None-Match` and a `304` returns the cached body, so a call with an unchanged answer costs nothing against the rate limit. Non-GET calls and answers without an ETag are never cached. The head ETag is also saved in `head.json` (`etag`), so the first check after a restart can still get a `304`.
+- Slower checks: the rename check (`current_id`) and the host's member pass run at most every 10 minutes per group (the member pass also runs right after a pull or push); pending invitations and topics every 15 minutes.
+- Rate limit: a `403`/`429` with `Retry-After` or no requests left, a `200` that used the last request (`x-ratelimit-remaining: 0`) and a `403` naming the secondary rate limit (60 s) all set one shared "limited until" time. While it is ahead no request goes out. The loop then sleeps until the reset plus 5 s (at most an hour) and runs a full sync. The error reads "GitHub limit reached, resumes at <local time>", and the group and personal status carry `rateLimitedUntil` (Unix seconds) until a sync succeeds.
 - On a new commit, fetch the tree recursively and the blobs that changed, compute remote = files under the allowlist, and merge.
 
 **Merge, per file** (base B, local L, remote R):

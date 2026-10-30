@@ -1,5 +1,6 @@
 // Settings → Personal memory: the user's own CLAUDE.md text and Claude's memories, shared
 // between this account's devices through a private repo. Groups never see it.
+import { syncError } from "../limit";
 import { api, errorText, type Kinds, type PersonalStatus } from "../api";
 import { busy, confirmButton, errorBox, h, relTime, replace, spinner, toast } from "../dom";
 import { store } from "../store";
@@ -137,7 +138,7 @@ function body(st: PersonalStatus, show: (st: PersonalStatus) => void): (HTMLElem
     h("h3", null, "Devices"),
     devices(st, show),
     h("p", { class: "muted small", role: "status" }, `Last synced ${relTime(st.lastSyncUnix)}.`),
-    st.lastError ? h("div", { class: "error", role: "alert" }, st.lastError) : null,
+    syncError(st) ? h("div", { class: "error", role: "alert" }, syncError(st)) : null,
     st.skipped.length > 0 &&
       h(
         "details",

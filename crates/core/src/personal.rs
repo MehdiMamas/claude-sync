@@ -195,6 +195,7 @@ struct State {
     device_id: String,
     last_sync_unix: Option<u64>,
     last_error: Option<String>,
+    rate_limited_until: Option<u64>,
     conflicts: Vec<ConflictInfo>,
     skipped: Vec<String>,
     devices: Vec<Device>,
@@ -227,6 +228,8 @@ pub struct PersonalStatus {
     pub new_devices_join: Option<bool>,
     pub last_sync_unix: Option<u64>,
     pub last_error: Option<String>,
+    /// Unix time GitHub's rate limit lifts, while the last sync was stopped by it.
+    pub rate_limited_until: Option<u64>,
     pub conflicts: Vec<ConflictInfo>,
     /// Files left out of the last sync and why.
     pub skipped: Vec<String>,
@@ -473,6 +476,9 @@ impl Engine {
             if AppState::load(&self.paths)?.paused {
                 return Ok(None);
             }
+            if let Ok(base) = load_base_dir(&self.personal_dir().join("base")) {
+                remote.seed_etag(base.head.etag.as_deref());
+            }
             match remote.head_if_changed().await {
                 Ok(Some(h)) => head = Some(h),
                 Ok(None) => {
@@ -593,6 +599,7 @@ impl Engine {
             Ok(()) => {
                 st.last_sync_unix = Some(now_unix());
                 st.last_error = None;
+                st.rate_limited_until = None;
                 // Choices made on other devices take effect here.
                 match crate::choices::load(&self.paths) {
                     Ok(c) if c.personal.off && c.personal.ts > st.enabled_at_ms => {
@@ -610,6 +617,10 @@ impl Engine {
                 }
             }
             Err(e) => {
+                st.rate_limited_until = match &e {
+                    Error::RateLimited { reset_unix } => Some(*reset_unix),
+                    _ => None,
+                };
                 let e = if is_lost_access(&e) {
                     format!(
                         "can't reach {}: {e}; turn personal memory off and on to start it again",
@@ -1360,6 +1371,7 @@ impl Engine {
             new_devices_join: st.new_devices_join,
             last_sync_unix: st.last_sync_unix,
             last_error: st.last_error.clone(),
+            rate_limited_until: st.rate_limited_until,
             conflicts: st.conflicts.clone(),
             skipped: st.skipped.clone(),
         }

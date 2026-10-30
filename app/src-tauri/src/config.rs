@@ -46,7 +46,7 @@ pub const IDENTIFIER: &str = "com.mehdimamas.claudesync";
 
 pub const DEFAULT_POLL_SECONDS: u64 = 60;
 pub const MIN_POLL_SECONDS: u64 = 15;
-pub const INVITATIONS_EVERY_SECONDS: u64 = 5 * 60;
+pub const INVITATIONS_EVERY_SECONDS: u64 = 15 * 60;
 pub const UPDATES_EVERY_SECONDS: u64 = 6 * 60 * 60;
 /// How much of the log goes with a feedback report.
 pub const FEEDBACK_LOG_BYTES: usize = 200 * 1024;

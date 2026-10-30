@@ -34,6 +34,7 @@ The app binary is also the CLI (`app/src-tauri/src/cli.rs`, handled before Tauri
 - Never commit tokens or keys; the secret-scan patterns are in `crates/core/src/secrets.rs`.
 
 ## Gotchas
+- `GitHub` keeps an in-memory GET cache (URL to ETag and body, `github.rs`): a repeat GET sends `If-None-Match` and a `304` returns the cached body. Never cache non-GET calls or answers without an ETag. The head ETag is also in `head.json`; it is not part of `Head` equality.
 - Each delivered marketplace folder gets a `COMMIT` file (group main sha, then committer date; `apply/marketplaces.rs`): never a local edit, not part of a mod fingerprint, removed with the marketplace.
 - Release profile keeps `panic = "unwind"` on purpose: the app catches engine panics.
 - `.gitignore` excludes `target/`, `node_modules/`, `dist/`, `.vercel/`, `*.key`.

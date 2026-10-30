@@ -25,6 +25,10 @@ pub struct Head {
     /// The commit's committer date (ISO 8601 UTC) when known; an old `head.json` has none.
     #[serde(default)]
     pub date: Option<String>,
+    /// The ETag of the read that made this head, so the first check after a restart can
+    /// still get a `304`. Not part of the identity either.
+    #[serde(default)]
+    pub etag: Option<String>,
 }
 
 /// Two heads are the same commit whether or not either knows its date (a pushed head or an
@@ -42,6 +46,7 @@ impl Head {
         Self {
             commit: String::new(),
             date: None,
+            etag: None,
             tree: String::new(),
         }
     }
@@ -89,6 +94,9 @@ pub trait RemoteRepo: Send + Sync {
     fn id(&self) -> &crate::GroupId;
     /// `None` when unchanged since the last call (ETag `304`).
     async fn head_if_changed(&self) -> crate::Result<Option<Head>>;
+    /// Start `head_if_changed` from the ETag saved with the last synced head, when this
+    /// object has read none yet.
+    fn seed_etag(&self, _etag: Option<&str>) {}
     /// `Head::empty()` for a repo with no commits.
     async fn head(&self) -> crate::Result<Head>;
     /// All group-allowlisted files at a commit.
@@ -389,6 +397,7 @@ impl GitHubRepo {
             commit: commit.sha,
             tree: tree.sha,
             date: None,
+            etag: None,
         })
     }
 
@@ -492,6 +501,7 @@ impl GitHubRepo {
             commit: reply.commit.sha,
             tree: reply.commit.tree.sha,
             date: None,
+            etag: None,
         })
     }
 
@@ -515,6 +525,7 @@ impl GitHubRepo {
                     commit: value.sha,
                     tree: value.commit.tree.sha,
                     date: value.commit.committer.and_then(|c| c.date),
+                    etag: etag.clone(),
                 };
                 (head, etag)
             }
@@ -541,6 +552,13 @@ impl RemoteRepo for GitHubRepo {
 
     async fn head_if_changed(&self) -> crate::Result<Option<Head>> {
         self.fetch_head(true).await
+    }
+
+    fn seed_etag(&self, etag: Option<&str>) {
+        let mut mine = self.etag.lock().unwrap();
+        if mine.is_none() {
+            *mine = etag.map(str::to_string);
+        }
     }
 
     async fn head(&self) -> crate::Result<Head> {
@@ -1102,6 +1120,7 @@ mod tests {
             commit: c.into(),
             tree: t.into(),
             date: None,
+            etag: None,
         }
     }
 
@@ -1663,6 +1682,30 @@ mod tests {
             repo.invite("nobody").await,
             Err(Error::GitHub { status: 404, .. })
         ));
+    }
+
+    #[test]
+    fn a_head_json_without_an_etag_loads() {
+        let h: Head = serde_json::from_str(r#"{"commit":"c","tree":"t","date":"d"}"#).unwrap();
+        assert_eq!(h.etag, None);
+        let kept: Head =
+            serde_json::from_str(r#"{"commit":"c","tree":"t","etag":"\"e\""}"#).unwrap();
+        assert_eq!(kept.etag.as_deref(), Some("\"e\""));
+        assert_eq!(kept, head("c", "t"));
+    }
+
+    #[tokio::test]
+    async fn a_seeded_etag_gets_a_304_after_a_restart() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/commits/main"))
+            .and(header("if-none-match", "\"e1\""))
+            .respond_with(ResponseTemplate::new(304))
+            .expect(1)
+            .mount(&server)
+            .await;
+        repo.seed_etag(Some("\"e1\""));
+        assert_eq!(repo.head_if_changed().await.unwrap(), None);
     }
 
     #[test]
