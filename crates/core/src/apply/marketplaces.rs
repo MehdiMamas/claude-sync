@@ -7,10 +7,12 @@
 //! wins over the same key in a group's `settings.shared.json`, and is removed again when
 //! the marketplace leaves the group or the group is removed.
 use super::{
-    blocked_by_user, exists_any, is_managed_target, load_owned, push_unique, read_settings_file,
-    save_owned, write_atomic, ApplyReport, Backups, Collision, ManagedMarketplace, Manifest,
+    blocked_by_user, exists_any, is_managed_target, load_owned, push_unique, read_file,
+    read_settings_file, remove_counted, save_owned, write_atomic, ApplyReport, Backups, Collision,
+    ManagedMarketplace, Manifest,
 };
 use crate::paths::MARKETPLACES;
+use crate::remote::Head;
 use crate::{group, settings, FileSet, GroupId, Paths};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde_json::{json, Value};
@@ -212,16 +214,70 @@ pub(super) fn is_new_file(paths: &Paths, m: &Manifest, group: &GroupId, path: &s
         .and_then(|name| m.marketplaces.get(name))
         .is_some_and(|o| o.group == *group)
         && !m.files.contains_key(path)
+        && !is_generated(path)
         && group::is_allowlisted(path)
         && is_managed_target(path)
         && exists_any(&super::target_of(paths, path))
+}
+
+/// The marker the app writes at the root of each delivered marketplace folder: the group's
+/// commit sha, and its date when known. Never a local edit.
+pub(crate) const COMMIT: &str = "COMMIT";
+
+/// Write `<marketplace>/COMMIT` for each placed marketplace whose folder exists, only when
+/// the content changes. Marketplaces `group` holds but no longer places lose theirs.
+pub(super) fn write_commit_markers(
+    paths: &Paths,
+    group: &GroupId,
+    m: &Manifest,
+    placed: &BTreeSet<String>,
+    head: Option<&Head>,
+) -> crate::Result<()> {
+    remove_commit_markers(paths, group, m, placed)?;
+    let Some(head) = head else {
+        return Ok(());
+    };
+    let mut text = format!("{}\n", head.commit);
+    if let Some(date) = &head.date {
+        text.push_str(&format!("{date}\n"));
+    }
+    for name in placed {
+        let dir = paths.marketplaces_dir().join(name);
+        if !dir.is_dir() {
+            continue;
+        }
+        let file = dir.join(COMMIT);
+        if read_file(&file)?.as_deref() != Some(text.as_bytes()) {
+            write_atomic(&file, text.as_bytes())?;
+        }
+    }
+    Ok(())
+}
+
+/// Remove the `COMMIT` marker of the marketplaces `group` holds that are not in `keep`.
+pub(super) fn remove_commit_markers(
+    paths: &Paths,
+    group: &GroupId,
+    m: &Manifest,
+    keep: &BTreeSet<String>,
+) -> crate::Result<()> {
+    for (name, o) in &m.marketplaces {
+        if o.group == *group && !keep.contains(name) {
+            let file = paths.marketplaces_dir().join(name).join(COMMIT);
+            if exists_any(&file) {
+                remove_counted(&file)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Claude Code writes these into a mod folder itself: `.claude-plugin/types/**` and
 /// `mods/<name>/tsconfig.json`. `rel` is `plugins/<marketplace>/<path>`.
 fn is_generated(rel: &str) -> bool {
     let r: Vec<&str> = rel.split('/').skip(2).collect();
-    r.windows(2).any(|w| w == [".claude-plugin", "types"])
+    r == [COMMIT]
+        || r.windows(2).any(|w| w == [".claude-plugin", "types"])
         || (r.len() == 3 && r[0] == "mods" && r[2] == "tsconfig.json")
 }
 

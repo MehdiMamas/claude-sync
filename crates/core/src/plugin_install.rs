@@ -303,6 +303,10 @@ fn fingerprint(dir: &Path) -> String {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             let rel = if rel.is_empty() {
+                // The app's `COMMIT` marker is not part of a marketplace's content.
+                if name == "COMMIT" {
+                    continue;
+                }
                 name
             } else {
                 format!("{rel}/{name}")
@@ -922,5 +926,26 @@ mod tests {
             o.warnings[0],
             "couldn't update the mods marketplace: could not add the marketplace (not registered yet): bad source"
         );
+    }
+
+    #[test]
+    fn the_commit_marker_is_not_in_the_fingerprint() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "x").unwrap();
+        let before = fingerprint(dir.path());
+        std::fs::write(
+            dir.path().join("COMMIT"),
+            "abc
+",
+        )
+        .unwrap();
+        assert_eq!(fingerprint(dir.path()), before);
+        std::fs::write(
+            dir.path().join("COMMIT"),
+            "def
+",
+        )
+        .unwrap();
+        assert_eq!(fingerprint(dir.path()), before);
     }
 }

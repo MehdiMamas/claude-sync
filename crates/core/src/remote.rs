@@ -22,6 +22,9 @@ pub type PathFilter = fn(&str) -> bool;
 pub struct Head {
     pub commit: String,
     pub tree: String,
+    /// The commit's committer date (ISO 8601 UTC) when known; an old `head.json` has none.
+    #[serde(default)]
+    pub date: Option<String>,
 }
 
 impl Head {
@@ -29,6 +32,7 @@ impl Head {
     pub fn empty() -> Self {
         Self {
             commit: String::new(),
+            date: None,
             tree: String::new(),
         }
     }
@@ -279,6 +283,13 @@ struct CommitReply {
 #[derive(Deserialize)]
 struct CommitBody {
     tree: Sha,
+    #[serde(default)]
+    committer: Option<Committer>,
+}
+
+#[derive(Deserialize)]
+struct Committer {
+    date: Option<String>,
 }
 
 fn b64() -> base64::engine::GeneralPurpose {
@@ -368,6 +379,7 @@ impl GitHubRepo {
         Ok(Head {
             commit: commit.sha,
             tree: tree.sha,
+            date: None,
         })
     }
 
@@ -470,6 +482,7 @@ impl GitHubRepo {
         Ok(Head {
             commit: reply.commit.sha,
             tree: reply.commit.tree.sha,
+            date: None,
         })
     }
 
@@ -492,6 +505,7 @@ impl GitHubRepo {
                 let head = Head {
                     commit: value.sha,
                     tree: value.commit.tree.sha,
+                    date: value.commit.committer.and_then(|c| c.date),
                 };
                 (head, etag)
             }
@@ -1078,6 +1092,7 @@ mod tests {
         Head {
             commit: c.into(),
             tree: t.into(),
+            date: None,
         }
     }
 
@@ -1639,5 +1654,11 @@ mod tests {
             repo.invite("nobody").await,
             Err(Error::GitHub { status: 404, .. })
         ));
+    }
+
+    #[test]
+    fn a_head_json_without_a_date_loads() {
+        let h: Head = serde_json::from_str(r#"{"commit":"c","tree":"t"}"#).unwrap();
+        assert_eq!(h, head("c", "t"));
     }
 }

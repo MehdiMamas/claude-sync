@@ -1790,3 +1790,79 @@ fn an_old_manifest_with_keep_local_follows_the_group_again_with_a_backup() {
         "{again:?}"
     );
 }
+
+// ---------------------------------------------------------------- COMMIT marker (issue #141)
+
+fn head_of(sha: &str, date: Option<&str>) -> crate::remote::Head {
+    crate::remote::Head {
+        commit: sha.into(),
+        tree: "t".into(),
+        date: date.map(Into::into),
+    }
+}
+
+#[test]
+fn commit_marker_is_written_updated_and_left_alone() {
+    let e = env();
+    let a = g("a");
+    let sha1 = "1".repeat(40);
+    let sha2 = "2".repeat(40);
+    let marker = mp_dir(&e).join("COMMIT");
+    let h1 = head_of(&sha1, Some("2026-10-29T18:04:11Z"));
+    apply_group_at(&e.paths, &a, only(&a), &mp_files(), Some(&h1)).unwrap();
+    assert_eq!(
+        read(&marker).unwrap(),
+        format!("{sha1}\n2026-10-29T18:04:11Z\n").into_bytes()
+    );
+    // Same head: not rewritten.
+    let t = mtime(&marker);
+    apply_group_at(&e.paths, &a, only(&a), &mp_files(), Some(&h1)).unwrap();
+    assert_eq!(mtime(&marker), t);
+    // New head without a date: rewritten with the sha only.
+    apply_group_at(
+        &e.paths,
+        &a,
+        only(&a),
+        &mp_files(),
+        Some(&head_of(&sha2, None)),
+    )
+    .unwrap();
+    assert_eq!(read(&marker).unwrap(), format!("{sha2}\n").into_bytes());
+    // No head: left alone.
+    apply_group(&e.paths, &a, only(&a), &mp_files()).unwrap();
+    assert_eq!(read(&marker).unwrap(), format!("{sha2}\n").into_bytes());
+}
+
+#[test]
+fn commit_marker_is_never_a_local_edit() {
+    let e = env();
+    let a = g("a");
+    let h = head_of(&"1".repeat(40), None);
+    apply_group_at(&e.paths, &a, only(&a), &mp_files(), Some(&h)).unwrap();
+    assert!(mp_dir(&e).join("COMMIT").exists());
+    let m = Manifest::load(&e.paths).unwrap();
+    assert!(added_plugin_files(&e.paths, &m, &a).unwrap().is_empty());
+    assert!(!marketplaces::is_new_file(
+        &e.paths,
+        &m,
+        &a,
+        "plugins/mods/COMMIT"
+    ));
+    assert!(crate::watch::local_edits(&e.paths).unwrap().is_empty());
+}
+
+#[test]
+fn commit_marker_goes_with_its_marketplace() {
+    let e = env();
+    let a = g("a");
+    let h = head_of(&"1".repeat(40), None);
+    apply_group_at(&e.paths, &a, only(&a), &mp_files(), Some(&h)).unwrap();
+    let mut f = mp_files();
+    f.retain(|p, _| !p.starts_with("plugins/"));
+    apply_group_at(&e.paths, &a, only(&a), &f, Some(&h)).unwrap();
+    assert!(!mp_dir(&e).exists());
+
+    apply_group_at(&e.paths, &a, only(&a), &mp_files(), Some(&h)).unwrap();
+    remove_group(&e.paths, &a).unwrap();
+    assert!(!mp_dir(&e).exists());
+}

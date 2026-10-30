@@ -19,6 +19,7 @@
 //! upstream has seen both sides and saved any losing local copy.
 use crate::group;
 use crate::paths::MARKETPLACES;
+use crate::remote::Head;
 use crate::settings::{self, Owned};
 use crate::{FileSet, GroupId, Paths};
 use serde::{Deserialize, Serialize};
@@ -158,6 +159,18 @@ pub fn apply_group(
     group: &GroupId,
     order: &[GroupId],
     files: &FileSet,
+) -> crate::Result<ApplyReport> {
+    apply_group_at(paths, group, order, files, None)
+}
+
+/// [`apply_group`] that also writes the `COMMIT` marker of each marketplace placed here from
+/// `head` (left alone when `None`).
+pub fn apply_group_at(
+    paths: &Paths,
+    group: &GroupId,
+    order: &[GroupId],
+    files: &FileSet,
+    head: Option<&Head>,
 ) -> crate::Result<ApplyReport> {
     let mut m = Manifest::load(paths)?;
     let before = m.clone();
@@ -320,6 +333,7 @@ pub fn apply_group(
             Deleted::Edited => push_unique(&mut report.kept, &rel),
         }
     }
+    marketplaces::write_commit_markers(paths, group, &m, &placed, head)?;
     prune_dirs(paths, &mut m)?;
 
     // 3. The group's CLAUDE.md copy.
@@ -761,6 +775,9 @@ fn unapply_files(
     keep_plugins: bool,
 ) -> crate::Result<()> {
     let dir = group.dir_name();
+    if !keep_plugins {
+        marketplaces::remove_commit_markers(paths, group, m, &BTreeSet::new())?;
+    }
     let ours: Vec<(String, ManagedFile)> = m
         .files
         .iter()

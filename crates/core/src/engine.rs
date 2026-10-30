@@ -206,6 +206,7 @@ pub trait ApplyLayer: Send + Sync {
         group: &GroupId,
         order: &[GroupId],
         files: &FileSet,
+        head: Option<&Head>,
     ) -> crate::Result<ApplyReport>;
     fn remove_group(&self, paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport>;
     /// Take everything the group applied away again, keeping what a re-apply needs
@@ -248,8 +249,9 @@ impl ApplyLayer for FsApply {
         group: &GroupId,
         order: &[GroupId],
         files: &FileSet,
+        head: Option<&Head>,
     ) -> crate::Result<ApplyReport> {
-        crate::apply::apply_group(paths, group, order, files)
+        crate::apply::apply_group_at(paths, group, order, files, head)
     }
     fn remove_group(&self, paths: &Paths, group: &GroupId) -> crate::Result<ApplyReport> {
         crate::apply::remove_group(paths, group)
@@ -871,7 +873,7 @@ impl Engine {
         }
         let applied = self
             .apply
-            .apply_group(&self.paths, id, &state.groups, &files)?;
+            .apply_group(&self.paths, id, &state.groups, &files, None)?;
         state.disabled.remove(id);
         state.save(&self.paths)?;
         self.sync_group(id, None).await;
@@ -1552,7 +1554,9 @@ impl Engine {
             if let Some(text) = md.as_ref().and_then(|m| m.apply.clone()) {
                 to_apply.insert(group::CLAUDE_MD.into(), text);
             }
-            report.apply = self.apply.apply_group(&self.paths, id, &order, &to_apply)?;
+            report.apply =
+                self.apply
+                    .apply_group(&self.paths, id, &order, &to_apply, Some(&head))?;
             for note in too_large {
                 if !report.apply.skipped.contains(&note) {
                     report.apply.skipped.push(note);
@@ -2417,6 +2421,7 @@ mod tests {
             group: &GroupId,
             order: &[GroupId],
             files: &FileSet,
+            _: Option<&Head>,
         ) -> crate::Result<ApplyReport> {
             let mut st = self.st.lock().unwrap();
             st.orders.push(order.to_vec());
@@ -4290,6 +4295,7 @@ Use tabs.
             head: Head {
                 commit: "c1".into(),
                 tree: "t1".into(),
+                date: None,
             },
             files: FileSet::from([
                 ("CLAUDE.md".into(), b"x".to_vec()),
