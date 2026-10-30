@@ -4,6 +4,7 @@ use reqwest::{header, Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -284,8 +285,13 @@ pub struct GitHub {
     pub http: reqwest::Client,
     /// Unix time until which GitHub said we are rate limited.
     limited_until: Arc<Mutex<Option<u64>>>,
+    /// Answers of GETs by URL with their ETag, shared by clones (see `CACHE_LIMIT`).
+    cache: Arc<Mutex<HashMap<String, (String, Response)>>>,
     retry_delay: Duration,
 }
+
+/// GET answers kept for conditional requests. A `304` costs nothing against the rate limit.
+const CACHE_LIMIT: usize = 256;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -368,6 +374,7 @@ impl GitHub {
             api: api.into().trim_end_matches('/').to_string(),
             http: http_client(),
             limited_until: Arc::default(),
+            cache: Arc::default(),
             retry_delay: Duration::from_millis(500),
         }
     }
@@ -450,6 +457,11 @@ impl GitHub {
         etag: Option<&str>,
         token: &str,
     ) -> crate::Result<Response> {
+        // A GET we have an answer for asks "unchanged?" and gets that answer back on a 304.
+        let cached = (etag.is_none() && *method == Method::GET)
+            .then(|| self.cache.lock().unwrap().get(url).cloned())
+            .flatten();
+        let etag = etag.or(cached.as_ref().map(|(tag, _)| tag.as_str()));
         let mut attempt = 0;
         loop {
             let mut req = self
@@ -486,8 +498,29 @@ impl GitHub {
                 self.backoff(attempt).await;
                 continue;
             }
-            return self.finish(resp).await;
+            let mut reply = self.finish(resp).await?;
+            if *method == Method::GET {
+                match (&cached, reply.status) {
+                    (Some((_, old)), 304) => reply = old.clone(),
+                    (_, 200) => {
+                        if let Some(tag) = reply.etag.clone() {
+                            let mut cache = self.cache.lock().unwrap();
+                            if cache.len() >= CACHE_LIMIT && !cache.contains_key(url) {
+                                cache.clear();
+                            }
+                            cache.insert(url.to_string(), (tag, reply.clone()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return Ok(reply);
         }
+    }
+
+    /// Unix time until which GitHub said we are rate limited, if that is still ahead.
+    pub fn limited_until(&self) -> Option<u64> {
+        (*self.limited_until.lock().unwrap()).filter(|reset| *reset > crate::state::now_unix())
     }
 
     async fn backoff(&self, attempt: u32) {
@@ -523,6 +556,13 @@ impl GitHub {
             .map_err(|e| Error::Network(e.without_url().to_string()))?
             .to_vec();
         if status.is_success() || status == StatusCode::NOT_MODIFIED {
+            // The last call GitHub allows: the next ones would fail, so wait for the reset.
+            if text("x-ratelimit-remaining").as_deref() == Some("0") {
+                let reset = text("x-ratelimit-reset").and_then(|s| s.parse::<u64>().ok());
+                if let Some(reset) = reset.filter(|r| *r > crate::state::now_unix()) {
+                    *self.limited_until.lock().unwrap() = Some(reset);
+                }
+            }
             return Ok(Response {
                 status: status.as_u16(),
                 etag: text("etag"),
@@ -542,7 +582,11 @@ impl GitHub {
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(now + 60),
                 )
-            } else if status == StatusCode::TOO_MANY_REQUESTS {
+            } else if status == StatusCode::TOO_MANY_REQUESTS
+                || String::from_utf8_lossy(&body)
+                    .to_ascii_lowercase()
+                    .contains("secondary rate limit")
+            {
                 Some(now + 60)
             } else {
                 None
@@ -799,7 +843,9 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::collections::{HashMap, VecDeque};
-    use wiremock::matchers::{body_string_contains, header, method, path, query_param};
+    use wiremock::matchers::{
+        body_string_contains, header, header_exists, method, path, query_param,
+    };
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn gh(server: &MockServer) -> GitHub {
@@ -1056,6 +1102,111 @@ mod tests {
             matches!(clone.user().await, Err(Error::RateLimited { .. })),
             "no second request"
         );
+    }
+
+    #[tokio::test]
+    async fn a_second_get_sends_if_none_match_and_a_304_returns_the_cached_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/thing"))
+            .and(header("if-none-match", "\"v1\""))
+            .respond_with(ResponseTemplate::new(304))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/thing"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("etag", "\"v1\"")
+                    .set_body_json(json!({"n": 1})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let gh = gh(&server);
+        let first: Value = gh.get("/thing").await.unwrap();
+        let again: Value = gh.clone().get("/thing").await.unwrap();
+        assert_eq!(first, json!({"n": 1}));
+        assert_eq!(again, first);
+    }
+
+    #[tokio::test]
+    async fn only_gets_with_an_etag_are_cached() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/thing"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("etag", "\"p\"")
+                    .set_body_json(json!({})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/plain"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+        let gh = gh(&server);
+        let _: Value = gh.send(Method::POST, "/thing", &json!({})).await.unwrap();
+        let _: Value = gh.get("/plain").await.unwrap();
+        assert!(gh.cache.lock().unwrap().is_empty());
+        Mock::given(method("POST"))
+            .and(path("/thing"))
+            .and(header_exists("if-none-match"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let _: Value = gh.send(Method::POST, "/thing", &json!({})).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_200_with_none_left_limits_until_the_reset() {
+        let server = MockServer::start().await;
+        let reset = crate::state::now_unix() + 600;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-ratelimit-remaining", "0")
+                    .insert_header("x-ratelimit-reset", reset.to_string().as_str())
+                    .set_body_json(json!({"login": "me"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let gh = gh(&server);
+        assert_eq!(gh.user().await.unwrap().login, "me");
+        assert_eq!(gh.limited_until(), Some(reset));
+        assert!(matches!(gh.user().await, Err(Error::RateLimited { .. })));
+    }
+
+    #[tokio::test]
+    async fn a_secondary_limit_waits_a_minute() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+                "message": "You have exceeded a secondary rate limit. Please wait."
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let gh = gh(&server);
+        let before = crate::state::now_unix();
+        assert!(matches!(gh.user().await, Err(Error::RateLimited { .. })));
+        let until = gh.limited_until().unwrap();
+        assert!((before + 59..=before + 62).contains(&until), "{until}");
+    }
+
+    #[tokio::test]
+    async fn no_request_goes_out_while_limited() {
+        let server = MockServer::start().await;
+        let gh = gh(&server);
+        *gh.limited_until.lock().unwrap() = Some(crate::state::now_unix() + 600);
+        assert!(matches!(gh.user().await, Err(Error::RateLimited { .. })));
+        let _ = gh.call(Method::POST, "/x", None).await;
+        assert!(server.received_requests().await.unwrap().is_empty());
     }
 
     #[test]

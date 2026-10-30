@@ -18,7 +18,7 @@ use crate::state::{now_unix, utc_stamp, write_atomic, write_json, AppState};
 use crate::watch::{EditAction, LocalEdit};
 use crate::{Error, FileSet, GroupId, Paths};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -41,6 +41,8 @@ pub struct GroupStatus {
     pub invited: Vec<String>,
     pub last_sync_unix: Option<u64>,
     pub last_error: Option<String>,
+    /// Unix time GitHub's rate limit lifts, while the last sync was stopped by it.
+    pub rate_limited_until: Option<u64>,
     pub conflicts: Vec<ConflictInfo>,
     pub collisions: Vec<crate::apply::Collision>,
     /// Joining placed or changed plugin files: open Claude Code sessions need
@@ -302,7 +304,12 @@ pub struct Engine {
     pub(crate) locked: std::sync::Mutex<BTreeSet<GroupId>>,
     /// The user's home folder: personal memory keys are relative to it (`crate::personal`).
     pub(crate) user_home: Option<PathBuf>,
+    /// When each slow per-group check last ran (unix seconds), see `due`.
+    pub(crate) last_run: std::sync::Mutex<HashMap<(GroupId, &'static str), u64>>,
 }
+
+/// How often the rename check and the host's member pass run per group.
+const SLOW_CHECK_SECONDS: u64 = 10 * 60;
 
 /// Last synced state of a group (§6): the remote head and its allowlisted files.
 #[derive(Debug, Clone, PartialEq)]
@@ -330,6 +337,7 @@ struct Status {
     invited: Vec<String>,
     last_sync_unix: Option<u64>,
     last_error: Option<String>,
+    rate_limited_until: Option<u64>,
     conflicts: Vec<ConflictInfo>,
     collisions: Vec<StoredCollision>,
     /// Paths whose local edit the user chose to share; pushed by the next sync.
@@ -397,6 +405,7 @@ impl Engine {
             busy: tokio::sync::Mutex::new(()),
             locked: std::sync::Mutex::new(BTreeSet::new()),
             user_home: std::env::home_dir(),
+            last_run: std::sync::Mutex::default(),
         }
     }
 
@@ -421,7 +430,7 @@ impl Engine {
     pub async fn sync_all(&self) -> crate::Result<SyncReport> {
         let _busy = self.busy.lock().await;
         let mut out = SyncReport {
-            moved: self.follow_moves().await,
+            moved: self.follow_moves(true).await,
             ..SyncReport::default()
         };
         for id in AppState::load(&self.paths)?.groups {
@@ -438,12 +447,16 @@ impl Engine {
             return Ok(SyncReport::default());
         }
         let mut out = SyncReport {
-            moved: self.follow_moves().await,
+            moved: self.follow_moves(false).await,
             ..SyncReport::default()
         };
         let state = AppState::load(&self.paths)?;
         for id in &state.groups {
-            let head = match self.remotes.open(id).head_if_changed().await {
+            let remote = self.remotes.open(id);
+            if let Ok(base) = self.load_base(id) {
+                remote.seed_etag(base.head.etag.as_deref());
+            }
+            let head = match remote.head_if_changed().await {
                 Ok(Some(head)) => Some(head),
                 Ok(None) => {
                     // Unchanged remote: only shared edits waiting to be pushed, or a failed
@@ -465,12 +478,15 @@ impl Engine {
     /// Ask GitHub for each joined repo's current name; a renamed or transferred repo moves every
     /// local trace to the new id (`rename::migrate`, resumable). Errors (offline, no access) are
     /// left to the sync itself to report. The caller holds the busy lock.
-    async fn follow_moves(&self) -> Vec<MovedGroup> {
+    async fn follow_moves(&self, force: bool) -> Vec<MovedGroup> {
         let mut moved = Vec::new();
         let Ok(state) = AppState::load(&self.paths) else {
             return moved;
         };
         for id in state.groups {
+            if !force && !self.due(&id, "moves") {
+                continue;
+            }
             let Ok(now) = self.remotes.open(&id).current_id().await else {
                 continue;
             };
@@ -483,6 +499,19 @@ impl Engine {
             }
         }
         moved
+    }
+
+    /// Whether the slow check `what` of group `id` is due (at most every
+    /// `SLOW_CHECK_SECONDS`); marks it as run now when it is.
+    fn due(&self, id: &GroupId, what: &'static str) -> bool {
+        let now = now_unix();
+        let mut last = self.last_run.lock().unwrap();
+        let ran = last.entry((id.clone(), what)).or_insert(0);
+        if *ran != 0 && now < *ran + SLOW_CHECK_SECONDS {
+            return false;
+        }
+        *ran = now;
+        true
     }
 
     /// Hand the group repo to another member (host only). GitHub emails the new owner, who must
@@ -1459,6 +1488,7 @@ impl Engine {
             Ok(()) => {
                 status.last_sync_unix = Some(now_unix());
                 status.last_error = None;
+                status.rate_limited_until = None;
             }
             Err(e) => {
                 // A secret blocks the push until the user fixes the file and shares again.
@@ -1467,6 +1497,10 @@ impl Engine {
                 }
                 tracing::warn!(group = %id, error = %e, "sync failed");
                 status.last_error = Some(e.to_string());
+                status.rate_limited_until = match e {
+                    Error::RateLimited { reset_unix } => Some(*reset_unix),
+                    _ => None,
+                };
                 report.error = Some(e.to_string());
             }
         }
@@ -1630,7 +1664,11 @@ impl Engine {
                 self.merge_approved(remote, &gf).await;
             }
             self.ensure_lock(remote, id, status).await;
-            status.invited = self.reconcile(remote, &gf, &host).await?;
+            // Members only change with the group file, or when someone accepts: look every
+            // so often, and at once after this pass pulled or pushed.
+            if report.pulled || report.pushed || self.due(id, "members") {
+                status.invited = self.reconcile(remote, &gf, &host).await?;
+            }
         } else {
             status.invited.clear();
             status.host_lock = None;
@@ -1881,6 +1919,7 @@ impl Engine {
             invited: s.invited,
             last_sync_unix: s.last_sync_unix,
             last_error: s.last_error,
+            rate_limited_until: s.rate_limited_until,
             conflicts: s.conflicts,
             collisions: s.collisions.into_iter().map(Into::into).collect(),
             plugins_changed: false,
@@ -4296,6 +4335,7 @@ Use tabs.
                 commit: "c1".into(),
                 tree: "t1".into(),
                 date: None,
+                etag: None,
             },
             files: FileSet::from([
                 ("CLAUDE.md".into(), b"x".to_vec()),

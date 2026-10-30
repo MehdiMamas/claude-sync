@@ -1,4 +1,5 @@
 // Groups: joined groups with status, pending invitations, groups to join, create a group.
+import { syncError } from "../limit";
 import { api, errorText, groupKey, type GroupId, type GroupStatus, type Invitation } from "../api";
 import { busy, errorBox, h, relTime, replace, spinner, toast } from "../dom";
 import { countReview, go, onRefresh, store, subscribe } from "../store";
@@ -34,7 +35,7 @@ function groupRow(g: GroupStatus, pos: number, all: GroupStatus[], move: (from: 
         { class: "grow" },
         h("div", { class: "row-title" }, g.name, hosting && h("span", { class: "tag" }, "you host")),
         h("div", { class: "muted small" }, `${groupKey(g.id)} · ${g.members.length} member${g.members.length === 1 ? "" : "s"}`),
-        g.lastError && h("div", { class: "error-text small" }, g.lastError),
+        syncError(g) && h("div", { class: "error-text small" }, syncError(g)),
       ),
       h(
         "div",

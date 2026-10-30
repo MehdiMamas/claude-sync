@@ -25,13 +25,18 @@ pub fn start(app: &AppHandle) {
 
 async fn sync_loop(app: AppHandle) {
     let ctx = app.state::<Arc<Ctx>>().inner().clone();
+    // The pass after a rate limit lifts looks at everything, not only at changes.
+    let mut was_limited = false;
     loop {
         // A panic here is already caught by `guard`; this is a last line of defence.
         let a = app.clone();
-        if let Err(e) = tauri::async_runtime::spawn(async move { tick(&a).await }).await {
+        let full = was_limited;
+        if let Err(e) = tauri::async_runtime::spawn(async move { tick(&a, full).await }).await {
             tracing::error!("sync tick failed: {e}");
         }
-        let wait = Duration::from_secs(ctx.poll_seconds());
+        let limited = limited_until(&ctx);
+        was_limited = limited.is_some();
+        let wait = next_wake(now_unix(), Duration::from_secs(ctx.poll_seconds()), limited);
         tokio::select! {
             _ = tokio::time::sleep(wait) => {}
             _ = ctx.wake.notified() => {}
@@ -39,9 +44,23 @@ async fn sync_loop(app: AppHandle) {
     }
 }
 
-async fn tick(app: &AppHandle) {
-    let _ = run_sync(app, false).await;
-    crate::personal::after_sync(app, false).await;
+/// When GitHub's rate limit lifts, if this sign-in is limited now.
+fn limited_until(ctx: &Ctx) -> Option<u64> {
+    ctx.engine().ok().and_then(|e| e.gh.limited_until())
+}
+
+/// How long the sync loop sleeps: the interval, or until a rate limit lifts (plus 5 s,
+/// at most an hour) when GitHub has limited us.
+pub fn next_wake(now: u64, interval: Duration, limited_until: Option<u64>) -> Duration {
+    match limited_until {
+        Some(reset) if reset > now => Duration::from_secs((reset - now + 5).min(3600)),
+        _ => interval,
+    }
+}
+
+async fn tick(app: &AppHandle, full: bool) {
+    let _ = run_sync(app, full).await;
+    crate::personal::after_sync(app, full).await;
     check_local_edits(app);
     feedback::retry_outbox(app).await;
     // Job runs (`run-job`, a separate process) add to the history without the app.
@@ -70,8 +89,25 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
         return Err("Syncing is paused".into());
     }
     let engine = ctx.engine()?;
-    let _running = ctx.sync_lock.lock().await;
     let last = ctx.status().last_sync_unix;
+    // Limited by GitHub: make no request, say when it lifts. The loop syncs at the reset.
+    if let Some(reset) = engine.gh.limited_until() {
+        let text = format!(
+            "GitHub limit reached, resumes at {}",
+            claude_sync_core::error::reset_text(reset)
+        );
+        publish(
+            app,
+            Status {
+                state: "error",
+                text: text.clone(),
+                last_sync_unix: last,
+                error: Some(text.clone()),
+            },
+        );
+        return Err(text);
+    }
+    let _running = ctx.sync_lock.lock().await;
     publish(
         app,
         Status {
@@ -171,7 +207,13 @@ pub async fn run_sync(app: &AppHandle, full: bool) -> Result<SyncReport, Error> 
                     },
                 );
             } else {
-                let text = format!("{} group(s) had an error", errors.len());
+                let text = match engine.gh.limited_until() {
+                    Some(reset) => format!(
+                        "GitHub limit reached, resumes at {}",
+                        claude_sync_core::error::reset_text(reset)
+                    ),
+                    None => format!("{} group(s) had an error", errors.len()),
+                };
                 publish(
                     app,
                     Status {
@@ -381,5 +423,33 @@ fn start_watcher(app: &AppHandle) {
 fn refresh_watcher(app: &AppHandle) {
     if let Some(h) = app.try_state::<WatchHandle>() {
         h.refresh();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MIN: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn next_wake_is_the_interval_when_not_limited() {
+        assert_eq!(next_wake(1000, MIN, None), MIN);
+        // A limit that has already passed changes nothing.
+        assert_eq!(next_wake(1000, MIN, Some(1000)), MIN);
+        assert_eq!(next_wake(1000, MIN, Some(900)), MIN);
+    }
+
+    #[test]
+    fn next_wake_waits_for_the_reset_plus_five_seconds() {
+        assert_eq!(next_wake(1000, MIN, Some(1600)), Duration::from_secs(605));
+    }
+
+    #[test]
+    fn next_wake_waits_at_most_an_hour() {
+        assert_eq!(
+            next_wake(1000, MIN, Some(1000 + 7200)),
+            Duration::from_secs(3600)
+        );
     }
 }

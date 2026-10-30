@@ -356,6 +356,7 @@ mod tests {
             new_devices_join: None,
             last_sync_unix: Some(1000),
             last_error: Some("offline".into()),
+            rate_limited_until: None,
             conflicts: vec![],
             skipped: vec![],
         }

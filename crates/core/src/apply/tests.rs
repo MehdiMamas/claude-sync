@@ -1798,6 +1798,7 @@ fn head_of(sha: &str, date: Option<&str>) -> crate::remote::Head {
         commit: sha.into(),
         tree: "t".into(),
         date: date.map(Into::into),
+        etag: None,
     }
 }
 
