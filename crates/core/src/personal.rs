@@ -479,7 +479,19 @@ impl Engine {
             if let Ok(base) = load_base_dir(&self.personal_dir().join("base")) {
                 remote.seed_etag(base.head.etag.as_deref());
             }
-            match remote.head_if_changed().await {
+            let seen = self.fresh_snapshot(&self.personal_id());
+            let changed = match seen {
+                Some(snap) => {
+                    let base = load_base_dir(&self.personal_dir().join("base"));
+                    if base.is_ok_and(|b| b.head == snap.head) {
+                        Ok(None)
+                    } else {
+                        Ok(Some(snap.head))
+                    }
+                }
+                None => remote.head_if_changed().await,
+            };
+            match changed {
                 Ok(Some(h)) => head = Some(h),
                 Ok(None) => {
                     let quiet = st.last_error.is_none()
@@ -1258,6 +1270,19 @@ impl Engine {
                 })
             })
             .collect()
+    }
+
+    /// The personal repo's id when personal memory is on, for the tick's GraphQL call.
+    pub(crate) fn personal_snapshot_id(&self) -> Option<GroupId> {
+        self.load_personal().enabled.then(|| self.personal_id())
+    }
+
+    /// The GraphQL answer for `id` if the group pass took one a moment ago.
+    fn fresh_snapshot(&self, id: &GroupId) -> Option<crate::github::RepoSnapshot> {
+        let (at, snaps) = &*self.snapshots.lock().unwrap();
+        (now_unix().saturating_sub(*at) <= crate::engine::SNAPSHOT_FRESH_SECONDS)
+            .then(|| snaps.get(id).cloned())
+            .flatten()
     }
 
     fn personal_id(&self) -> GroupId {

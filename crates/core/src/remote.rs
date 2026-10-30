@@ -1,7 +1,7 @@
 //! The engine's only view of a group repo (§6). `GitHubRepo` talks to the REST API;
 //! `fake::FakeRepo` is in-memory for tests (and is public so the app's tests can use it).
 use crate::engine::CommitInfo;
-use crate::github::{GitHub, Invitation};
+use crate::github::{GitHub, Invitation, RepoSnapshot};
 use crate::{Error, FileSet, GroupId};
 use async_trait::async_trait;
 use base64::Engine as _;
@@ -209,6 +209,11 @@ pub trait RemoteFactory: Send + Sync {
     /// An empty private repo without the group topic (the personal memory repo), so it is
     /// never discovered or offered as a group.
     async fn create_personal_repo(&self, name: &str) -> crate::Result<GroupId>;
+    /// Name and head of every repo in `ids` from one call, or `None` when that is not
+    /// possible (the caller then asks each repo).
+    async fn snapshots(&self, _ids: &[GroupId]) -> Option<HashMap<GroupId, RepoSnapshot>> {
+        None
+    }
 }
 
 pub struct GitHubRemotes {
@@ -248,6 +253,15 @@ impl RemoteFactory for GitHubRemotes {
     }
     async fn create_personal_repo(&self, name: &str) -> crate::Result<GroupId> {
         self.gh.create_private_repo(name).await
+    }
+    async fn snapshots(&self, ids: &[GroupId]) -> Option<HashMap<GroupId, RepoSnapshot>> {
+        match self.gh.repo_snapshots(ids).await {
+            Ok(found) => Some(found),
+            Err(e) => {
+                tracing::info!("GraphQL check failed, using REST: {e}");
+                None
+            }
+        }
     }
 }
 
