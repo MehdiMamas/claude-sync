@@ -28,6 +28,7 @@ The app binary is also the CLI (`app/src-tauri/src/cli.rs`, handled before Tauri
 - `claude-sync status`: login, each group with its state and last sync, personal memory.
 - `claude-sync personal status|enable|disable`: the same as Settings -> Personal memory. After a change the CLI sends `--refresh` to the running app (if any), which reloads its screens.
 - On macOS and Linux the release app links `~/.local/bin/claude-sync` to its binary at startup (only if that folder exists and the name is free). Windows has no shim: run the full path of `claude-sync.exe`. Debug builds add no link; run `target/debug/claude-sync`.
+- On Windows the release exe is a GUI program, so PowerShell shows none of its output when you call it directly: pipe it, e.g. `& "$env:LOCALAPPDATAaude-syncaude-sync.exe" status --json | Out-String` (#149).
 
 ## Conventions
 - One change per PR; paste the commands you ran with exit codes and counts, and name the OS.
