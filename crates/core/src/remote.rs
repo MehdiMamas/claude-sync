@@ -18,7 +18,7 @@ pub type Changes = BTreeMap<String, Option<Vec<u8>>>;
 /// Which repo paths `files_matching` reads.
 pub type PathFilter = fn(&str) -> bool;
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct Head {
     pub commit: String,
     pub tree: String,
@@ -26,6 +26,15 @@ pub struct Head {
     #[serde(default)]
     pub date: Option<String>,
 }
+
+/// Two heads are the same commit whether or not either knows its date (a pushed head or an
+/// old `head.json` has none), so a missing date never forces a re-fetch.
+impl PartialEq for Head {
+    fn eq(&self, other: &Self) -> bool {
+        self.commit == other.commit && self.tree == other.tree
+    }
+}
+impl Eq for Head {}
 
 impl Head {
     /// The head of a repo with no commits yet.
