@@ -78,6 +78,7 @@ impl State {
         self.commits.last().map_or_else(Head::empty, |c| Head {
             commit: c.sha.clone(),
             tree: c.tree.clone(),
+            date: None,
         })
     }
     fn files(&self) -> FileSet {

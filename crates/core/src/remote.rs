@@ -18,17 +18,30 @@ pub type Changes = BTreeMap<String, Option<Vec<u8>>>;
 /// Which repo paths `files_matching` reads.
 pub type PathFilter = fn(&str) -> bool;
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct Head {
     pub commit: String,
     pub tree: String,
+    /// The commit's committer date (ISO 8601 UTC) when known; an old `head.json` has none.
+    #[serde(default)]
+    pub date: Option<String>,
 }
+
+/// Two heads are the same commit whether or not either knows its date (a pushed head or an
+/// old `head.json` has none), so a missing date never forces a re-fetch.
+impl PartialEq for Head {
+    fn eq(&self, other: &Self) -> bool {
+        self.commit == other.commit && self.tree == other.tree
+    }
+}
+impl Eq for Head {}
 
 impl Head {
     /// The head of a repo with no commits yet.
     pub fn empty() -> Self {
         Self {
             commit: String::new(),
+            date: None,
             tree: String::new(),
         }
     }
@@ -279,6 +292,13 @@ struct CommitReply {
 #[derive(Deserialize)]
 struct CommitBody {
     tree: Sha,
+    #[serde(default)]
+    committer: Option<Committer>,
+}
+
+#[derive(Deserialize)]
+struct Committer {
+    date: Option<String>,
 }
 
 fn b64() -> base64::engine::GeneralPurpose {
@@ -368,6 +388,7 @@ impl GitHubRepo {
         Ok(Head {
             commit: commit.sha,
             tree: tree.sha,
+            date: None,
         })
     }
 
@@ -470,6 +491,7 @@ impl GitHubRepo {
         Ok(Head {
             commit: reply.commit.sha,
             tree: reply.commit.tree.sha,
+            date: None,
         })
     }
 
@@ -492,6 +514,7 @@ impl GitHubRepo {
                 let head = Head {
                     commit: value.sha,
                     tree: value.commit.tree.sha,
+                    date: value.commit.committer.and_then(|c| c.date),
                 };
                 (head, etag)
             }
@@ -1078,6 +1101,7 @@ mod tests {
         Head {
             commit: c.into(),
             tree: t.into(),
+            date: None,
         }
     }
 
@@ -1639,5 +1663,11 @@ mod tests {
             repo.invite("nobody").await,
             Err(Error::GitHub { status: 404, .. })
         ));
+    }
+
+    #[test]
+    fn a_head_json_without_a_date_loads() {
+        let h: Head = serde_json::from_str(r#"{"commit":"c","tree":"t"}"#).unwrap();
+        assert_eq!(h, head("c", "t"));
     }
 }
