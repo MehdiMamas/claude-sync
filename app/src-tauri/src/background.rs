@@ -6,6 +6,7 @@ use crate::guard::{self, Error};
 use crate::notify::{self, Kind};
 use crate::{feedback, tray, updates};
 use claude_sync_core::engine::SyncReport;
+use claude_sync_core::github::with_caller;
 use claude_sync_core::review;
 use claude_sync_core::watch::WatchHandle;
 use claude_sync_core::GroupId;
@@ -20,6 +21,8 @@ pub fn start(app: &AppHandle) {
     tauri::async_runtime::spawn(async move { invitations_loop(a).await });
     let a = app.clone();
     tauri::async_runtime::spawn(async move { update_loop(a).await });
+    let a = app.clone();
+    tauri::async_runtime::spawn(async move { requests_loop(a).await });
     start_watcher(app);
 }
 
@@ -59,8 +62,8 @@ pub fn next_wake(now: u64, interval: Duration, limited_until: Option<u64>) -> Du
 }
 
 async fn tick(app: &AppHandle, full: bool) {
-    let _ = run_sync(app, full).await;
-    crate::personal::after_sync(app, full).await;
+    let _ = with_caller("tick", run_sync(app, full)).await;
+    with_caller("personal", crate::personal::after_sync(app, full)).await;
     check_local_edits(app);
     feedback::retry_outbox(app).await;
     // Job runs (`run-job`, a separate process) add to the history without the app.
@@ -71,8 +74,8 @@ async fn tick(app: &AppHandle, full: bool) {
 pub fn sync_soon(app: &AppHandle, full: bool) {
     let a = app.clone();
     tauri::async_runtime::spawn(async move {
-        let _ = run_sync(&a, full).await;
-        crate::personal::after_sync(&a, full).await;
+        let _ = with_caller("tick", run_sync(&a, full)).await;
+        with_caller("personal", crate::personal::after_sync(&a, full)).await;
         check_local_edits(&a);
     });
 }
@@ -355,7 +358,7 @@ pub fn check_local_edits(app: &AppHandle) {
 async fn invitations_loop(app: AppHandle) {
     tokio::time::sleep(Duration::from_secs(5)).await;
     loop {
-        let _ = check_invitations(&app).await;
+        let _ = with_caller("invitations", check_invitations(&app)).await;
         tokio::time::sleep(Duration::from_secs(config::INVITATIONS_EVERY_SECONDS)).await;
     }
 }
@@ -390,6 +393,35 @@ pub async fn check_invitations(
         );
     }
     Ok(invites)
+}
+
+/// Write `requests.json` every minute and log the totals every 10 minutes.
+async fn requests_loop(app: AppHandle) {
+    let ctx = app.state::<Arc<Ctx>>().inner().clone();
+    let mut minute = 0u64;
+    loop {
+        minute += 1;
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        let Ok(engine) = ctx.engine() else { continue };
+        let counts = engine.gh.request_counts();
+        if let Err(e) = counts.write(&ctx.paths.requests_file()) {
+            tracing::warn!("requests.json: {e}");
+        }
+        if minute.is_multiple_of(10) {
+            let snap = counts.snapshot();
+            let total: u64 = snap.total.iter().map(|e| e.count).sum();
+            let top: Vec<String> = snap
+                .total
+                .iter()
+                .take(3)
+                .map(|e| format!("{} {} {} ({})", e.count, e.endpoint, e.result, e.caller))
+                .collect();
+            tracing::info!(
+                "GitHub requests since start: {total}; top: {}",
+                top.join("; ")
+            );
+        }
+    }
 }
 
 async fn update_loop(app: AppHandle) {

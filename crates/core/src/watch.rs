@@ -525,6 +525,7 @@ mod tests {
             &h.join(".settings.json.claude-sync-tmp-12")
         ));
         assert!(!relevant(&paths, &paths.state_dir.join("manifest.json")));
+        assert!(!relevant(&paths, &paths.requests_file()));
         assert!(!relevant(
             &paths,
             &paths.group_dir(&g("a")).join("base").join("x.md")

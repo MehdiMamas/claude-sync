@@ -10,9 +10,14 @@ use std::time::Duration;
 
 mod app;
 mod graphql;
+mod requests;
 mod session;
 pub use app::{install_url, manage_url, uncovered, Coverage, Installation};
 pub use graphql::{heads_query, parse_heads, RepoSnapshot};
+pub use requests::{
+    read as read_request_counts, top_lines, with_caller, Entry as RequestEntry, RequestCounts,
+    Snapshot as RequestSnapshot,
+};
 pub use session::{refresh_tokens_at, Session, Tokens, REFRESH_MARGIN_SECS};
 
 pub const API: &str = "https://api.github.com";
@@ -290,6 +295,8 @@ pub struct GitHub {
     limited_until: Arc<Mutex<HashMap<&'static str, u64>>>,
     /// Answers of GETs by URL with their ETag, shared by clones (see `CACHE_LIMIT`).
     cache: Arc<Mutex<HashMap<String, (String, Response)>>>,
+    /// Requests sent, per caller and endpoint, shared by clones.
+    counts: Arc<RequestCounts>,
     retry_delay: Duration,
 }
 
@@ -391,6 +398,7 @@ impl GitHub {
             http: http_client(),
             limited_until: Arc::default(),
             cache: Arc::default(),
+            counts: Arc::default(),
             retry_delay: Duration::from_millis(500),
         }
     }
@@ -413,6 +421,11 @@ impl GitHub {
             };
         }
         Ok(format!("{}{}", self.api, path))
+    }
+
+    /// What this process has sent to GitHub so far (`requests.json`).
+    pub fn request_counts(&self) -> &Arc<RequestCounts> {
+        &self.counts
     }
 
     /// The session this client sends the token of.
@@ -518,6 +531,11 @@ impl GitHub {
                 Err(e) => return Err(Error::Network(e.without_url().to_string())),
             };
             let status = resp.status();
+            self.counts.record(
+                method.as_str(),
+                url.strip_prefix(self.api.as_str()).unwrap_or(url),
+                status.as_u16(),
+            );
             if *method == Method::GET && retry_left && matches!(status.as_u16(), 502..=504) {
                 self.backoff(attempt).await;
                 continue;
@@ -1082,6 +1100,58 @@ mod tests {
         // A token that does not expire is still saved bare, readable by 0.1.1.
         save_to(&store, "alice", &Tokens::plain("gho_new")).unwrap();
         assert_eq!(store.get("alice").unwrap().as_deref(), Some("gho_new"));
+    }
+
+    #[tokio::test]
+    async fn requests_are_counted_by_caller_endpoint_and_result() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls"))
+            .and(header("if-none-match", "\"v1\""))
+            .respond_with(ResponseTemplate::new(304))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("etag", "\"v1\"")
+                    .set_body_json(json!([])),
+            )
+            .mount(&server)
+            .await;
+        let gh = gh(&server);
+        let clone = gh.clone();
+        with_caller("tick", async {
+            clone
+                .get::<Value>("/repos/o/r/pulls?state=open")
+                .await
+                .unwrap();
+            // The second GET sends If-None-Match from the cache and gets the 304.
+            clone
+                .get::<Value>("/repos/o/r/pulls?state=open")
+                .await
+                .unwrap();
+        })
+        .await;
+        gh.get::<Value>("/repos/o/r/pulls?state=open")
+            .await
+            .unwrap();
+        let snap = gh.request_counts().snapshot();
+        let count = |caller: &str, result: &str| {
+            snap.total
+                .iter()
+                .find(|e| {
+                    e.caller == caller
+                        && e.result == result
+                        && e.endpoint == "GET repos/:repo/pulls"
+                })
+                .map(|e| e.count)
+        };
+        assert_eq!(count("tick", "200"), Some(1));
+        assert_eq!(count("tick", "304"), Some(1));
+        assert_eq!(count("other", "304"), Some(1));
+        assert_eq!(snap.last10min, snap.total);
     }
 
     #[tokio::test]

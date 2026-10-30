@@ -37,6 +37,7 @@ The app binary is also the CLI (`app/src-tauri/src/cli.rs`, handled before Tauri
 ## Gotchas
 - `GitHub` keeps an in-memory GET cache (URL to ETag and body, `github.rs`): a repeat GET sends `If-None-Match` and a `304` returns the cached body. Never cache non-GET calls or answers without an ETag. The head ETag is also in `head.json`; it is not part of `Head` equality.
 - The background tick asks GitHub for every group repo and the personal repo in one GraphQL call (`github/graphql.rs`, `RemoteFactory::snapshots`): name and head. GraphQL has its own rate limit, kept apart from REST (`limited_until` is per resource). If the call fails, the engine falls back to the REST checks.
+- GitHub request counts (per caller, endpoint and result, `github/requests.rs`): the app writes `requests.json` in the state dir every minute; read them with `claude-sync status --json` (`requests`) or `status`. A new core caller needs `github::with_caller("name", ...)`, else it counts as `other`.
 - Each delivered marketplace folder gets a `COMMIT` file (group main sha, then committer date; `apply/marketplaces.rs`): never a local edit, not part of a mod fingerprint, removed with the marketplace.
 - Release profile keeps `panic = "unwind"` on purpose: the app catches engine panics.
 - `.gitignore` excludes `target/`, `node_modules/`, `dist/`, `.vercel/`, `*.key`.
