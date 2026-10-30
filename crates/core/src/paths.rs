@@ -64,6 +64,10 @@ impl Paths {
     pub fn notifications_file(&self) -> PathBuf {
         self.state_dir.join("notifications.json")
     }
+    /// Counts of GitHub requests (`github/requests.rs`).
+    pub fn requests_file(&self) -> PathBuf {
+        self.state_dir.join("requests.json")
+    }
     /// Base snapshot of a group (§6).
     pub fn base_dir(&self, g: &crate::GroupId) -> PathBuf {
         self.group_dir(g).join("base")

@@ -29,6 +29,11 @@ use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
 
 type Res<T> = Result<T, Error>;
+
+/// Run a command with its GitHub requests counted under `caller`.
+async fn scoped<T>(caller: &'static str, f: impl std::future::Future<Output = Res<T>>) -> Res<T> {
+    github::with_caller(caller, f).await
+}
 type CtxState<'a> = State<'a, Arc<Ctx>>;
 
 #[derive(Serialize)]
@@ -77,7 +82,7 @@ pub fn auth_status(ctx: CtxState) -> AuthStatus {
 
 #[tauri::command]
 pub async fn start_sign_in(app: AppHandle) -> Res<DeviceCodeView> {
-    auth::start(&app).await
+    scoped("ui:start_sign_in", async move { auth::start(&app).await }).await
 }
 
 #[tauri::command]
@@ -97,8 +102,11 @@ pub fn status(ctx: CtxState) -> Status {
 
 #[tauri::command]
 pub async fn groups(ctx: CtxState<'_>) -> Res<Vec<GroupStatus>> {
-    let e = ctx.engine()?;
-    e.groups().await.map_err(guard::logged("groups"))
+    scoped("ui:groups", async move {
+        let e = ctx.engine()?;
+        e.groups().await.map_err(guard::logged("groups"))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -109,58 +117,73 @@ pub async fn create_group(
     repo: Option<String>,
     claude_md: Option<ClaudeMdShare>,
 ) -> Res<GroupStatus> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err("a group name is needed".into());
-    }
-    let repo = repo
-        .map(|r| r.trim().to_string())
-        .filter(|r| !r.is_empty())
-        .unwrap_or_else(|| group::DEFAULT_REPO.into());
-    let e = ctx.engine()?;
-    let g = e
-        .create_group(name, &repo, claude_md.as_ref())
-        .await
-        .map_err(guard::logged("create group"))?;
-    background::sync_soon(&app, true);
-    Ok(g)
+    scoped("ui:create_group", async move {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("a group name is needed".into());
+        }
+        let repo = repo
+            .map(|r| r.trim().to_string())
+            .filter(|r| !r.is_empty())
+            .unwrap_or_else(|| group::DEFAULT_REPO.into());
+        let e = ctx.engine()?;
+        let g = e
+            .create_group(name, &repo, claude_md.as_ref())
+            .await
+            .map_err(guard::logged("create group"))?;
+        background::sync_soon(&app, true);
+        Ok(g)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn invitations(app: AppHandle) -> Res<Vec<Invitation>> {
-    background::check_invitations(&app).await
+    scoped("ui:invitations", async move {
+        background::check_invitations(&app).await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn accept_invitation(app: AppHandle, ctx: CtxState<'_>, id: u64) -> Res<GroupStatus> {
-    let e = ctx.engine()?;
-    let g = e
-        .accept_invitation(id)
-        .await
-        .map_err(guard::logged("accept invitation"))?;
-    lock(&ctx.known_invitations).retain(|i| *i != id);
-    if g.plugins_changed {
-        background::plugins_changed(&app, Some(&g.id));
-    }
-    background::sync_soon(&app, true);
-    Ok(g)
+    scoped("ui:accept_invitation", async move {
+        let e = ctx.engine()?;
+        let g = e
+            .accept_invitation(id)
+            .await
+            .map_err(guard::logged("accept invitation"))?;
+        lock(&ctx.known_invitations).retain(|i| *i != id);
+        if g.plugins_changed {
+            background::plugins_changed(&app, Some(&g.id));
+        }
+        background::sync_soon(&app, true);
+        Ok(g)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn discover(ctx: CtxState<'_>) -> Res<Vec<GroupId>> {
-    let e = ctx.engine()?;
-    e.discover().await.map_err(guard::logged("discover groups"))
+    scoped("ui:discover", async move {
+        let e = ctx.engine()?;
+        e.discover().await.map_err(guard::logged("discover groups"))
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn join(app: AppHandle, ctx: CtxState<'_>, group: GroupId) -> Res<GroupStatus> {
-    let e = ctx.engine()?;
-    let g = e.join(&group).await.map_err(guard::logged("join group"))?;
-    if g.plugins_changed {
-        background::plugins_changed(&app, Some(&g.id));
-    }
-    background::sync_soon(&app, true);
-    Ok(g)
+    scoped("ui:join", async move {
+        let e = ctx.engine()?;
+        let g = e.join(&group).await.map_err(guard::logged("join group"))?;
+        if g.plugins_changed {
+            background::plugins_changed(&app, Some(&g.id));
+        }
+        background::sync_soon(&app, true);
+        Ok(g)
+    })
+    .await
 }
 
 fn valid_login(login: &str) -> Res<&str> {
@@ -181,13 +204,16 @@ pub async fn add_member(
     group: GroupId,
     login: String,
 ) -> Res<()> {
-    let login = valid_login(&login)?;
-    let e = ctx.engine()?;
-    e.add_member(&group, login)
-        .await
-        .map_err(guard::logged("add member"))?;
-    background::sync_soon(&app, true);
-    Ok(())
+    scoped("ui:add_member", async move {
+        let login = valid_login(&login)?;
+        let e = ctx.engine()?;
+        e.add_member(&group, login)
+            .await
+            .map_err(guard::logged("add member"))?;
+        background::sync_soon(&app, true);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -197,13 +223,16 @@ pub async fn transfer_group(
     group: GroupId,
     login: String,
 ) -> Res<()> {
-    let login = valid_login(&login)?;
-    let e = ctx.engine()?;
-    e.transfer_group(&group, login)
-        .await
-        .map_err(guard::logged("transfer group"))?;
-    background::sync_soon(&app, true);
-    Ok(())
+    scoped("ui:transfer_group", async move {
+        let login = valid_login(&login)?;
+        let e = ctx.engine()?;
+        e.transfer_group(&group, login)
+            .await
+            .map_err(guard::logged("transfer group"))?;
+        background::sync_soon(&app, true);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -213,27 +242,33 @@ pub async fn remove_member(
     group: GroupId,
     login: String,
 ) -> Res<()> {
-    let login = valid_login(&login)?;
-    let e = ctx.engine()?;
-    e.remove_member(&group, login)
-        .await
-        .map_err(guard::logged("remove member"))?;
-    background::sync_soon(&app, true);
-    Ok(())
+    scoped("ui:remove_member", async move {
+        let login = valid_login(&login)?;
+        let e = ctx.engine()?;
+        e.remove_member(&group, login)
+            .await
+            .map_err(guard::logged("remove member"))?;
+        background::sync_soon(&app, true);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn leave_group(app: AppHandle, ctx: CtxState<'_>, group: GroupId) -> Res<()> {
-    let e = ctx.engine()?;
-    let report = e
-        .leave(&group)
-        .await
-        .map_err(guard::logged("leave group"))?;
-    if report.plugins_changed {
-        background::plugins_changed(&app, Some(&group));
-    }
-    app_jobs::after_leave(&app, &group);
-    Ok(())
+    scoped("ui:leave_group", async move {
+        let e = ctx.engine()?;
+        let report = e
+            .leave(&group)
+            .await
+            .map_err(guard::logged("leave group"))?;
+        if report.plugins_changed {
+            background::plugins_changed(&app, Some(&group));
+        }
+        app_jobs::after_leave(&app, &group);
+        Ok(())
+    })
+    .await
 }
 
 /// Turn a group off (nothing from it applies on this machine) or back on.
@@ -244,16 +279,19 @@ pub async fn set_group_enabled(
     group: GroupId,
     enabled: bool,
 ) -> Res<()> {
-    let e = ctx.engine()?;
-    let report = e
-        .set_group_enabled(&group, enabled)
-        .await
-        .map_err(guard::logged("turn group on/off"))?;
-    if report.plugins_changed {
-        background::plugins_changed(&app, Some(&group));
-    }
-    background::refresh_status(&app);
-    Ok(())
+    scoped("ui:set_group_enabled", async move {
+        let e = ctx.engine()?;
+        let report = e
+            .set_group_enabled(&group, enabled)
+            .await
+            .map_err(guard::logged("turn group on/off"))?;
+        if report.plugins_changed {
+            background::plugins_changed(&app, Some(&group));
+        }
+        background::refresh_status(&app);
+        Ok(())
+    })
+    .await
 }
 
 /// Put the joined groups in a new order (first wins collisions, §7) and apply them again.
@@ -263,14 +301,17 @@ pub async fn reorder_groups(
     ctx: CtxState<'_>,
     order: Vec<GroupId>,
 ) -> Res<SyncReport> {
-    let e = ctx.engine()?;
-    let _running = ctx.sync_lock.lock().await;
-    let report = guard::call_async("reorder groups", e.reorder_groups(order)).await?;
-    if report.groups.iter().any(|g| g.apply.plugins_changed) {
-        background::plugins_changed(&app, None);
-    }
-    let _ = app.emit("sync-report", &report);
-    Ok(report)
+    scoped("ui:reorder_groups", async move {
+        let e = ctx.engine()?;
+        let _running = ctx.sync_lock.lock().await;
+        let report = guard::call_async("reorder groups", e.reorder_groups(order)).await?;
+        if report.groups.iter().any(|g| g.apply.plugins_changed) {
+            background::plugins_changed(&app, None);
+        }
+        let _ = app.emit("sync-report", &report);
+        Ok(report)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -288,17 +329,20 @@ pub async fn resolve_edit(
     edit: LocalEdit,
     action: EditAction,
 ) -> Res<()> {
-    let e = ctx.engine()?;
-    e.resolve_edit(&edit, action)
-        .await
-        .map_err(guard::logged("resolve edit"))?;
-    let remaining = {
-        let mut last = lock(&ctx.last_edits);
-        last.retain(|x| *x != edit);
-        last.clone()
-    };
-    let _ = app.emit("local-edits", &remaining);
-    Ok(())
+    scoped("ui:resolve_edit", async move {
+        let e = ctx.engine()?;
+        e.resolve_edit(&edit, action)
+            .await
+            .map_err(guard::logged("resolve edit"))?;
+        let remaining = {
+            let mut last = lock(&ctx.last_edits);
+            last.retain(|x| *x != edit);
+            last.clone()
+        };
+        let _ = app.emit("local-edits", &remaining);
+        Ok(())
+    })
+    .await
 }
 
 /// What `group` gives this device: plugins, skills, agents, commands, output styles,
@@ -347,15 +391,18 @@ pub async fn share_skill(
     group: GroupId,
     skill: String,
 ) -> Res<()> {
-    if skill.is_empty() || skill.contains(['/', '\\']) || skill.starts_with('.') {
-        return Err("not a skill folder name".into());
-    }
-    let e = ctx.engine()?;
-    e.share_skill(&group, &skill)
-        .await
-        .map_err(guard::logged("share skill"))?;
-    background::sync_soon(&app, true);
-    Ok(())
+    scoped("ui:share_skill", async move {
+        if skill.is_empty() || skill.contains(['/', '\\']) || skill.starts_with('.') {
+            return Err("not a skill folder name".into());
+        }
+        let e = ctx.engine()?;
+        e.share_skill(&group, &skill)
+            .await
+            .map_err(guard::logged("share skill"))?;
+        background::sync_soon(&app, true);
+        Ok(())
+    })
+    .await
 }
 
 /// The user's own CLAUDE.md text as a group would get it (no managed block or group imports,
@@ -374,13 +421,16 @@ pub async fn share_claude_md(
     group: GroupId,
     share: ClaudeMdShare,
 ) -> Res<ClaudeMdShared> {
-    let e = ctx.engine()?;
-    let done = e
-        .share_claude_md(&group, &share)
-        .await
-        .map_err(guard::logged("share CLAUDE.md"))?;
-    background::sync_soon(&app, true);
-    Ok(done)
+    scoped("ui:share_claude_md", async move {
+        let e = ctx.engine()?;
+        let done = e
+            .share_claude_md(&group, &share)
+            .await
+            .map_err(guard::logged("share CLAUDE.md"))?;
+        background::sync_soon(&app, true);
+        Ok(done)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -389,10 +439,13 @@ pub async fn recent_commits(
     group: GroupId,
     limit: Option<usize>,
 ) -> Res<Vec<CommitInfo>> {
-    let e = ctx.engine()?;
-    e.recent_commits(&group, limit.unwrap_or(20).min(100))
-        .await
-        .map_err(guard::logged("recent changes"))
+    scoped("ui:recent_commits", async move {
+        let e = ctx.engine()?;
+        e.recent_commits(&group, limit.unwrap_or(20).min(100))
+            .await
+            .map_err(guard::logged("recent changes"))
+    })
+    .await
 }
 
 /// Before/Now notes for past commits, by commit sha. Empty when the group has none; never fails.
@@ -401,10 +454,13 @@ pub async fn change_notes(
     ctx: CtxState<'_>,
     group: GroupId,
 ) -> Res<std::collections::BTreeMap<String, claude_sync_core::engine::ChangeNote>> {
-    Ok(match ctx.engine() {
-        Ok(e) => e.change_notes(&group).await,
-        Err(_) => Default::default(),
+    scoped("ui:change_notes", async move {
+        Ok(match ctx.engine() {
+            Ok(e) => e.change_notes(&group).await,
+            Err(_) => Default::default(),
+        })
     })
+    .await
 }
 
 /// Changes others made to the group's CLAUDE.md that wait for this user (§7a).
@@ -424,13 +480,16 @@ pub async fn decide_claude_md(
     ids: Option<Vec<String>>,
     accept: bool,
 ) -> Res<ClaudeMdReview> {
-    let e = ctx.engine()?;
-    let r = e
-        .decide_claude_md(&group, ids.as_deref(), accept)
-        .await
-        .map_err(guard::logged("CLAUDE.md review"))?;
-    background::refresh_status(&app);
-    Ok(r)
+    scoped("ui:decide_claude_md", async move {
+        let e = ctx.engine()?;
+        let r = e
+            .decide_claude_md(&group, ids.as_deref(), accept)
+            .await
+            .map_err(guard::logged("CLAUDE.md review"))?;
+        background::refresh_status(&app);
+        Ok(r)
+    })
+    .await
 }
 
 /// This device's choice on "Review changes others make to CLAUDE.md" (`None`: follow the group).
@@ -441,13 +500,16 @@ pub async fn set_claude_md_review(
     group: GroupId,
     on: Option<bool>,
 ) -> Res<ClaudeMdReview> {
-    let e = ctx.engine()?;
-    let r = e
-        .set_claude_md_review(&group, on)
-        .await
-        .map_err(guard::logged("CLAUDE.md review"))?;
-    background::refresh_status(&app);
-    Ok(r)
+    scoped("ui:set_claude_md_review", async move {
+        let e = ctx.engine()?;
+        let r = e
+            .set_claude_md_review(&group, on)
+            .await
+            .map_err(guard::logged("CLAUDE.md review"))?;
+        background::refresh_status(&app);
+        Ok(r)
+    })
+    .await
 }
 
 /// The group setting "Auto-accept CLAUDE.md changes" (needs push access).
@@ -458,13 +520,16 @@ pub async fn set_group_auto_accept_claude_md(
     group: GroupId,
     on: bool,
 ) -> Res<ClaudeMdReview> {
-    let e = ctx.engine()?;
-    let r = e
-        .set_group_auto_accept_claude_md(&group, on)
-        .await
-        .map_err(guard::logged("CLAUDE.md review"))?;
-    background::refresh_status(&app);
-    Ok(r)
+    scoped("ui:set_group_auto_accept_claude_md", async move {
+        let e = ctx.engine()?;
+        let r = e
+            .set_group_auto_accept_claude_md(&group, on)
+            .await
+            .map_err(guard::logged("CLAUDE.md review"))?;
+        background::refresh_status(&app);
+        Ok(r)
+    })
+    .await
 }
 
 /// The group setting "Proposal mode" (host only): members' changes become proposals.
@@ -475,21 +540,27 @@ pub async fn set_group_proposal_mode(
     group: GroupId,
     on: bool,
 ) -> Res<()> {
-    let e = ctx.engine()?;
-    e.set_group_proposal_mode(&group, on)
-        .await
-        .map_err(guard::logged("proposal mode"))?;
-    background::refresh_status(&app);
-    Ok(())
+    scoped("ui:set_group_proposal_mode", async move {
+        let e = ctx.engine()?;
+        e.set_group_proposal_mode(&group, on)
+            .await
+            .map_err(guard::logged("proposal mode"))?;
+        background::refresh_status(&app);
+        Ok(())
+    })
+    .await
 }
 
 /// The group's open proposals.
 #[tauri::command]
 pub async fn list_proposals(ctx: CtxState<'_>, group: GroupId) -> Res<Vec<ProposalView>> {
-    let e = ctx.engine()?;
-    e.proposals(&group)
-        .await
-        .map_err(guard::logged("proposals"))
+    scoped("ui:list_proposals", async move {
+        let e = ctx.engine()?;
+        e.proposals(&group)
+            .await
+            .map_err(guard::logged("proposals"))
+    })
+    .await
 }
 
 /// Approve a proposal (merges it once enough members have).
@@ -500,12 +571,15 @@ pub async fn approve_proposal(
     group: GroupId,
     number: u64,
 ) -> Res<()> {
-    let e = ctx.engine()?;
-    e.approve_proposal(&group, number)
-        .await
-        .map_err(guard::logged("approve proposal"))?;
-    background::refresh_status(&app);
-    Ok(())
+    scoped("ui:approve_proposal", async move {
+        let e = ctx.engine()?;
+        e.approve_proposal(&group, number)
+            .await
+            .map_err(guard::logged("approve proposal"))?;
+        background::refresh_status(&app);
+        Ok(())
+    })
+    .await
 }
 
 /// Decline a proposal (closes it).
@@ -516,12 +590,15 @@ pub async fn decline_proposal(
     group: GroupId,
     number: u64,
 ) -> Res<()> {
-    let e = ctx.engine()?;
-    e.decline_proposal(&group, number)
-        .await
-        .map_err(guard::logged("decline proposal"))?;
-    background::refresh_status(&app);
-    Ok(())
+    scoped("ui:decline_proposal", async move {
+        let e = ctx.engine()?;
+        e.decline_proposal(&group, number)
+            .await
+            .map_err(guard::logged("decline proposal"))?;
+        background::refresh_status(&app);
+        Ok(())
+    })
+    .await
 }
 
 /// Make the copy the group's CLAUDE.md again, forgetting declined changes.
@@ -531,14 +608,17 @@ pub async fn use_group_claude_md(
     ctx: CtxState<'_>,
     group: GroupId,
 ) -> Res<ClaudeMdReview> {
-    let e = ctx.engine()?;
-    let r = e
-        .use_group_claude_md(&group)
-        .await
-        .map_err(guard::logged("CLAUDE.md review"))?;
-    background::refresh_status(&app);
-    background::check_local_edits(&app);
-    Ok(r)
+    scoped("ui:use_group_claude_md", async move {
+        let e = ctx.engine()?;
+        let r = e
+            .use_group_claude_md(&group)
+            .await
+            .map_err(guard::logged("CLAUDE.md review"))?;
+        background::refresh_status(&app);
+        background::check_local_edits(&app);
+        Ok(r)
+    })
+    .await
 }
 
 /// Duplicate and contradicting rules across the user's groups and own CLAUDE.md, and
@@ -572,12 +652,15 @@ pub async fn drop_claude_md_line(
     source: Source,
     line: String,
 ) -> Res<()> {
-    let e = ctx.engine()?;
-    e.drop_claude_md_line(&source, &line)
-        .await
-        .map_err(guard::logged("conflicts"))?;
-    background::refresh_status(&app);
-    Ok(())
+    scoped("ui:drop_claude_md_line", async move {
+        let e = ctx.engine()?;
+        e.drop_claude_md_line(&source, &line)
+            .await
+            .map_err(guard::logged("conflicts"))?;
+        background::refresh_status(&app);
+        Ok(())
+    })
+    .await
 }
 
 /// Replace `line` of `source` with `text`. A group's line is committed for everyone.
@@ -589,21 +672,27 @@ pub async fn edit_claude_md_line(
     line: String,
     text: String,
 ) -> Res<()> {
-    let e = ctx.engine()?;
-    e.edit_claude_md_line(&source, &line, &text)
-        .await
-        .map_err(guard::logged("conflicts"))?;
-    background::sync_soon(&app, true);
-    Ok(())
+    scoped("ui:edit_claude_md_line", async move {
+        let e = ctx.engine()?;
+        e.edit_claude_md_line(&source, &line, &text)
+            .await
+            .map_err(guard::logged("conflicts"))?;
+        background::sync_soon(&app, true);
+        Ok(())
+    })
+    .await
 }
 
 /// What copying from `from` to `to` would bring (§7b).
 #[tauri::command]
 pub async fn copy_preview(ctx: CtxState<'_>, from: GroupId, to: GroupId) -> Res<CopyPreview> {
-    let e = ctx.engine()?;
-    e.copy_preview(&from, &to)
-        .await
-        .map_err(guard::logged("copy to another group"))
+    scoped("ui:copy_preview", async move {
+        let e = ctx.engine()?;
+        e.copy_preview(&from, &to)
+            .await
+            .map_err(guard::logged("copy to another group"))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -614,21 +703,27 @@ pub async fn copy_to_group(
     to: GroupId,
     request: CopyRequest,
 ) -> Res<Copied> {
-    let e = ctx.engine()?;
-    let done = e
-        .copy_to_group(&from, &to, &request)
-        .await
-        .map_err(guard::logged("copy to another group"))?;
-    background::sync_soon(&app, true);
-    Ok(done)
+    scoped("ui:copy_to_group", async move {
+        let e = ctx.engine()?;
+        let done = e
+            .copy_to_group(&from, &to, &request)
+            .await
+            .map_err(guard::logged("copy to another group"))?;
+        background::sync_soon(&app, true);
+        Ok(done)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn sync_now(app: AppHandle) -> Res<SyncReport> {
-    let r = background::run_sync(&app, true).await;
-    crate::personal::after_sync(&app, true).await;
-    background::check_local_edits(&app);
-    r
+    scoped("ui:sync_now", async move {
+        let r = background::run_sync(&app, true).await;
+        crate::personal::after_sync(&app, true).await;
+        background::check_local_edits(&app);
+        r
+    })
+    .await
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -737,15 +832,20 @@ pub fn set_settings(app: AppHandle, ctx: CtxState, settings: SettingsPatch) -> R
 /// Which of this device's group repos the GitHub App can reach (issue #39).
 #[tauri::command]
 pub async fn app_coverage(app: AppHandle) -> Res<claude_sync_core::github::Coverage> {
-    let ctx = tauri::Manager::state::<Arc<Ctx>>(&app).inner().clone();
-    let auth = ctx.auth().ok_or("Sign in first.")?;
-    let gh =
-        claude_sync_core::github::GitHub::with_session(auth.session, claude_sync_core::github::API);
-    let wanted = ctx.joined_groups();
-    gh.app_coverage(&wanted)
-        .await
-        .map_err(guard::logged("GitHub App coverage"))
-        .inspect(|_| background::refresh_status(&app))
+    scoped("ui:app_coverage", async move {
+        let ctx = tauri::Manager::state::<Arc<Ctx>>(&app).inner().clone();
+        let auth = ctx.auth().ok_or("Sign in first.")?;
+        let gh = claude_sync_core::github::GitHub::with_session(
+            auth.session,
+            claude_sync_core::github::API,
+        );
+        let wanted = ctx.joined_groups();
+        gh.app_coverage(&wanted)
+            .await
+            .map_err(guard::logged("GitHub App coverage"))
+            .inspect(|_| background::refresh_status(&app))
+    })
+    .await
 }
 
 /// Open the page where the user installs the GitHub App or changes its repos.
@@ -898,7 +998,10 @@ pub fn open_path(app: AppHandle, ctx: CtxState, path: String, reveal: Option<boo
 /// The scheduled jobs of `group` (§17): pending ones, accepted ones, what was skipped.
 #[tauri::command]
 pub async fn jobs(ctx: CtxState<'_>, group: GroupId) -> Res<JobsOverview> {
-    app_jobs::list(ctx.inner().clone(), group).await
+    scoped("ui:jobs", async move {
+        app_jobs::list(ctx.inner().clone(), group).await
+    })
+    .await
 }
 
 /// Accept the version of a job the screen showed (`hash`), turn it on and register it.
@@ -909,7 +1012,10 @@ pub async fn accept_job(
     id: String,
     hash: String,
 ) -> Res<JobsOverview> {
-    app_jobs::accept(app, group, id, hash).await
+    scoped("ui:accept_job", async move {
+        app_jobs::accept(app, group, id, hash).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -919,19 +1025,28 @@ pub async fn set_job_enabled(
     id: String,
     enabled: bool,
 ) -> Res<JobsOverview> {
-    app_jobs::set_enabled(app, group, id, enabled).await
+    scoped("ui:set_job_enabled", async move {
+        app_jobs::set_enabled(app, group, id, enabled).await
+    })
+    .await
 }
 
 /// "Run this group's jobs without asking": on accepts its new and changed jobs from now on
 /// (each one notified); off asks again for the next change.
 #[tauri::command]
 pub async fn set_jobs_auto_accept(app: AppHandle, group: GroupId, on: bool) -> Res<JobsOverview> {
-    app_jobs::set_auto_accept(app, group, on).await
+    scoped("ui:set_jobs_auto_accept", async move {
+        app_jobs::set_auto_accept(app, group, on).await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn run_job_now(ctx: CtxState<'_>, group: GroupId, id: String) -> Res<JobsOverview> {
-    app_jobs::run_now(ctx.inner().clone(), group, id).await
+    scoped("ui:run_job_now", async move {
+        app_jobs::run_now(ctx.inner().clone(), group, id).await
+    })
+    .await
 }
 
 /// Open a job's last log (`kind` = "log") or its report ("report").
@@ -955,7 +1070,10 @@ pub fn plugin_warnings(ctx: CtxState, group: GroupId) -> Res<Vec<String>> {
 /// Retry: run the plugin installs of `group` again; returns the warnings left.
 #[tauri::command]
 pub async fn retry_plugins(app: AppHandle, group: GroupId) -> Res<Vec<String>> {
-    app_jobs::retry_plugins(app, group).await
+    scoped("ui:retry_plugins", async move {
+        app_jobs::retry_plugins(app, group).await
+    })
+    .await
 }
 
 /// Whether the Claude helper can run: the local `claude` command is installed.
@@ -1019,10 +1137,13 @@ mod tests {
 /// The files reverting a commit would change (host only; writes nothing).
 #[tauri::command]
 pub async fn revert_preview(ctx: CtxState<'_>, group: GroupId, sha: String) -> Res<RevertPlan> {
-    let e = ctx.engine()?;
-    e.revert_preview(&group, &sha)
-        .await
-        .map_err(guard::logged("revert preview"))
+    scoped("ui:revert_preview", async move {
+        let e = ctx.engine()?;
+        e.revert_preview(&group, &sha)
+            .await
+            .map_err(guard::logged("revert preview"))
+    })
+    .await
 }
 
 /// Revert a commit of the group with a new commit (host only), then sync.
@@ -1033,11 +1154,14 @@ pub async fn revert_commit(
     group: GroupId,
     sha: String,
 ) -> Res<RevertPlan> {
-    let e = ctx.engine()?;
-    let done = e
-        .revert_commit(&group, &sha)
-        .await
-        .map_err(guard::logged("revert commit"))?;
-    background::sync_soon(&app, true);
-    Ok(done)
+    scoped("ui:revert_commit", async move {
+        let e = ctx.engine()?;
+        let done = e
+            .revert_commit(&group, &sha)
+            .await
+            .map_err(guard::logged("revert commit"))?;
+        background::sync_soon(&app, true);
+        Ok(done)
+    })
+    .await
 }

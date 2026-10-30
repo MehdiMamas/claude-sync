@@ -88,8 +88,10 @@ async fn execute(paths: &Paths, cmd: Cmd, json: bool) -> Result<String, String> 
                 Err(_) => (Vec::new(), None),
             };
             let personal = ctx.engine().ok().map(|e| e.personal_status());
+            let requests = claude_sync_core::github::read_request_counts(&paths.requests_file());
             if json {
                 return serde_json::to_string_pretty(&json!({
+                    "requests": requests,
                     "login": login,
                     "expiredLogin": expired,
                     "groups": groups,
@@ -108,6 +110,7 @@ async fn execute(paths: &Paths, cmd: Cmd, json: bool) -> Result<String, String> 
             if let Some(e) = groups_error {
                 out.push_str(&format!("\nCould not read the groups: {e}"));
             }
+            out.push_str(&requests_text(requests.as_ref()));
             Ok(out)
         }
         Cmd::PersonalStatus | Cmd::PersonalEnable | Cmd::PersonalDisable => {
@@ -172,6 +175,30 @@ pub fn personal_text(p: &PersonalStatus, now: u64) -> String {
     );
     if let Some(e) = &p.last_error {
         out.push_str(&format!("\n  last error: {e}"));
+    }
+    out
+}
+
+/// The top 10 GitHub requests of the last 10 minutes, as the running app counted them.
+pub fn requests_text(requests: Option<&claude_sync_core::github::RequestSnapshot>) -> String {
+    let Some(r) = requests else {
+        return String::new();
+    };
+    let mut out = String::from(
+        "
+GitHub requests, last 10 min (count, endpoint, result, caller):",
+    );
+    if r.last10min.is_empty() {
+        out.push_str(
+            "
+  none",
+        );
+    }
+    for line in claude_sync_core::github::top_lines(&r.last10min, 10) {
+        out.push_str(&format!(
+            "
+  {line}"
+        ));
     }
     out
 }
@@ -338,6 +365,29 @@ mod tests {
         assert!(parse(&v(&["personal"])).is_err());
         assert!(parse(&v(&["personal", "x"])).is_err());
         assert!(parse(&v(&["status", "extra"])).is_err());
+    }
+
+    #[test]
+    fn status_shows_the_top_requests() {
+        use claude_sync_core::github::{RequestEntry, RequestSnapshot};
+        let row = |count, endpoint: &str| RequestEntry {
+            caller: "tick".into(),
+            endpoint: endpoint.into(),
+            result: "200".into(),
+            count,
+        };
+        let snap = RequestSnapshot {
+            since: 0,
+            last10min: (1..=12).map(|n| row(n, &format!("GET e{n}"))).collect(),
+            total: vec![],
+        };
+        let text = requests_text(Some(&snap));
+        assert!(text.contains("GET e1  200  (tick)"));
+        assert_eq!(text.lines().count(), 1 + 1 + 10, "heading and 10 rows");
+        assert_eq!(requests_text(None), "");
+        // The same file the app writes is what `status --json` embeds.
+        let json = serde_json::to_value(&snap).unwrap();
+        assert_eq!(json["last10min"][0]["endpoint"], "GET e1");
     }
 
     fn personal(enabled: bool) -> PersonalStatus {
