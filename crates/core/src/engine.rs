@@ -9,6 +9,7 @@
 //! local: the engine neither pushes nor overwrites them, unless the remote changed the same
 //! file, which is a conflict (remote wins, the local copy is saved).
 use crate::apply::{ApplyReport, Collision};
+use crate::github::RepoSnapshot;
 use crate::github::{GitHub, Invitation};
 use crate::group::{self, GroupFile};
 use crate::merge;
@@ -306,7 +307,12 @@ pub struct Engine {
     pub(crate) user_home: Option<PathBuf>,
     /// When each slow per-group check last ran (unix seconds), see `due`.
     pub(crate) last_run: std::sync::Mutex<HashMap<(GroupId, &'static str), u64>>,
+    /// The last GraphQL answer for every repo and when it was taken (unix seconds).
+    pub(crate) snapshots: std::sync::Mutex<(u64, HashMap<GroupId, RepoSnapshot>)>,
 }
+
+/// How long a GraphQL answer may serve the personal check that follows the group pass.
+pub(crate) const SNAPSHOT_FRESH_SECONDS: u64 = 60;
 
 /// How often the rename check and the host's member pass run per group.
 const SLOW_CHECK_SECONDS: u64 = 10 * 60;
@@ -406,6 +412,7 @@ impl Engine {
             locked: std::sync::Mutex::new(BTreeSet::new()),
             user_home: std::env::home_dir(),
             last_run: std::sync::Mutex::default(),
+            snapshots: std::sync::Mutex::default(),
         }
     }
 
@@ -430,7 +437,7 @@ impl Engine {
     pub async fn sync_all(&self) -> crate::Result<SyncReport> {
         let _busy = self.busy.lock().await;
         let mut out = SyncReport {
-            moved: self.follow_moves(true).await,
+            moved: self.follow_moves(true, &HashMap::new()).await,
             ..SyncReport::default()
         };
         for id in AppState::load(&self.paths)?.groups {
@@ -446,29 +453,53 @@ impl Engine {
         if AppState::load(&self.paths)?.paused {
             return Ok(SyncReport::default());
         }
+        // One GraphQL call tells the name and head of every repo; what it can't answer
+        // falls back to the REST calls below.
+        let mut ids = AppState::load(&self.paths)?.groups;
+        ids.extend(self.personal_snapshot_id());
+        let mut snaps = self.remotes.snapshots(&ids).await.unwrap_or_default();
         let mut out = SyncReport {
-            moved: self.follow_moves(false).await,
+            moved: self.follow_moves(false, &snaps).await,
             ..SyncReport::default()
         };
+        for m in &out.moved {
+            if let Some(s) = snaps.remove(&m.from) {
+                snaps.insert(m.to.clone(), s);
+            }
+        }
+        *self.snapshots.lock().unwrap() = (now_unix(), snaps.clone());
         let state = AppState::load(&self.paths)?;
         for id in &state.groups {
             let remote = self.remotes.open(id);
             if let Ok(base) = self.load_base(id) {
                 remote.seed_etag(base.head.etag.as_deref());
             }
-            let head = match remote.head_if_changed().await {
-                Ok(Some(head)) => Some(head),
-                Ok(None) => {
+            let head = if let Some(snap) = snaps.get(id) {
+                let same = self.load_base(id).is_ok_and(|b| b.head == snap.head);
+                if same {
                     // Unchanged remote: only shared edits waiting to be pushed, or a failed
-                    // last pass (whose remote change was already seen), need a sync.
+                    // last pass, need a sync.
                     let status = self.load_status(id);
                     if status.shared.is_empty() && status.last_error.is_none() {
                         continue;
                     }
-                    None
                 }
-                // `sync_group` asks again and reports the error (or the lost access).
-                Err(_) => None,
+                Some(snap.head.clone())
+            } else {
+                match remote.head_if_changed().await {
+                    Ok(Some(head)) => Some(head),
+                    Ok(None) => {
+                        // Unchanged remote: only shared edits waiting to be pushed, or a
+                        // failed last pass (whose remote change was already seen), need a sync.
+                        let status = self.load_status(id);
+                        if status.shared.is_empty() && status.last_error.is_none() {
+                            continue;
+                        }
+                        None
+                    }
+                    // `sync_group` asks again and reports the error (or the lost access).
+                    Err(_) => None,
+                }
             };
             out.groups.push(self.sync_group(id, head).await.0);
         }
@@ -478,17 +509,31 @@ impl Engine {
     /// Ask GitHub for each joined repo's current name; a renamed or transferred repo moves every
     /// local trace to the new id (`rename::migrate`, resumable). Errors (offline, no access) are
     /// left to the sync itself to report. The caller holds the busy lock.
-    async fn follow_moves(&self, force: bool) -> Vec<MovedGroup> {
+    async fn follow_moves(
+        &self,
+        force: bool,
+        snaps: &HashMap<GroupId, RepoSnapshot>,
+    ) -> Vec<MovedGroup> {
         let mut moved = Vec::new();
         let Ok(state) = AppState::load(&self.paths) else {
             return moved;
         };
         for id in state.groups {
-            if !force && !self.due(&id, "moves") {
-                continue;
-            }
-            let Ok(now) = self.remotes.open(&id).current_id().await else {
-                continue;
+            // The GraphQL answer already names the repo: no call, no waiting.
+            let known = snaps
+                .get(&id)
+                .and_then(|s| GroupId::parse(&s.name_with_owner));
+            let now = match known {
+                Some(now) => now,
+                None => {
+                    if !force && !self.due(&id, "moves") {
+                        continue;
+                    }
+                    let Ok(now) = self.remotes.open(&id).current_id().await else {
+                        continue;
+                    };
+                    now
+                }
             };
             if now.to_string().eq_ignore_ascii_case(&id.to_string()) {
                 continue;
@@ -3395,6 +3440,106 @@ mod tests {
         assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "base\n");
         bo.engine.sync_all().await.unwrap();
         assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "v2\n");
+    }
+
+    /// A fake account whose GraphQL answer the test sets (`None`: the call failed).
+    struct Snapshots {
+        inner: crate::remote::fake::FakeAccount,
+        answer: std::sync::Mutex<Option<HashMap<GroupId, RepoSnapshot>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RemoteFactory for Snapshots {
+        fn open(&self, id: &GroupId) -> Arc<dyn RemoteRepo> {
+            self.inner.open(id)
+        }
+        async fn create_repo(&self, name: &str) -> crate::Result<GroupId> {
+            self.inner.create_repo(name).await
+        }
+        async fn create_personal_repo(&self, name: &str) -> crate::Result<GroupId> {
+            self.inner.create_personal_repo(name).await
+        }
+        async fn invitations(&self) -> crate::Result<Vec<crate::github::Invitation>> {
+            self.inner.invitations().await
+        }
+        async fn accept_invitation(&self, id: u64) -> crate::Result<GroupId> {
+            self.inner.accept_invitation(id).await
+        }
+        async fn group_repos(&self) -> crate::Result<Vec<GroupId>> {
+            self.inner.group_repos().await
+        }
+        async fn snapshots(&self, _: &[GroupId]) -> Option<HashMap<GroupId, RepoSnapshot>> {
+            self.answer.lock().unwrap().clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn the_graphql_answer_replaces_the_rest_checks() {
+        let world = FakeGitHub::new();
+        let (id, repo) = group_repo(&world, &["ana", "bo"]);
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            claude_home: dir.path().join("claude"),
+            state_dir: dir.path().join("state"),
+        };
+        let remotes = Arc::new(Snapshots {
+            inner: world.account("bo"),
+            answer: Default::default(),
+        });
+        let engine = Engine::with_remotes(
+            paths,
+            GitHub::with_api(String::new(), "http://127.0.0.1:9"),
+            "bo".into(),
+            "pc".into(),
+            remotes.clone(),
+        )
+        .with_apply(Arc::new(StubApply::default()))
+        .with_scanner(no_secrets);
+        engine.join(&id).await.unwrap();
+        let snap = |head: Head| {
+            Some(HashMap::from([(
+                id.clone(),
+                RepoSnapshot {
+                    database_id: 1,
+                    name_with_owner: id.to_string(),
+                    head,
+                },
+            )]))
+        };
+        let rest = |op| calls(&repo, op);
+        let (heads, names, files) = (
+            rest("head_if_changed"),
+            rest("current_id"),
+            rest("files_at"),
+        );
+
+        // Unchanged: no REST call at all.
+        *remotes.answer.lock().unwrap() = snap(engine.remotes.open(&id).head().await.unwrap());
+        assert!(engine.sync_if_changed().await.unwrap().groups.is_empty());
+        assert_eq!(
+            (
+                rest("head_if_changed"),
+                rest("current_id"),
+                rest("files_at")
+            ),
+            (heads, names, files)
+        );
+
+        // A new head in the answer pulls it, still without asking for the head or name.
+        repo.set_file(
+            "agents/a.md",
+            "v2
+",
+        );
+        *remotes.answer.lock().unwrap() = snap(engine.remotes.open(&id).head().await.unwrap());
+        assert_eq!(engine.sync_if_changed().await.unwrap().groups.len(), 1);
+        assert!(rest("files_at") > files);
+        assert_eq!(rest("head_if_changed"), heads);
+
+        // The call failed: the REST checks take over.
+        *remotes.answer.lock().unwrap() = None;
+        engine.sync_if_changed().await.unwrap();
+        assert!(rest("head_if_changed") > heads);
     }
 
     #[tokio::test]

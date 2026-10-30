@@ -9,8 +9,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod app;
+mod graphql;
 mod session;
 pub use app::{install_url, manage_url, uncovered, Coverage, Installation};
+pub use graphql::{heads_query, parse_heads, RepoSnapshot};
 pub use session::{refresh_tokens_at, Session, Tokens, REFRESH_MARGIN_SECS};
 
 pub const API: &str = "https://api.github.com";
@@ -283,8 +285,9 @@ pub struct GitHub {
     session: Arc<Session>,
     pub api: String,
     pub http: reqwest::Client,
-    /// Unix time until which GitHub said we are rate limited.
-    limited_until: Arc<Mutex<Option<u64>>>,
+    /// Unix time until which GitHub said we are rate limited, per resource (`CORE` for the
+    /// REST API, `GRAPHQL`): one running out does not block the other.
+    limited_until: Arc<Mutex<HashMap<&'static str, u64>>>,
     /// Answers of GETs by URL with their ETag, shared by clones (see `CACHE_LIMIT`).
     cache: Arc<Mutex<HashMap<String, (String, Response)>>>,
     retry_delay: Duration,
@@ -292,6 +295,19 @@ pub struct GitHub {
 
 /// GET answers kept for conditional requests. A `304` costs nothing against the rate limit.
 const CACHE_LIMIT: usize = 256;
+
+/// The rate-limit resources we keep apart (`x-ratelimit-resource`).
+pub(crate) const CORE: &str = "core";
+const GRAPHQL: &str = "graphql";
+
+/// Which of our two limits a request or a `x-ratelimit-resource` value counts against.
+fn resource_of(name: &str) -> &'static str {
+    if name == GRAPHQL {
+        GRAPHQL
+    } else {
+        CORE
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -418,12 +434,19 @@ impl GitHub {
         body: Option<&Value>,
         etag: Option<&str>,
     ) -> crate::Result<Response> {
-        self.check_limit()?;
         let url = self.url(path)?;
+        let resource = resource_of(if url.ends_with("/graphql") {
+            GRAPHQL
+        } else {
+            CORE
+        });
+        self.check_limit(resource)?;
         let mut token = self.session.token().await?;
         let mut renewed = false;
         loop {
-            let result = self.send_with(&method, &url, body, etag, &token).await;
+            let result = self
+                .send_with(&method, &url, body, etag, &token, resource)
+                .await;
             if token.is_empty() || !matches!(result, Err(Error::GitHub { status: 401, .. })) {
                 return result;
             }
@@ -436,7 +459,7 @@ impl GitHub {
             }
             let confirmed = (method == Method::GET && path == "/user")
                 || matches!(
-                    self.send_with(&Method::GET, &self.url("/user")?, None, None, &token)
+                    self.send_with(&Method::GET, &self.url("/user")?, None, None, &token, CORE)
                         .await,
                     Err(Error::GitHub { status: 401, .. })
                 );
@@ -456,6 +479,7 @@ impl GitHub {
         body: Option<&Value>,
         etag: Option<&str>,
         token: &str,
+        resource: &'static str,
     ) -> crate::Result<Response> {
         // A GET we have an answer for asks "unchanged?" and gets that answer back on a 304.
         let cached = (etag.is_none() && *method == Method::GET)
@@ -498,7 +522,7 @@ impl GitHub {
                 self.backoff(attempt).await;
                 continue;
             }
-            let mut reply = self.finish(resp).await?;
+            let mut reply = self.finish(resp, resource).await?;
             if *method == Method::GET {
                 match (&cached, reply.status) {
                     (Some((_, old)), 304) => reply = old.clone(),
@@ -520,28 +544,47 @@ impl GitHub {
 
     /// Unix time until which GitHub said we are rate limited, if that is still ahead.
     pub fn limited_until(&self) -> Option<u64> {
-        (*self.limited_until.lock().unwrap()).filter(|reset| *reset > crate::state::now_unix())
+        self.limited_until_for(CORE)
+    }
+
+    /// Same for the GraphQL API, which has its own quota.
+    pub fn graphql_limited_until(&self) -> Option<u64> {
+        self.limited_until_for(GRAPHQL)
+    }
+
+    fn limited_until_for(&self, resource: &str) -> Option<u64> {
+        let limits = self.limited_until.lock().unwrap();
+        limits
+            .get(resource)
+            .copied()
+            .filter(|reset| *reset > crate::state::now_unix())
     }
 
     async fn backoff(&self, attempt: u32) {
         tokio::time::sleep(self.retry_delay * 2u32.pow(attempt - 1)).await;
     }
 
-    fn check_limit(&self) -> crate::Result<()> {
-        let mut limit = self.limited_until.lock().unwrap();
-        match *limit {
+    fn check_limit(&self, resource: &'static str) -> crate::Result<()> {
+        let mut limits = self.limited_until.lock().unwrap();
+        match limits.get(resource).copied() {
             Some(reset) if crate::state::now_unix() < reset => {
                 Err(Error::RateLimited { reset_unix: reset })
             }
             Some(_) => {
-                *limit = None;
+                limits.remove(resource);
                 Ok(())
             }
             None => Ok(()),
         }
     }
 
-    async fn finish(&self, resp: reqwest::Response) -> crate::Result<Response> {
+    /// `resource` is the limit the request counts against; GitHub's own
+    /// `x-ratelimit-resource` header wins when it names one.
+    async fn finish(
+        &self,
+        resp: reqwest::Response,
+        resource: &'static str,
+    ) -> crate::Result<Response> {
         let status = resp.status();
         let headers = resp.headers().clone();
         let text = |name: &str| {
@@ -555,12 +598,15 @@ impl GitHub {
             .await
             .map_err(|e| Error::Network(e.without_url().to_string()))?
             .to_vec();
+        let resource = text("x-ratelimit-resource")
+            .as_deref()
+            .map_or(resource, resource_of);
         if status.is_success() || status == StatusCode::NOT_MODIFIED {
             // The last call GitHub allows: the next ones would fail, so wait for the reset.
             if text("x-ratelimit-remaining").as_deref() == Some("0") {
                 let reset = text("x-ratelimit-reset").and_then(|s| s.parse::<u64>().ok());
                 if let Some(reset) = reset.filter(|r| *r > crate::state::now_unix()) {
-                    *self.limited_until.lock().unwrap() = Some(reset);
+                    self.limited_until.lock().unwrap().insert(resource, reset);
                 }
             }
             return Ok(Response {
@@ -592,7 +638,10 @@ impl GitHub {
                 None
             };
             if let Some(reset_unix) = reset {
-                *self.limited_until.lock().unwrap() = Some(reset_unix);
+                self.limited_until
+                    .lock()
+                    .unwrap()
+                    .insert(resource, reset_unix);
                 return Err(Error::RateLimited { reset_unix });
             }
         }
@@ -1203,7 +1252,10 @@ mod tests {
     async fn no_request_goes_out_while_limited() {
         let server = MockServer::start().await;
         let gh = gh(&server);
-        *gh.limited_until.lock().unwrap() = Some(crate::state::now_unix() + 600);
+        gh.limited_until
+            .lock()
+            .unwrap()
+            .insert(CORE, crate::state::now_unix() + 600);
         assert!(matches!(gh.user().await, Err(Error::RateLimited { .. })));
         let _ = gh.call(Method::POST, "/x", None).await;
         assert!(server.received_requests().await.unwrap().is_empty());
