@@ -17,6 +17,25 @@ pub mod fake;
 pub type Changes = BTreeMap<String, Option<Vec<u8>>>;
 /// Which repo paths `files_matching` reads.
 pub type PathFilter = fn(&str) -> bool;
+/// Files already held, by git blob sha: `files_matching` reuses them instead of fetching.
+pub type KnownBlobs = HashMap<String, Vec<u8>>;
+
+/// The git blob sha (sha1 of `blob <len>\0` + bytes) of a file's content.
+pub fn git_blob_sha(bytes: &[u8]) -> String {
+    use sha1::{Digest, Sha1};
+    let mut h = Sha1::new();
+    h.update(format!("blob {}\0", bytes.len()).as_bytes());
+    h.update(bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `known` for `files_matching`, from the files of a saved base.
+pub fn known_from(files: &crate::FileSet) -> KnownBlobs {
+    files
+        .values()
+        .map(|b| (git_blob_sha(b), b.clone()))
+        .collect()
+}
 
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct Head {
@@ -101,12 +120,17 @@ pub trait RemoteRepo: Send + Sync {
     async fn head(&self) -> crate::Result<Head>;
     /// All group-allowlisted files at a commit.
     async fn files_at(&self, commit: &str) -> crate::Result<crate::FileSet> {
-        self.files_matching(commit, crate::group::is_allowlisted)
+        self.files_matching(commit, crate::group::is_allowlisted, &KnownBlobs::new())
             .await
     }
     /// The files at a commit whose path passes `keep` (the personal repo has its own list).
-    async fn files_matching(&self, commit: &str, keep: PathFilter)
-        -> crate::Result<crate::FileSet>;
+    /// Entries whose blob sha is in `known` come from there, with no request.
+    async fn files_matching(
+        &self,
+        commit: &str,
+        keep: PathFilter,
+        known: &KnownBlobs,
+    ) -> crate::Result<crate::FileSet>;
     /// Commit `changes` (`None` = delete) on top of `parent` and move the branch,
     /// never forcing. `Err(Error::PushRace)` when the branch moved.
     /// `parent` may be `Head::empty()` to make the first commit of an empty repo.
@@ -152,6 +176,13 @@ pub trait RemoteRepo: Send + Sync {
     async fn proposals(&self) -> crate::Result<Vec<Proposal>> {
         Err(Error::Invalid("proposals are not available".into()))
     }
+    /// Like `proposals`, but only those new or changed (head sha or `updated_at`) since the
+    /// last call on this object.
+    async fn proposals_changed(&self) -> crate::Result<Vec<Proposal>> {
+        self.proposals().await
+    }
+    /// Make `proposals_changed` return this proposal again next time (its merge did not happen).
+    fn forget_proposal(&self, _number: u64) {}
     /// Review the proposal as approved (as the signed-in account).
     async fn approve_proposal(&self, _number: u64) -> crate::Result<()> {
         Err(Error::Invalid("proposals are not available".into()))
@@ -274,6 +305,8 @@ pub struct GitHubRepo {
     heads: Mutex<Vec<Head>>,
     /// Blob contents by SHA; blobs never change, so this only grows with the repo.
     blobs: Mutex<HashMap<String, Vec<u8>>>,
+    /// Last seen `(head sha, updated_at)` of each open PR, for `proposals_changed`.
+    seen_prs: Mutex<HashMap<u64, (String, String)>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -351,6 +384,7 @@ impl GitHubRepo {
             etag: Mutex::default(),
             heads: Mutex::default(),
             blobs: Mutex::default(),
+            seen_prs: Mutex::default(),
         }
     }
 
@@ -579,7 +613,12 @@ impl RemoteRepo for GitHubRepo {
         Ok(self.fetch_head(false).await?.expect("unconditional"))
     }
 
-    async fn files_matching(&self, commit: &str, keep: PathFilter) -> crate::Result<FileSet> {
+    async fn files_matching(
+        &self,
+        commit: &str,
+        keep: PathFilter,
+        known: &KnownBlobs,
+    ) -> crate::Result<FileSet> {
         if commit.is_empty() {
             return Ok(FileSet::new());
         }
@@ -607,7 +646,10 @@ impl RemoteRepo for GitHubRepo {
         let mut files = FileSet::new();
         for e in tree.tree {
             if e.kind == "blob" && keep(&e.path) {
-                let bytes = self.blob(&e.sha).await?;
+                let bytes = match known.get(&e.sha) {
+                    Some(b) => b.clone(),
+                    None => self.blob(&e.sha).await?,
+                };
                 files.insert(e.path, bytes);
             }
         }
@@ -693,65 +735,15 @@ impl RemoteRepo for GitHubRepo {
     }
 
     async fn proposals(&self) -> crate::Result<Vec<Proposal>> {
-        let prs: Vec<PullItem> = self
-            .gh
-            .get_pages(&self.path("/pulls?state=open&per_page=100"))
-            .await?;
-        let mut out = Vec::new();
-        for pr in prs
-            .into_iter()
-            .filter(|p| p.head.r#ref.starts_with(PROPOSAL_PREFIX))
-        {
-            let author = pr.user.login.clone();
-            let files: Vec<PullFile> = self
-                .gh
-                .get_pages(&self.path(&format!("/pulls/{}/files?per_page=100", pr.number)))
-                .await?;
-            let reviews: Vec<Review> = self
-                .gh
-                .get_pages(&self.path(&format!("/pulls/{}/reviews?per_page=100", pr.number)))
-                .await?;
-            // The newest review of each person counts, and only on the current branch head.
-            let mut latest: Vec<(String, bool)> = Vec::new();
-            for r in reviews {
-                let (Some(user), Some(state)) = (r.user, r.state) else {
-                    continue;
-                };
-                if matches!(state.as_str(), "COMMENTED" | "PENDING") {
-                    continue;
-                }
-                let ok = state == "APPROVED" && r.commit_id.as_deref() == Some(&pr.head.sha);
-                latest.retain(|(l, _)| !l.eq_ignore_ascii_case(&user.login));
-                latest.push((user.login, ok));
-            }
-            // The list reply leaves `mergeable` out; the single pull has it.
-            let detail: PullItem = self
-                .gh
-                .get(&self.path(&format!("/pulls/{}", pr.number)))
-                .await?;
-            out.push(Proposal {
-                number: pr.number,
-                branch: pr.head.r#ref,
-                title: pr.title,
-                url: pr.html_url,
-                files: files
-                    .into_iter()
-                    .filter(|f| crate::group::is_allowlisted(&f.filename))
-                    .map(|f| ProposalFile {
-                        path: f.filename,
-                        patch: f.patch.unwrap_or_default(),
-                    })
-                    .collect(),
-                approvals: latest
-                    .into_iter()
-                    .filter(|(l, ok)| *ok && !l.eq_ignore_ascii_case(&author))
-                    .map(|(l, _)| l)
-                    .collect(),
-                needs_update: detail.mergeable == Some(false),
-                author,
-            });
-        }
-        Ok(out)
+        self.read_proposals(false).await
+    }
+
+    async fn proposals_changed(&self) -> crate::Result<Vec<Proposal>> {
+        self.read_proposals(true).await
+    }
+
+    fn forget_proposal(&self, number: u64) {
+        self.seen_prs.lock().unwrap().remove(&number);
     }
 
     async fn approve_proposal(&self, number: u64) -> crate::Result<()> {
@@ -1028,6 +1020,80 @@ struct PullRef {
     sha: String,
 }
 
+impl GitHubRepo {
+    /// The open proposals; with `only_changed`, only those new or changed since the last call.
+    async fn read_proposals(&self, only_changed: bool) -> crate::Result<Vec<Proposal>> {
+        let prs: Vec<PullItem> = self
+            .gh
+            .get_pages(&self.path("/pulls?state=open&per_page=100"))
+            .await?;
+        let mut out = Vec::new();
+        let mut seen_now = HashMap::new();
+        for pr in prs
+            .into_iter()
+            .filter(|p| p.head.r#ref.starts_with(PROPOSAL_PREFIX))
+        {
+            let stamp = (pr.head.sha.clone(), pr.updated_at.clone());
+            seen_now.insert(pr.number, stamp.clone());
+            if only_changed && self.seen_prs.lock().unwrap().get(&pr.number) == Some(&stamp) {
+                continue;
+            }
+            let author = pr.user.login.clone();
+            let files: Vec<PullFile> = self
+                .gh
+                .get_pages(&self.path(&format!("/pulls/{}/files?per_page=100", pr.number)))
+                .await?;
+            let reviews: Vec<Review> = self
+                .gh
+                .get_pages(&self.path(&format!("/pulls/{}/reviews?per_page=100", pr.number)))
+                .await?;
+            // The newest review of each person counts, and only on the current branch head.
+            let mut latest: Vec<(String, bool)> = Vec::new();
+            for r in reviews {
+                let (Some(user), Some(state)) = (r.user, r.state) else {
+                    continue;
+                };
+                if matches!(state.as_str(), "COMMENTED" | "PENDING") {
+                    continue;
+                }
+                let ok = state == "APPROVED" && r.commit_id.as_deref() == Some(&pr.head.sha);
+                latest.retain(|(l, _)| !l.eq_ignore_ascii_case(&user.login));
+                latest.push((user.login, ok));
+            }
+            // The list reply leaves `mergeable` out; the single pull has it.
+            let detail: PullItem = self
+                .gh
+                .get(&self.path(&format!("/pulls/{}", pr.number)))
+                .await?;
+            out.push(Proposal {
+                number: pr.number,
+                branch: pr.head.r#ref,
+                title: pr.title,
+                url: pr.html_url,
+                files: files
+                    .into_iter()
+                    .filter(|f| crate::group::is_allowlisted(&f.filename))
+                    .map(|f| ProposalFile {
+                        path: f.filename,
+                        patch: f.patch.unwrap_or_default(),
+                    })
+                    .collect(),
+                approvals: latest
+                    .into_iter()
+                    .filter(|(l, ok)| *ok && !l.eq_ignore_ascii_case(&author))
+                    .map(|(l, _)| l)
+                    .collect(),
+                needs_update: detail.mergeable == Some(false),
+                author,
+            });
+        }
+        if only_changed {
+            *self.seen_prs.lock().unwrap() = seen_now;
+        }
+        Ok(out)
+    }
+}
+
 #[derive(Deserialize)]
 struct PullItem {
     number: u64,
@@ -1036,6 +1102,8 @@ struct PullItem {
     html_url: String,
     head: PullRef,
     user: Owner,
+    #[serde(default)]
+    updated_at: String,
     /// `None` while GitHub is still working it out, and in list replies.
     #[serde(default)]
     mergeable: Option<bool>,
@@ -1275,6 +1343,117 @@ mod tests {
         ]);
         assert_eq!(repo.files_at("c1").await.unwrap(), want);
         assert_eq!(repo.files_at("c1").await.unwrap(), want);
+    }
+
+    #[test]
+    fn git_blob_sha_matches_git() {
+        assert_eq!(
+            git_blob_sha(b""),
+            "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        );
+        assert_eq!(
+            git_blob_sha(b"hello\n"),
+            "ce013625030ba8dba906f756967f9e9ca394464a"
+        );
+    }
+
+    #[tokio::test]
+    async fn known_blobs_are_not_fetched_again() {
+        let (server, repo) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/git/commits/c1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"sha": "c1", "tree": {"sha": "t1"}})),
+            )
+            .mount(&server)
+            .await;
+        let names = [
+            "CLAUDE.md",
+            "README.md",
+            "skills/a.md",
+            "skills/b.md",
+            "skills/c.md",
+        ];
+        let tree: Vec<Value> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| json!({"path": n, "type": "blob", "sha": format!("k{i}")}))
+            .collect();
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/git/trees/t1"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"truncated": false, "tree": tree})),
+            )
+            .mount(&server)
+            .await;
+        // Only the fifth entry changed: one blob request, for it.
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/git/blobs/k4"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"content": "bmV3", "encoding": "base64"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let known: KnownBlobs = (0..4)
+            .map(|i| (format!("k{i}"), format!("old{i}").into_bytes()))
+            .collect();
+        let got = repo.files_matching("c1", |_| true, &known).await.unwrap();
+        assert_eq!(got.len(), 5);
+        assert_eq!(got["skills/c.md"], b"new");
+        assert_eq!(got["CLAUDE.md"], b"old0");
+    }
+
+    #[tokio::test]
+    async fn unchanged_proposals_are_not_read_again() {
+        let (server, repo) = setup().await;
+        let stamp = std::sync::Arc::new(Mutex::new("2026-01-01T00:00:00Z".to_string()));
+        let list = {
+            let stamp = stamp.clone();
+            move |_: &wiremock::Request| {
+                ResponseTemplate::new(200).set_body_json(json!([{
+                    "number": 7, "title": "t", "html_url": "u",
+                    "head": {"ref": "proposal/x", "sha": "s1"},
+                    "user": {"login": "bob"},
+                    "updated_at": stamp.lock().unwrap().clone()
+                }]))
+            }
+        };
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls"))
+            .respond_with(list)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls/7"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "number": 7, "title": "t", "html_url": "u",
+                "head": {"ref": "proposal/x", "sha": "s1"},
+                "user": {"login": "bob"}, "mergeable": true
+            })))
+            .expect(4)
+            .mount(&server)
+            .await;
+        for sub in ["files", "reviews"] {
+            Mock::given(method("GET"))
+                .and(path(format!("/repos/o/r/pulls/7/{sub}")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+                .mount(&server)
+                .await;
+        }
+        assert_eq!(repo.proposals_changed().await.unwrap().len(), 1);
+        // Same head and updated_at: nothing is read again.
+        assert!(repo.proposals_changed().await.unwrap().is_empty());
+        // The full list is still there for the screen.
+        *stamp.lock().unwrap() = "2026-01-02T00:00:00Z".into();
+        assert_eq!(repo.proposals_changed().await.unwrap().len(), 1);
+        // A forgotten PR is read again, and the screen's list does not count as a look
+        // by the merge pass.
+        repo.forget_proposal(7);
+        assert_eq!(repo.proposals().await.unwrap().len(), 1);
+        assert_eq!(repo.proposals_changed().await.unwrap().len(), 1);
     }
 
     #[tokio::test]

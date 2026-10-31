@@ -1573,7 +1573,13 @@ impl Engine {
                 base.files.clone()
             } else {
                 report.pulled = true;
-                remote.files_at(&head.commit).await?
+                remote
+                    .files_matching(
+                        &head.commit,
+                        group::is_allowlisted,
+                        &crate::remote::known_from(&base.files),
+                    )
+                    .await?
             };
             let (gf, read_only) = read_group_file(id, &remote_files)?;
             // Only the host's app writes to the group; with proposal mode on a member's
@@ -1725,7 +1731,7 @@ impl Engine {
     /// another member approved and that still applies. Never an error; the next sync picks
     /// the merged files up.
     async fn merge_approved(&self, remote: &dyn RemoteRepo, gf: &GroupFile) {
-        let open = match remote.proposals().await {
+        let open = match remote.proposals_changed().await {
             Ok(open) => open,
             Err(e) => {
                 tracing::warn!(error = %e, "could not list the group's proposals");
@@ -1741,7 +1747,10 @@ impl Engine {
             if mine && approved && !p.needs_update {
                 if let Err(e) = remote.merge_proposal(p.number).await {
                     tracing::warn!(proposal = p.number, error = %e, "could not merge a proposal");
+                    remote.forget_proposal(p.number);
                 }
+            } else if mine && approved {
+                remote.forget_proposal(p.number);
             }
         }
     }
