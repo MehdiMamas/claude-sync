@@ -1747,7 +1747,10 @@ impl Engine {
             if mine && approved && !p.needs_update {
                 if let Err(e) = remote.merge_proposal(p.number).await {
                     tracing::warn!(proposal = p.number, error = %e, "could not merge a proposal");
+                    remote.forget_proposal(p.number);
                 }
+            } else if mine && approved {
+                remote.forget_proposal(p.number);
             }
         }
     }
