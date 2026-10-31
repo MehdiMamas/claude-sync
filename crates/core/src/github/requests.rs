@@ -193,6 +193,7 @@ pub fn normalize(path: &str) -> String {
                 out.push(":ref".into());
                 break;
             }
+            _ if s.contains("...") => out.push(":range".into()),
             _ if is_id(s) => out.push(":id".into()),
             _ => out.push(s.to_string()),
         }
@@ -235,6 +236,10 @@ mod tests {
         );
         assert_eq!(n("/repos/me/grp"), "repos/:repo");
         assert_eq!(n("/graphql"), "graphql");
+        assert_eq!(
+            n("/repos/me/grp/compare/main...feature"),
+            "repos/:repo/compare/:range"
+        );
         assert_eq!(n("/user"), "user");
         assert_eq!(n("/user/invitations"), "user/invitations");
         assert_eq!(n("/users/octocat"), "users/:user");

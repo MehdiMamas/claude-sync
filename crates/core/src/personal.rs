@@ -26,7 +26,7 @@ use crate::engine::{
     with_changes, Base, ConflictInfo, MAX_CONFLICTS, PUSH_RETRIES,
 };
 use crate::merge::{self, MergeResult};
-use crate::remote::{Changes, Head, RemoteRepo};
+use crate::remote::{known_from, Changes, Head, KnownBlobs, RemoteRepo};
 use crate::state::{now_unix, utc_stamp, write_atomic, write_json, AppState};
 use crate::{Engine, Error, FileSet, GroupId};
 use serde::{Deserialize, Serialize};
@@ -430,7 +430,9 @@ impl Engine {
         if head.is_empty() {
             return Ok(NewDevice::Nothing);
         }
-        let files = remote.files_matching(&head.commit, |p| p == FILE).await?;
+        let files = remote
+            .files_matching(&head.commit, |p| p == FILE, &KnownBlobs::new())
+            .await?;
         let Some(pf) = files
             .get(FILE)
             .map(|b| PersonalFile::parse(b))
@@ -549,12 +551,16 @@ impl Engine {
             st.seen_pushed_unix = now_unix();
         } else {
             let files = remote
-                .files_matching(&head.commit, |p| {
-                    p == FILE
-                        || p == "README.md"
-                        || p.starts_with("owners/")
-                        || p.starts_with("projects/")
-                })
+                .files_matching(
+                    &head.commit,
+                    |p| {
+                        p == FILE
+                            || p == "README.md"
+                            || p.starts_with("owners/")
+                            || p.starts_with("projects/")
+                    },
+                    &KnownBlobs::new(),
+                )
                 .await?;
             match files.get(FILE) {
                 Some(f) => {
@@ -674,7 +680,7 @@ impl Engine {
             } else {
                 report.pulled = true;
                 remote
-                    .files_matching(&head.commit, is_personal_path)
+                    .files_matching(&head.commit, is_personal_path, &known_from(&base.files))
                     .await?
             };
             PersonalFile::parse(
@@ -817,7 +823,7 @@ impl Engine {
                 return Err(not_personal(&id));
             }
             let files = remote
-                .files_matching(&head.commit, is_personal_path)
+                .files_matching(&head.commit, is_personal_path, &KnownBlobs::new())
                 .await?;
             if !files.contains_key(FILE) {
                 return Err(not_personal(&id));

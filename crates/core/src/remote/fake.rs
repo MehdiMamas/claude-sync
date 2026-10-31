@@ -444,7 +444,12 @@ impl RemoteRepo for FakeRepo {
         Ok(self.enter("head")?.head())
     }
 
-    async fn files_matching(&self, commit: &str, keep: PathFilter) -> crate::Result<FileSet> {
+    async fn files_matching(
+        &self,
+        commit: &str,
+        keep: PathFilter,
+        _known: &super::KnownBlobs,
+    ) -> crate::Result<FileSet> {
         let st = self.enter("files_at")?;
         if commit.is_empty() {
             return Ok(FileSet::new());
