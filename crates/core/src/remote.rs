@@ -1087,7 +1087,9 @@ impl GitHubRepo {
                 author,
             });
         }
-        *self.seen_prs.lock().unwrap() = seen_now;
+        if only_changed {
+            *self.seen_prs.lock().unwrap() = seen_now;
+        }
         Ok(out)
     }
 }
@@ -1350,10 +1352,7 @@ mod tests {
             "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
         );
         assert_eq!(
-            git_blob_sha(
-                b"hello
-"
-            ),
+            git_blob_sha(b"hello\n"),
             "ce013625030ba8dba906f756967f9e9ca394464a"
         );
     }
@@ -1434,7 +1433,7 @@ mod tests {
                 "head": {"ref": "proposal/x", "sha": "s1"},
                 "user": {"login": "bob"}, "mergeable": true
             })))
-            .expect(3)
+            .expect(4)
             .mount(&server)
             .await;
         for sub in ["files", "reviews"] {
@@ -1450,8 +1449,10 @@ mod tests {
         // The full list is still there for the screen.
         *stamp.lock().unwrap() = "2026-01-02T00:00:00Z".into();
         assert_eq!(repo.proposals_changed().await.unwrap().len(), 1);
-        // A forgotten PR is read again.
+        // A forgotten PR is read again, and the screen's list does not count as a look
+        // by the merge pass.
         repo.forget_proposal(7);
+        assert_eq!(repo.proposals().await.unwrap().len(), 1);
         assert_eq!(repo.proposals_changed().await.unwrap().len(), 1);
     }
 
