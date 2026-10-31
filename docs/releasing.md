@@ -67,13 +67,13 @@ The tag starts `release.yml`:
 
 1. `prepare` checks that the tag is semver, that `v0.2.0` is not already a published release, and that the version files at the tagged commit say `0.2.0` (`bump-version.mjs --check`). A mismatch fails the run before anything is built.
 2. `build (windows)` and `build (macos)` wait for your approval (environment `release`): approve them in the run page or with `gh run view --web`. They build without caches, check each updater `.sig` against the public key in `tauri.conf.json` (`scripts/verify-updater-sig.mjs`), and on macOS check `codesign`, the stapled notarization ticket and Gatekeeper (`spctl`) when signed.
-3. `draft` creates the draft release `v0.2.0` with all five assets (release notes generated from the merged PRs), or replaces the assets of an existing draft (`--clobber`). It refuses to touch a published release. The run summary lists the SHA-256 of every asset.
+3. `draft` creates the draft release `v0.2.0` with all eight assets (release notes generated from the merged PRs), or replaces the assets of an existing draft (`--clobber`). It refuses to touch a published release. The run summary lists the SHA-256 of every asset.
 
 To rebuild (a flaky runner, a new secret): rerun the failed jobs, or `gh workflow run release.yml --repo MehdiMamas/claude-sync -f version=0.2.0`. A manual run builds the commit of the tag `v0.2.0` if it exists, else the branch you run it on.
 
 ## 3. Check and publish
 
-1. Open the draft on GitHub: five assets, edit the notes (they are what the app shows with the update).
+1. Open the draft on GitHub: eight assets (the table above), edit the notes (they are what the app shows with the update).
 2. Smoke test the installer from the draft on Windows and the `.dmg` on the Mac: it starts, signs in, syncs. Write it down in the release PR.
 3. Publish the draft (GitHub → Releases → Edit → Publish, or `gh release edit v0.2.0 --repo MehdiMamas/claude-sync --draft=false`).
 
