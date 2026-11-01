@@ -1788,3 +1788,49 @@ async fn a_choices_file_from_v0_1_13_is_filled_in_once() {
     let joined = crate::state::AppState::load(&pc.paths).unwrap().groups;
     assert_eq!(joined, [g1, g2], "no group was left");
 }
+
+const IDX: &str = "memory/home/MEMORY.md";
+
+#[test]
+fn memory_index_line_endings_alone_never_push_or_rewrite() {
+    let a = "- [A](a.md) — a\n- [B](b.md) — b\n";
+    let crlf = a.replace('\n', "\r\n");
+    // Remote LF, local CRLF, same lines: no push, local bytes kept.
+    let r = merge_personal(&set(&[(IDX, a)]), &set(&[(IDX, &crlf)]), &set(&[(IDX, a)]));
+    assert!(r.to_push.is_empty());
+    assert_eq!(r.merged[IDX], crlf.as_bytes());
+    // Remote CRLF, local LF, same lines: no push, local bytes kept.
+    let r = merge_personal(
+        &set(&[(IDX, &crlf)]),
+        &set(&[(IDX, a)]),
+        &set(&[(IDX, &crlf)]),
+    );
+    assert!(r.to_push.is_empty());
+    assert_eq!(r.merged[IDX], a.as_bytes());
+    // A real new line on the CRLF side: the push is LF only, local keeps CRLF.
+    let local = format!("{crlf}- [C](c.md) — c\r\n");
+    let r = merge_personal(&set(&[(IDX, a)]), &set(&[(IDX, &local)]), &set(&[(IDX, a)]));
+    let want = format!("{a}- [C](c.md) — c\n");
+    assert_eq!(r.to_push[IDX].as_deref(), Some(want.as_bytes()));
+    assert_eq!(r.merged[IDX], local.as_bytes());
+}
+
+#[test]
+fn jsonl_line_endings_are_unchanged_by_the_index_rule() {
+    let a = r#"{"ts":"2026-10-17T03:00:00Z","m":"x"}"#;
+    let r = merge_personal(
+        &set(&[]),
+        &set(&[(LOG_PATH, &format!("{a}\r\n"))]),
+        &set(&[(LOG_PATH, &format!("{a}\n"))]),
+    );
+    let want = state::merge_log(
+        None,
+        Some(format!("{a}\r\n").as_bytes()),
+        Some(format!("{a}\n").as_bytes()),
+    );
+    assert_eq!(
+        r.to_push.get(LOG_PATH).cloned().flatten(),
+        want.clone().filter(|w| w != format!("{a}\n").as_bytes())
+    );
+    assert_eq!(Some(r.merged[LOG_PATH].clone()), want);
+}
