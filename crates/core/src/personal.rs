@@ -1514,11 +1514,38 @@ fn merge_personal<'a>(base: &'a FileSet, local: &'a FileSet, remote: &'a FileSet
         } else {
             lines::merge(get(base), get(local), get(remote))
         };
+        if lines::is_index(path) {
+            // Devices that differ only by line endings must not rewrite each other.
+            let same = |a: Option<&[u8]>, b: Option<&[u8]>| match (a, b) {
+                (Some(a), Some(b)) => lf(a) == lf(b),
+                (a, b) => a == b,
+            };
+            if !same(merged.as_deref(), get(remote)) {
+                out.to_push.insert(path.clone(), merged.as_deref().map(lf));
+            }
+            if let Some(bytes) = merged {
+                let keep_local = get(local).filter(|l| lf(l) == lf(&bytes));
+                out.merged
+                    .insert(path.clone(), keep_local.map_or(bytes, <[u8]>::to_vec));
+            }
+            continue;
+        }
         if merged.as_deref() != get(remote) {
             out.to_push.insert(path.clone(), merged.clone());
         }
         if let Some(bytes) = merged {
             out.merged.insert(path.clone(), bytes);
+        }
+    }
+    out
+}
+
+/// The bytes with `\r\n` turned into `\n`.
+fn lf(b: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(b.len());
+    for (i, &c) in b.iter().enumerate() {
+        if !(c == b'\r' && b.get(i + 1) == Some(&b'\n')) {
+            out.push(c);
         }
     }
     out
