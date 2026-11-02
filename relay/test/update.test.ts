@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { GET as download } from "../api/download/[id].ts";
-import { GET as update } from "../api/update.ts";
+import { GET as update, resetUpdateCache } from "../api/update.ts";
 import { resetAuthCache } from "../lib/auth.ts";
 import { type FetchMock, mockFetch, mockUser, RELAY_TOKEN, req, setEnv } from "./helpers.ts";
 
@@ -42,6 +42,7 @@ let fm: FetchMock;
 beforeEach(() => {
   setEnv();
   resetAuthCache();
+  resetUpdateCache();
   fm = mockFetch();
   mockUser(fm, "MehdiMamas");
   fm.on("GET", `${REPO}/releases/latest`, release("v0.3.0", FULL));
@@ -152,6 +153,65 @@ describe("GET /api/update", () => {
   it("502 when GitHub fails", async () => {
     fm.on("GET", `${REPO}/releases/latest`, 500);
     assert.equal((await update(updateReq("windows", "x86_64", "0.1.0"))).status, 502);
+  });
+});
+
+describe("update cache", () => {
+  const githubCalls = () => fm.calls.filter((c) => c.url.includes("/releases"));
+
+  afterEach(() => mock.timers.reset());
+
+  it("a second request within 60 s makes no GitHub call", async () => {
+    mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+    const first = await update(updateReq("windows", "x86_64", "0.2.0"));
+    assert.equal(first.status, 200);
+    assert.match(first.headers.get("cache-control") ?? "", /no-store/);
+    const before = githubCalls().length;
+    assert.equal(before, 2);
+    mock.timers.tick(59_000);
+    const second = await update(updateReq("windows", "x86_64", "0.1.0"));
+    assert.equal(second.status, 200);
+    assert.equal(githubCalls().length, before);
+  });
+
+  it("requireCaller still runs first when the answer is cached", async () => {
+    await update(updateReq("windows", "x86_64", "0.2.0"));
+    const res = await update(req("/api/update?target=windows&arch=x86_64&current_version=0.2.0", { token: null }));
+    assert.equal(res.status, 401);
+  });
+
+  it("a 304 reuses the cached body", async () => {
+    mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+    fm.on("GET", `${REPO}/releases/latest`, () =>
+      Response.json(release("v0.3.0", FULL), { headers: { etag: '"abc"' } }),
+    );
+    await update(updateReq("windows", "x86_64", "0.2.0"));
+    mock.timers.tick(61_000);
+    fm.on("GET", `${REPO}/releases/latest`, 304);
+    const res = await update(updateReq("windows", "x86_64", "0.2.0"));
+    assert.equal(res.status, 200);
+    assert.equal(((await res.json()) as { version: string }).version, "0.3.0");
+    const latest = fm.calls.filter((c) => c.url.endsWith("/releases/latest"));
+    assert.equal(latest.length, 2);
+    assert.equal(latest[1]?.headers["if-none-match"], '"abc"');
+  });
+
+  for (const status of [403, 429]) {
+    it(`a ${status} from GitHub serves the stale answer`, async () => {
+      mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+      await update(updateReq("windows", "x86_64", "0.2.0"));
+      mock.timers.tick(61_000);
+      fm.on("GET", `${REPO}/releases/latest`, status);
+      fm.on("GET", `${REPO}/releases/assets/101`, status);
+      const res = await update(updateReq("windows", "x86_64", "0.2.0"));
+      assert.equal(res.status, 200);
+      assert.equal(((await res.json()) as { signature: string }).signature, SIG_WIN);
+    });
+  }
+
+  it("a 403 with nothing cached is still a 502", async () => {
+    fm.on("GET", `${REPO}/releases/latest`, 403);
+    assert.equal((await update(updateReq("windows", "x86_64", "0.2.0"))).status, 502);
   });
 });
 

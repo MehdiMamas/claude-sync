@@ -10,6 +10,8 @@ export interface GitHubRequest {
   method?: string;
   body?: unknown;
   accept?: string;
+  /** Sent as If-None-Match; a 304 answer does not count against the rate limit. */
+  etag?: string;
   redirect?: RequestInit["redirect"];
 }
 
@@ -19,6 +21,7 @@ export async function github(path: string, opts: GitHubRequest): Promise<Respons
     "user-agent": "claude-sync-relay",
     "x-github-api-version": "2022-11-28",
   };
+  if (opts.etag) headers["if-none-match"] = opts.etag;
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   const init: RequestInit = { method: opts.method ?? "GET", headers };
   if (opts.body !== undefined) {

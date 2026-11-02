@@ -36,6 +36,8 @@ No auth. `200 {"ok": true}`.
 
 Reads the latest release of `RELEASES_REPO` (`GET /repos/{repo}/releases/latest`, which skips drafts and prereleases).
 
+The release and each `.sig` are cached in memory for 60 s per instance, then revalidated with an ETag (a `304` reuses the cached body and does not count against the rate limit). On a `403`/`429` from GitHub the last good answer is served and a warning is logged. Answers stay `no-store`: nothing is cached at the CDN, so a cached answer never skips the caller check. The caller check always runs first.
+
 - `204` when there is no release, the release is not newer than `current_version` (semver 2.0.0; `0.3.0-rc.1` is older than `0.3.0`), or the release has no update bundle and `.sig` for this platform yet.
 - `200` with the Tauri updater JSON otherwise:
 

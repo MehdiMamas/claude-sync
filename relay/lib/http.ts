@@ -23,8 +23,8 @@ export function json(status: number, body: unknown, headers: Record<string, stri
   });
 }
 
-export function noContent(): Response {
-  return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+export function noContent(headers: Record<string, string> = {}): Response {
+  return new Response(null, { status: 204, headers: { "cache-control": "no-store", ...headers } });
 }
 
 /** Logs without ever printing a token: every message goes through redaction. */

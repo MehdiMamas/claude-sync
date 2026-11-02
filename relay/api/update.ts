@@ -12,21 +12,60 @@ function oneOf<T extends string>(value: string | null, allowed: readonly T[], na
   throw new HttpError(400, `${name} must be one of: ${allowed.join(", ")}`);
 }
 
+/** How long an answer from GitHub is reused without asking again. */
+const CACHE_MS = 60_000;
+/** Lets Vercel's CDN reuse an answer; Vary keeps one entry per caller token so requireCaller still decides first. */
+const CDN_CACHE = { "cache-control": "no-store" }; // cached in memory only, so the caller check always runs
+
+interface CachedRelease {
+  etag: string | null;
+  release: Release;
+  at: number;
+}
+let releaseCache: CachedRelease | null = null;
+const sigCache = new Map<number, { text: string; at: number }>();
+
+export function resetUpdateCache(): void {
+  releaseCache = null;
+  sigCache.clear();
+}
+
+/** GitHub refused the relay token for now (rate limit): a stale answer beats failing. */
+function limited(status: number): boolean {
+  return status === 403 || status === 429;
+}
+
 async function latestRelease(repo: string, token: string): Promise<Release | null> {
-  const res = await github(`${repoPath(repo)}/releases/latest`, { token });
+  const cached = releaseCache;
+  if (cached && Date.now() - cached.at < CACHE_MS) return cached.release;
+  const res = await github(`${repoPath(repo)}/releases/latest`, { token, etag: cached?.etag ?? undefined });
+  if (res.status === 304 && cached) {
+    discard(res);
+    cached.at = Date.now();
+    return cached.release;
+  }
   if (res.status === 404) {
     discard(res);
+    releaseCache = null;
     return null;
   }
   if (!res.ok) {
     discard(res);
+    if (cached && limited(res.status)) {
+      logWarn(`GitHub answered ${res.status} for the latest release; serving the cached one`);
+      return cached.release;
+    }
     throw new GitHubError("latest release", res.status);
   }
-  return (await res.json()) as Release;
+  const release = (await res.json()) as Release;
+  releaseCache = { etag: res.headers.get("etag"), release, at: Date.now() };
+  return release;
 }
 
 /** The .sig asset's text. fetch follows GitHub's redirect and drops the auth header on the cross-origin hop. */
 async function signature(repo: string, token: string, asset: ReleaseAsset): Promise<string> {
+  const cached = sigCache.get(asset.id);
+  if (cached && Date.now() - cached.at < CACHE_MS) return cached.text;
   if (asset.size > MAX_SIG_BYTES) throw new Error(`signature asset ${asset.name} is too large`);
   const res = await github(`${repoPath(repo)}/releases/assets/${asset.id}`, {
     token,
@@ -34,9 +73,15 @@ async function signature(repo: string, token: string, asset: ReleaseAsset): Prom
   });
   if (!res.ok) {
     discard(res);
+    if (cached && limited(res.status)) {
+      logWarn(`GitHub answered ${res.status} for signature asset ${asset.id}; serving the cached one`);
+      return cached.text;
+    }
     throw new GitHubError("signature asset", res.status);
   }
-  return (await res.text()).trim();
+  const text = (await res.text()).trim();
+  sigCache.set(asset.id, { text, at: Date.now() });
+  return text;
 }
 
 /**
@@ -54,29 +99,33 @@ export const GET = handler("update", async (req) => {
   const repo = env.releasesRepo();
   const token = env.relayToken();
   const release = await latestRelease(repo, token);
-  if (!release || release.draft) return noContent();
+  if (!release || release.draft) return noContent(CDN_CACHE);
 
   const latest = parseSemver(release.tag_name);
   if (!latest) {
     logWarn(`latest release tag ${release.tag_name} is not semver`);
-    return noContent();
+    return noContent(CDN_CACHE);
   }
-  if (compareSemver(latest, current) <= 0) return noContent();
+  if (compareSemver(latest, current) <= 0) return noContent(CDN_CACHE);
 
   const version = formatSemver(latest);
   const found = findBundle(release.assets, version, target, arch);
   if (!found) {
     // Normal while a release is being assembled (the macOS build uploads later).
     logWarn(`release ${release.tag_name} has no ${target}/${arch} update bundle with a .sig`);
-    return noContent();
+    return noContent(CDN_CACHE);
   }
 
   const origin = env.publicUrl() ?? new URL(req.url).origin;
-  return json(200, {
-    version,
-    notes: release.body ?? "",
-    pub_date: release.published_at ?? new Date().toISOString(),
-    url: `${origin}/api/download/${found.bundle.id}`,
-    signature: await signature(repo, token, found.sig),
-  });
+  return json(
+    200,
+    {
+      version,
+      notes: release.body ?? "",
+      pub_date: release.published_at ?? new Date().toISOString(),
+      url: `${origin}/api/download/${found.bundle.id}`,
+      signature: await signature(repo, token, found.sig),
+    },
+    CDN_CACHE,
+  );
 });
