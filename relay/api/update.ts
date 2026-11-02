@@ -15,7 +15,7 @@ function oneOf<T extends string>(value: string | null, allowed: readonly T[], na
 /** How long an answer from GitHub is reused without asking again. */
 const CACHE_MS = 60_000;
 /** Lets Vercel's CDN reuse an answer; Vary keeps one entry per caller token so requireCaller still decides first. */
-const CDN_CACHE = { "cache-control": "public, s-maxage=60, stale-while-revalidate=300", vary: "authorization" };
+const CDN_CACHE = { "cache-control": "no-store" }; // cached in memory only, so the caller check always runs
 
 interface CachedRelease {
   etag: string | null;

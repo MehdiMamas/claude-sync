@@ -165,7 +165,7 @@ describe("update cache", () => {
     mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
     const first = await update(updateReq("windows", "x86_64", "0.2.0"));
     assert.equal(first.status, 200);
-    assert.match(first.headers.get("cache-control") ?? "", /s-maxage=60/);
+    assert.match(first.headers.get("cache-control") ?? "", /no-store/);
     const before = githubCalls().length;
     assert.equal(before, 2);
     mock.timers.tick(59_000);
