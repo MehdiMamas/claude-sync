@@ -284,8 +284,78 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  cli:
+    needs: prepare
+    name: command line (${{ matrix.target }})
+    environment: release
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      CLAUDE_SYNC_RELAY_URL: ${{ vars.CLAUDE_SYNC_RELAY_URL }}
+      CLAUDE_SYNC_GITHUB_CLIENT_ID: ${{ vars.CLAUDE_SYNC_GITHUB_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add "${{ matrix.target }}"
+
+      - name: Build
+        run: cargo build -p claude-sync-cli --release --target "${{ matrix.target }}"
+
+      - name: Pack and checksum
+        run: |
+          set -euo pipefail
+          stage="dist/release/$VERSION"
+          mkdir -p "$stage"
+          bin="target/${{ matrix.target }}/release"
+          case "${{ matrix.target }}" in
+            *windows*)
+              name="claude-sync-cli-${{ matrix.target }}.zip"
+              (cd "$bin" && 7z a -tzip "$GITHUB_WORKSPACE/$stage/$name" claude-sync-cli.exe)
+              ;;
+            *)
+              name="claude-sync-cli-${{ matrix.target }}.tar.gz"
+              tar -C "$bin" -czf "$stage/$name" claude-sync-cli
+              ;;
+          esac
+          (cd "$stage" && if command -v sha256sum >/dev/null; then sha256sum "$name"; else shasum -a 256 "$name"; fi > "$name.sha256")
+          ls -l "$stage"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-cli-${{ matrix.target }}
+          path: dist/release/${{ needs.prepare.outputs.version }}/
+          if-no-files-found: error
+          retention-days: 7
+
   draft:
-    needs: [prepare, build]
+    needs: [prepare, build, cli]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
