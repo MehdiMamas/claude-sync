@@ -27,6 +27,7 @@ pub mod report;
 pub mod review;
 pub mod secrets;
 pub mod settings;
+pub mod ssh_peers;
 pub mod state;
 pub mod wake;
 pub mod watch;
