@@ -515,6 +515,16 @@ Create it at GitHub, Settings, Developer settings, GitHub Apps, New GitHub App:
 
 **Settings UI.** Settings has a "GitHub App (beta)" card: a toggle for the `githubApp` setting (off by default, takes effect at next sign-in; disabled with "This build has no GitHub App" when `app_info.appClientIdMissing`). When on, an "Install the App" button calls `open_app_install` and `app_coverage` fills a list of group repos the App does not reach ("Not covered: owner/repo"). Code: `app/ui/src/screens/settings.ts`, `coverageLines` in `app/ui/src/copy.ts`.
 
+## 21. Reaching your own machines over SSH (issue #166)
+
+Opt-in and personal: `sshPeers` `{on, ts}` in the choices file (§16a), merged by its own `ts`, so it is on or off for every device of the account. `claude-sync-cli ssh enable|disable|status|alias <name>` (and the same in the app binary, §11a) only set the choice and this machine's alias; the sync pass does the work.
+
+- **Records.** Each device with the choice on writes `<state_dir>/machines/<machine-id>.json` (`id, name, alias, os, user, host, pubkey, ts`) and personal sync carries it as `machines/<id>.json` in the personal repo (`personal::is_personal_path` and `Kinds::syncs` accept it whatever kinds are chosen). It is rewritten only when a field other than `ts` changes. Without personal sync the records do not travel. `pubkey` is `~/.ssh/id_ed25519.pub`; `ssh-keygen` runs only when no key exists. `host` is `tailscale ip -4` or the host name. `alias` is `mac` on macOS, else `pc`, or the chosen one; a clash with another record gets `-2`, `-3`.
+- **Apply** (`ssh_peers::apply`, after personal sync in the app loop and in the daemon, under the `ssh-peers` caller). For each other record whose alias, user, host and key pass the checks (only `ssh-ed25519` and `ecdsa-sha2-*` keys on one line, no options): a line in the managed block `# >>> claude-sync peers >>>` of `~/.ssh/authorized_keys` with `from="100.64.0.0/10,fd7a:115c:a1e0::/48",no-agent-forwarding,no-X11-forwarding` (skipped on Windows), and a `Host` entry in `~/.ssh/claude-sync.conf`. `~/.ssh/config` gets `Include claude-sync.conf` as its first line (top-level scope); a peer alias the user's own config already defines is written as `<alias>-cs`. Lines outside the block are never touched; files are 0600, `~/.ssh` 0700.
+- **Off** removes the block, the Include line, the conf file and this device's record.
+- **Trust.** Records come only from the owner's private personal repo, which can already deliver `settings.json` hooks to every device. No sudo or admin rights.
+- **Alternatives.** Tailscale SSH (server side only on Linux and open-source macOS builds); group scheduled jobs (§17: wrong audience, per-device acceptance); a claude-mods hook (runs only inside a Claude session).
+
 ## Headless CLI and the shared loop
 
 `crates/cli` runs the same engine as the app without Tauri. Shared pieces live in core so both behave alike: `wake::next_wake` (when the loop wakes), `report::StatusReport` (the `status` text and JSON) and `lock::SyncLock`.

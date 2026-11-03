@@ -25,7 +25,7 @@ Every setting lives in exactly one scope: group, personal or project. There are 
 
 ## Headless command line (`claude-sync-cli`)
 `crates/cli` is a separate binary with no GUI and no WebKit; it depends on core with `--no-default-features` (no Linux keyring). Build and test it alone: `cargo test -p claude-sync-core --no-default-features -p claude-sync-cli`. Exit code: 0 done, 1 failed, 2 wrong usage; `--json` for machine output.
-- Commands: `login` (device flow), `logout`, `groups`, `join <owner/repo>`, `leave`, `sync`, `status`, `personal status|enable|disable`, `review list|accept|undo <id>`, `daemon`, `service install|remove|status`, `update [--check]`, `version`. `run-job` is hidden: the OS tasks of group jobs call it.
+- Commands: `login` (device flow), `logout`, `groups`, `join <owner/repo>`, `leave`, `sync`, `status`, `personal status|enable|disable`, `ssh status|enable|disable|alias <name>`, `review list|accept|undo <id>`, `daemon`, `service install|remove|status`, `update [--check]`, `version`. `run-job` is hidden: the OS tasks of group jobs call it.
 - The token is the file `~/.claude-sync/token` (mode 0600), not the keyring. The daemon reloads it each pass.
 - `service install` writes a systemd user unit when systemd runs, else an `@reboot` crontab line plus a 5-minute check. `daemon.lock` keeps one daemon alive.
 - Syncs from the app and the CLI share `<state>/sync.lock` (`core::lock`), so they never run at once.
@@ -38,6 +38,8 @@ The app binary is also the CLI (`app/src-tauri/src/cli.rs`, handled before Tauri
 - `claude-sync personal status|enable|disable`: the same as Settings -> Personal memory. After a change the CLI sends `--refresh` to the running app (if any), which reloads its screens.
 - On macOS and Linux the release app links `~/.local/bin/claude-sync` to its binary at startup (only if that folder exists and the name is free). Windows has no shim: run the full path of `claude-sync.exe`. Debug builds add no link; run `target/debug/claude-sync`.
 - On Windows the release exe is a GUI program, so PowerShell shows none of its output when you call it directly: pipe it, e.g. `& "$env:LOCALAPPDATA\claude-sync\claude-sync.exe" status --json | Out-String` (#149).
+
+- SSH between your own machines (`crates/core/src/ssh_peers.rs`, architecture §21): the sync loops call `ssh_peers::sync_pass` after personal sync. It edits only the marked block of `~/.ssh/authorized_keys`, `~/.ssh/claude-sync.conf` and the `Include` first line of `~/.ssh/config`; tests inject `Env` and `Probe` and never touch the real `~/.ssh`.
 
 ## Conventions
 - One change per PR; paste the commands you ran with exit codes and counts, and name the OS.
