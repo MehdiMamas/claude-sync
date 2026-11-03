@@ -91,6 +91,17 @@ pub async fn tick(
         }
     })
     .await;
+    with_caller("ssh-peers", async {
+        let (p, host) = (paths.clone(), crate::auth::default_device_name());
+        match tokio::task::spawn_blocking(move || claude_sync_core::ssh_peers::sync_pass(&p, host))
+            .await
+        {
+            Ok(Err(e)) => tracing::info!("ssh peers: {e}"),
+            Err(e) => tracing::error!("ssh peers failed: {e}"),
+            Ok(Ok(())) => {}
+        }
+    })
+    .await;
     let (h, p) = (hooks.clone(), paths.clone());
     if let Err(e) = tokio::task::spawn_blocking(move || h.after_sync(&p)).await {
         tracing::error!("after-sync hooks failed: {e}");

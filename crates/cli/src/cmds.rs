@@ -1,5 +1,5 @@
 //! The commands. Each returns the text for a person and the value for `--json`.
-use crate::args::{Cmd, Personal, Review, Service};
+use crate::args::{Cmd, Personal, Review, Service, Ssh};
 use crate::auth::{self, Hosts, Standing};
 use crate::daemon;
 use crate::jobs::{Hooks, RealHooks};
@@ -60,6 +60,7 @@ pub async fn execute(paths: &Paths, cmd: Cmd) -> Result<Out, String> {
         Cmd::Sync => sync(paths).await,
         Cmd::Status => status(paths).await,
         Cmd::Personal(p) => personal(paths, p).await,
+        Cmd::Ssh(s) => ssh(paths, s),
         Cmd::Review(r) => review_cmd(paths, r).await,
         Cmd::Service(s) => {
             let text = match s {
@@ -271,6 +272,41 @@ async fn personal(paths: &Paths, p: Personal) -> Result<Out, String> {
     };
     Ok(Out::new(
         claude_sync_core::report::personal_text(&st, now_unix()),
+        serde_json::to_value(&st).map_err(|e| e.to_string())?,
+    ))
+}
+
+/// Reach your own machines over SSH. The sync pass does the work; these set the choice.
+fn ssh(paths: &Paths, s: Ssh) -> Result<Out, String> {
+    use claude_sync_core::{choices, ssh_peers};
+    let env =
+        ssh_peers::Env::real(paths, auth::default_device_name()).map_err(|e| e.to_string())?;
+    match s {
+        Ssh::Enable => {
+            choices::set_ssh_peers(paths, true).map_err(|e| e.to_string())?;
+        }
+        Ssh::Disable => {
+            choices::set_ssh_peers(paths, false).map_err(|e| e.to_string())?;
+        }
+        Ssh::Alias(name) => ssh_peers::set_alias(&env, &name).map_err(|e| e.to_string())?,
+        Ssh::Status => {}
+    }
+    let st = ssh_peers::status(paths, &env).map_err(|e| e.to_string())?;
+    let mut text = format!(
+        "SSH to your own machines is {}.",
+        if st.on { "on" } else { "off" }
+    );
+    if let Some(a) = &st.alias {
+        text.push_str(&format!(" This machine is called `{a}`."));
+    }
+    for p in &st.peers {
+        text.push_str(&format!("\n  ssh {}  ({}, {})", p.alias, p.name, p.os));
+    }
+    if st.on && st.peers.is_empty() {
+        text.push_str("\nNo other machine yet; they appear after their next sync.");
+    }
+    Ok(Out::new(
+        text,
         serde_json::to_value(&st).map_err(|e| e.to_string())?,
     ))
 }
