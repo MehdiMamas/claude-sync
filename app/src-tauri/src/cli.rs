@@ -1,5 +1,5 @@
 //! The command line (docs/architecture.md §11a): `claude-sync status` and
-//! `claude-sync personal enable|disable|status`. Handled before Tauri starts, like
+//! `claude-sync personal enable|disable|status` and `claude-sync ssh enable|disable|status|alias <name>`. Handled before Tauri starts, like
 //! `run-job`, and calling the same core functions as the Settings screen.
 use crate::ctx::{now_unix, Ctx};
 use crate::guard;
@@ -10,9 +10,9 @@ use claude_sync_core::Paths;
 pub const REFRESH_ARG: &str = "--refresh";
 
 /// Subcommands this module handles.
-pub const COMMANDS: [&str; 2] = ["status", "personal"];
+pub const COMMANDS: [&str; 3] = ["status", "personal", "ssh"];
 
-const USAGE: &str = "usage: claude-sync status [--json]\n       claude-sync personal enable|disable|status [--json]";
+const USAGE: &str = "usage: claude-sync status [--json]\n       claude-sync personal enable|disable|status [--json]\n       claude-sync ssh enable|disable|status|alias <name> [--json]";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Cmd {
@@ -20,6 +20,15 @@ pub enum Cmd {
     PersonalStatus,
     PersonalEnable,
     PersonalDisable,
+    Ssh(Ssh),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Ssh {
+    Status,
+    Enable,
+    Disable,
+    Alias(String),
 }
 
 /// The command and `--json`, or the usage text.
@@ -35,6 +44,10 @@ pub fn parse(args: &[String]) -> Result<(Cmd, bool), &'static str> {
         ["personal", "status"] => Cmd::PersonalStatus,
         ["personal", "enable"] => Cmd::PersonalEnable,
         ["personal", "disable"] => Cmd::PersonalDisable,
+        ["ssh", "status"] => Cmd::Ssh(Ssh::Status),
+        ["ssh", "enable"] => Cmd::Ssh(Ssh::Enable),
+        ["ssh", "disable"] => Cmd::Ssh(Ssh::Disable),
+        ["ssh", "alias", name] => Cmd::Ssh(Ssh::Alias((*name).into())),
         _ => return Err(USAGE),
     };
     Ok((cmd, json))
@@ -88,6 +101,36 @@ async fn execute(paths: &Paths, cmd: Cmd, json: bool) -> Result<String, String> 
                 return serde_json::to_string_pretty(&report.json()).map_err(|e| e.to_string());
             }
             Ok(report.text(now))
+        }
+        Cmd::Ssh(s) => {
+            use claude_sync_core::{choices, ssh_peers};
+            let env = ssh_peers::Env::real(paths, crate::ctx::default_device_name())
+                .map_err(|e| e.to_string())?;
+            match s {
+                Ssh::Enable => {
+                    drop(choices::set_ssh_peers(paths, true).map_err(|e| e.to_string())?)
+                }
+                Ssh::Disable => {
+                    drop(choices::set_ssh_peers(paths, false).map_err(|e| e.to_string())?)
+                }
+                Ssh::Alias(name) => ssh_peers::set_alias(&env, &name).map_err(|e| e.to_string())?,
+                Ssh::Status => {}
+            }
+            let st = ssh_peers::status(paths, &env).map_err(|e| e.to_string())?;
+            if json {
+                return serde_json::to_string_pretty(&st).map_err(|e| e.to_string());
+            }
+            let mut text = format!(
+                "SSH to your own machines is {}.",
+                if st.on { "on" } else { "off" }
+            );
+            if let Some(a) = &st.alias {
+                text.push_str(&format!(" This machine is called `{a}`."));
+            }
+            for p in &st.peers {
+                text.push_str(&format!("\n  ssh {}  ({}, {})", p.alias, p.name, p.os));
+            }
+            Ok(text)
         }
         Cmd::PersonalStatus | Cmd::PersonalEnable | Cmd::PersonalDisable => {
             let engine = ctx.engine()?;
@@ -230,6 +273,16 @@ mod tests {
             parse(&v(&["personal", "status"])),
             Ok((Cmd::PersonalStatus, false))
         );
+        assert_eq!(
+            parse(&v(&["ssh", "alias", "tower", "--json"])),
+            Ok((Cmd::Ssh(Ssh::Alias("tower".into())), true))
+        );
+        assert_eq!(
+            parse(&v(&["ssh", "enable"])),
+            Ok((Cmd::Ssh(Ssh::Enable), false))
+        );
+        assert!(parse(&v(&["ssh"])).is_err());
+        assert!(parse(&v(&["ssh", "alias"])).is_err());
         assert!(parse(&v(&["personal"])).is_err());
         assert!(parse(&v(&["personal", "x"])).is_err());
         assert!(parse(&v(&["status", "extra"])).is_err());

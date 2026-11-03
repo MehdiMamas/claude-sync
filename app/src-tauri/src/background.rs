@@ -56,10 +56,33 @@ fn limited_until(ctx: &Ctx) -> Option<u64> {
 async fn tick(app: &AppHandle, full: bool) {
     let _ = with_caller("tick", run_sync(app, full)).await;
     with_caller("personal", crate::personal::after_sync(app, full)).await;
+    ssh_peers_pass(app).await;
     check_local_edits(app);
     feedback::retry_outbox(app).await;
     // Job runs (`run-job`, a separate process) add to the history without the app.
     notify::changed(app);
+}
+
+/// After personal sync: publish this machine and apply the account's other machines for
+/// SSH (`ssh_peers`), following the account's choice.
+async fn ssh_peers_pass(app: &AppHandle) {
+    let ctx = app.state::<Arc<Ctx>>().inner().clone();
+    if ctx.auth().is_none() {
+        return;
+    }
+    let (paths, host) = (ctx.paths.clone(), ctx.device_name());
+    with_caller("ssh-peers", async {
+        match tokio::task::spawn_blocking(move || {
+            claude_sync_core::ssh_peers::sync_pass(&paths, host)
+        })
+        .await
+        {
+            Ok(Err(e)) => tracing::info!("ssh peers: {e}"),
+            Err(e) => tracing::error!("ssh peers failed: {e}"),
+            Ok(Ok(())) => {}
+        }
+    })
+    .await;
 }
 
 /// Run a sync pass in the background (tray "Sync now", after sign-in, ...).
@@ -68,6 +91,7 @@ pub fn sync_soon(app: &AppHandle, full: bool) {
     tauri::async_runtime::spawn(async move {
         let _ = with_caller("tick", run_sync(&a, full)).await;
         with_caller("personal", crate::personal::after_sync(&a, full)).await;
+        ssh_peers_pass(&a).await;
         check_local_edits(&a);
     });
 }
