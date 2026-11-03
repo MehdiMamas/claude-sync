@@ -1,0 +1,885 @@
+//! Reach your own machines over SSH (docs/architecture.md §21). With the choice on
+//! (`choices::SshPeersChoice`), each device publishes a record of itself to
+//! `<state_dir>/machines/<id>.json`, which personal sync carries to the account's other
+//! devices (`machines/<id>.json` in the personal repo). Every device then adds the other
+//! devices' public keys to `~/.ssh/authorized_keys` (one managed block) and their names to
+//! `~/.ssh/claude-sync.conf`, which `~/.ssh/config` includes on its first line.
+//!
+//! Everything is user scope. Paths and the outside commands (`tailscale`, `ssh-keygen`)
+//! are injected ([`Env`], [`Probe`]) so tests never touch the real `~/.ssh`.
+use crate::apply::sha256_hex;
+use crate::state::{now_unix, write_atomic};
+use crate::{Error, Paths, Result};
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+
+pub const BEGIN: &str = "# >>> claude-sync peers >>>";
+pub const END: &str = "# <<< claude-sync peers <<<";
+/// Keys from these ranges only: Tailscale's IPv4 and IPv6 addresses.
+pub const FROM: &str = "100.64.0.0/10,fd7a:115c:a1e0::/48";
+pub const CONF: &str = "claude-sync.conf";
+const INCLUDE: &str = "Include claude-sync.conf";
+const STATE_FILE: &str = "ssh-peers.json";
+const KEY: &str = "id_ed25519";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Os {
+    Mac,
+    Windows,
+    Other,
+}
+
+/// What a device would otherwise ask the outside world.
+pub trait Probe {
+    /// This device's Tailscale IPv4 address when Tailscale runs.
+    fn tailscale_ip(&self) -> Option<String>;
+    /// Create an ed25519 key at `path` (and `path.pub`) without a passphrase.
+    fn keygen(&self, path: &Path) -> Result<()>;
+    fn os(&self) -> Os;
+}
+
+pub struct RealProbe;
+
+impl Probe for RealProbe {
+    fn tailscale_ip(&self) -> Option<String> {
+        let out = std::process::Command::new("tailscale")
+            .args(["ip", "-4"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())?;
+        let first = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .next()?
+            .trim()
+            .to_string();
+        first.parse::<std::net::Ipv4Addr>().ok()?;
+        Some(first)
+    }
+
+    fn keygen(&self, path: &Path) -> Result<()> {
+        let status = std::process::Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .status()
+            .map_err(|e| Error::Invalid(format!("could not run ssh-keygen: {e}")))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(Error::Invalid("ssh-keygen failed".into()))
+        }
+    }
+
+    fn os(&self) -> Os {
+        match std::env::consts::OS {
+            "macos" => Os::Mac,
+            "windows" => Os::Windows,
+            _ => Os::Other,
+        }
+    }
+}
+
+/// Where everything is. Tests point all of it into a temp folder.
+#[derive(Debug, Clone)]
+pub struct Env {
+    pub ssh_dir: PathBuf,
+    pub machines_dir: PathBuf,
+    pub state_dir: PathBuf,
+    pub hostname: String,
+    pub user: String,
+}
+
+impl Env {
+    /// This account's real `~/.ssh`.
+    pub fn real(paths: &Paths, hostname: String) -> Result<Self> {
+        let home = std::env::home_dir()
+            .ok_or_else(|| Error::Invalid("cannot find the home directory".into()))?;
+        let user = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_default();
+        Ok(Self {
+            ssh_dir: home.join(".ssh"),
+            machines_dir: crate::personal::machines_dir(paths),
+            state_dir: paths.state_dir.clone(),
+            hostname,
+            user,
+        })
+    }
+}
+
+/// `machines/<id>.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Record {
+    pub id: String,
+    pub name: String,
+    pub alias: String,
+    pub os: String,
+    pub user: String,
+    pub host: String,
+    pub pubkey: String,
+    pub ts: u64,
+}
+
+impl Record {
+    /// The same record apart from its time.
+    fn same_as(&self, o: &Record) -> bool {
+        Record {
+            ts: 0,
+            ..self.clone()
+        } == Record { ts: 0, ..o.clone() }
+    }
+}
+
+/// `<state_dir>/ssh-peers.json`: this machine's id and its chosen alias.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct Local {
+    id: String,
+    alias: Option<String>,
+}
+
+fn load_local(env: &Env) -> Local {
+    std::fs::read(env.state_dir.join(STATE_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn save_local(env: &Env, l: &Local) -> Result<()> {
+    let mut b = serde_json::to_vec_pretty(l)?;
+    b.push(b'\n');
+    write_atomic(&env.state_dir.join(STATE_FILE), &b)
+}
+
+/// This machine's id, made once.
+fn machine_id(env: &Env) -> Result<String> {
+    let mut l = load_local(env);
+    if l.id.is_empty() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let seed = format!("{nanos}:{}:{}", std::process::id(), env.state_dir.display());
+        l.id = sha256_hex(seed.as_bytes())[..16].to_string();
+        save_local(env, &l)?;
+    }
+    Ok(l.id)
+}
+
+/// Set the name other machines use for this one (`ssh <alias>`).
+pub fn set_alias(env: &Env, alias: &str) -> Result<()> {
+    if !valid_alias(alias) {
+        return Err(Error::Invalid(format!(
+            "`{alias}` is not a usable name: use letters, digits, `.`, `_` and `-`"
+        )));
+    }
+    let mut l = load_local(env);
+    l.alias = Some(alias.to_string());
+    save_local(env, &l)
+}
+
+fn valid_alias(s: &str) -> bool {
+    (1..=32).contains(&s.len())
+        && s.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+fn valid_user(s: &str) -> bool {
+    (1..=64).contains(&s.len())
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+fn valid_host(s: &str) -> bool {
+    (1..=255).contains(&s.len())
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':'))
+}
+
+/// `<type> <base64>` from one public-key line, or `None`. Only `ssh-ed25519` and
+/// `ecdsa-sha2-*` keys, on a single line with no options in front.
+pub fn parse_key(line: &str) -> Option<String> {
+    let line = line.trim();
+    if line.is_empty() || line.contains(['\n', '\r']) {
+        return None;
+    }
+    let mut parts = line.split_whitespace();
+    let (kind, key) = (parts.next()?, parts.next()?);
+    let kind_ok = kind == "ssh-ed25519" || kind.starts_with("ecdsa-sha2-");
+    let key_ok = key
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '='));
+    (kind_ok && key_ok && kind.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+        .then(|| format!("{kind} {key}"))
+}
+
+/// One `authorized_keys` line for a peer.
+fn key_line(r: &Record, key: &str) -> String {
+    format!(
+        "from=\"{FROM}\",no-agent-forwarding,no-X11-forwarding {key} claude-sync:{}",
+        r.alias
+    )
+}
+
+/// The managed block for `lines` (no trailing newline), or `None` for no lines.
+pub fn render_block(lines: &[String]) -> Option<String> {
+    if lines.is_empty() {
+        return None;
+    }
+    Some(format!("{BEGIN}\n{}\n{END}", lines.join("\n")))
+}
+
+/// `existing` with the managed block replaced by `block` (removed for `None`). Lines
+/// outside the block are kept as they are; a missing block is added at the end.
+pub fn replace_block(existing: &str, block: Option<&str>) -> String {
+    let eol = if existing.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let lines: Vec<&str> = existing.lines().collect();
+    let begin = lines.iter().position(|l| l.trim_end() == BEGIN);
+    let end = begin.and_then(|b| {
+        lines[b..]
+            .iter()
+            .position(|l| l.trim_end() == END)
+            .map(|e| e + b)
+    });
+    let mut out: Vec<String> = Vec::new();
+    match (begin, end) {
+        (Some(b), Some(e)) => {
+            out.extend(lines[..b].iter().map(|l| l.to_string()));
+            if let Some(block) = block {
+                out.extend(block.lines().map(str::to_string));
+            }
+            out.extend(lines[e + 1..].iter().map(|l| l.to_string()));
+        }
+        _ => {
+            out.extend(lines.iter().map(|l| l.to_string()));
+            if let Some(block) = block {
+                out.extend(block.lines().map(str::to_string));
+            }
+        }
+    }
+    if out.is_empty() {
+        return String::new();
+    }
+    out.join(eol) + eol
+}
+
+/// `~/.ssh/config` with `Include claude-sync.conf` as its first line (once), or without it.
+fn with_include(existing: &str, on: bool) -> String {
+    let eol = if existing.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut lines: Vec<&str> = existing.lines().filter(|l| l.trim() != INCLUDE).collect();
+    if on {
+        lines.insert(0, INCLUDE);
+    }
+    if lines.iter().all(|l| l.trim().is_empty()) {
+        return String::new();
+    }
+    lines.join(eol) + eol
+}
+
+/// The `Host` patterns the user's own config defines.
+fn user_hosts(config: &str) -> Vec<String> {
+    config
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            let (kw, rest) = l.split_once(|c: char| c.is_whitespace() || c == '=')?;
+            kw.eq_ignore_ascii_case("host").then_some(rest)
+        })
+        .flat_map(|rest| {
+            rest.trim_start_matches(['=', ' ', '\t'])
+                .split_whitespace()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn read_text(path: &Path) -> Result<Option<String>> {
+    match std::fs::read(path) {
+        Ok(b) => Ok(Some(String::from_utf8_lossy(&b).into_owned())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Write `text` to `path` when it differs (an empty text removes the file), with mode 0600.
+fn put(path: &Path, text: &str) -> Result<()> {
+    let old = read_text(path)?;
+    if old.as_deref().unwrap_or("") == text {
+        return Ok(());
+    }
+    if text.is_empty() {
+        match std::fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+            _ => return Ok(()),
+        }
+    }
+    if let Some(dir) = path.parent() {
+        make_ssh_dir(dir)?;
+    }
+    write_atomic(path, text.as_bytes())?;
+    set_mode(path, 0o600);
+    Ok(())
+}
+
+fn make_ssh_dir(dir: &Path) -> Result<()> {
+    if !dir.exists() {
+        std::fs::create_dir_all(dir)?;
+        set_mode(dir, 0o700);
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_mode(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+}
+
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, _mode: u32) {}
+
+/// The other machines' records in `machines_dir`, valid ones only.
+fn read_records(env: &Env) -> Vec<Record> {
+    let Ok(entries) = std::fs::read_dir(&env.machines_dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<Record> = entries
+        .filter_map(|e| std::fs::read(e.ok()?.path()).ok())
+        .filter_map(|b| serde_json::from_slice::<Record>(&b).ok())
+        .collect();
+    out.sort_by(|a, b| (&a.alias, &a.id).cmp(&(&b.alias, &b.id)));
+    out
+}
+
+fn own_file(env: &Env, id: &str) -> PathBuf {
+    env.machines_dir.join(format!("{id}.json"))
+}
+
+/// Write this machine's record when it changed (turning the choice off removes it).
+pub fn publish(env: &Env, probe: &dyn Probe, on: bool) -> Result<()> {
+    if !on {
+        let l = load_local(env);
+        if !l.id.is_empty() {
+            match std::fs::remove_file(own_file(env, &l.id)) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                _ => {}
+            }
+        }
+        return Ok(());
+    }
+    let id = machine_id(env)?;
+    let pub_path = env.ssh_dir.join(format!("{KEY}.pub"));
+    let pubkey = match read_text(&pub_path)? {
+        Some(t) => t,
+        None => {
+            if env.ssh_dir.join(KEY).exists() {
+                return Err(Error::Invalid(format!(
+                    "{KEY} exists without {KEY}.pub; nothing was changed"
+                )));
+            }
+            make_ssh_dir(&env.ssh_dir)?;
+            probe.keygen(&env.ssh_dir.join(KEY))?;
+            read_text(&pub_path)?
+                .ok_or_else(|| Error::Invalid("ssh-keygen made no public key".into()))?
+        }
+    };
+    let pubkey = parse_key(&pubkey)
+        .ok_or_else(|| Error::Invalid(format!("{KEY}.pub is not an ed25519 or ecdsa key")))?;
+    let os = probe.os();
+    let base = load_local(env).alias.unwrap_or_else(|| {
+        match os {
+            Os::Mac => "mac",
+            _ => "pc",
+        }
+        .to_string()
+    });
+    let taken: Vec<String> = read_records(env)
+        .into_iter()
+        .filter(|r| r.id != id)
+        .map(|r| r.alias)
+        .collect();
+    let mut alias = base.clone();
+    let mut n = 2;
+    while taken.contains(&alias) {
+        alias = format!("{base}-{n}");
+        n += 1;
+    }
+    let rec = Record {
+        id: id.clone(),
+        name: env.hostname.clone(),
+        alias,
+        os: std::env::consts::OS.to_string(),
+        user: env.user.clone(),
+        host: probe.tailscale_ip().unwrap_or_else(|| env.hostname.clone()),
+        pubkey,
+        ts: now_unix() * 1000,
+    };
+    let file = own_file(env, &id);
+    let unchanged = std::fs::read(&file)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Record>(&b).ok())
+        .is_some_and(|old| old.same_as(&rec));
+    if !unchanged {
+        let mut b = serde_json::to_vec_pretty(&rec)?;
+        b.push(b'\n');
+        write_atomic(&file, &b)?;
+    }
+    Ok(())
+}
+
+/// The peers worth adding: other machines whose fields are safe to write into ssh files.
+fn peers(env: &Env, own_id: &str) -> Vec<(Record, String)> {
+    read_records(env)
+        .into_iter()
+        .filter(|r| r.id != own_id && valid_alias(&r.alias) && valid_user(&r.user))
+        .filter(|r| valid_host(&r.host))
+        .filter_map(|r| {
+            let key = parse_key(&r.pubkey)?;
+            Some((r, key))
+        })
+        .collect()
+}
+
+/// Add the other machines to `authorized_keys` (not on Windows) and `claude-sync.conf`, or
+/// remove everything this module wrote when `on` is false.
+pub fn apply(env: &Env, probe: &dyn Probe, on: bool) -> Result<()> {
+    let own_id = load_local(env).id;
+    let list = if on { peers(env, &own_id) } else { Vec::new() };
+    let windows = probe.os() == Os::Windows;
+
+    if !windows {
+        let path = env.ssh_dir.join("authorized_keys");
+        let lines: Vec<String> = list.iter().map(|(r, k)| key_line(r, k)).collect();
+        let old = read_text(&path)?;
+        if old.is_some() || !lines.is_empty() {
+            let new = replace_block(
+                old.as_deref().unwrap_or(""),
+                render_block(&lines).as_deref(),
+            );
+            put(&path, &new)?;
+        }
+    }
+
+    let config_path = env.ssh_dir.join("config");
+    let config = read_text(&config_path)?;
+    let conf_path = env.ssh_dir.join(CONF);
+    if on {
+        let mine = user_hosts(config.as_deref().unwrap_or(""));
+        let mut conf = String::new();
+        for (r, _) in &list {
+            let name = if mine.contains(&r.alias) {
+                format!("{}-cs", r.alias)
+            } else {
+                r.alias.clone()
+            };
+            conf.push_str(&format!(
+                "Host {name}\n  HostName {}\n  User {}\n",
+                r.host, r.user
+            ));
+        }
+        put(&conf_path, &conf)?;
+        // Even with no peers yet the file exists (empty) so the Include never dangles.
+        if conf.is_empty() {
+            put(&conf_path, "\n")?;
+        }
+    } else {
+        put(&conf_path, "")?;
+    }
+    if config.is_some() || on {
+        let new = with_include(config.as_deref().unwrap_or(""), on);
+        put(&config_path, &new)?;
+    }
+    Ok(())
+}
+
+/// One pass: publish this machine, then apply the others.
+pub fn pass(env: &Env, probe: &dyn Probe, on: bool) -> Result<()> {
+    publish(env, probe, on)?;
+    apply(env, probe, on)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Peer {
+    pub alias: String,
+    pub name: String,
+    pub os: String,
+    pub host: String,
+    pub user: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Status {
+    pub on: bool,
+    pub alias: Option<String>,
+    pub peers: Vec<Peer>,
+}
+
+pub fn status(paths: &Paths, env: &Env) -> Result<Status> {
+    let on = crate::choices::load(paths)?.ssh_peers.on;
+    let l = load_local(env);
+    Ok(Status {
+        on,
+        alias: l.alias,
+        peers: peers(env, &l.id)
+            .into_iter()
+            .map(|(r, _)| Peer {
+                alias: r.alias,
+                name: r.name,
+                os: r.os,
+                host: r.host,
+                user: r.user,
+            })
+            .collect(),
+    })
+}
+
+/// The pass the sync loops run after personal sync: follows the account's choice.
+pub fn sync_pass(paths: &Paths, hostname: String) -> Result<()> {
+    let on = crate::choices::load(paths)?.ssh_peers.on;
+    let env = Env::real(paths, hostname)?;
+    pass(&env, &RealProbe, on)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    struct Fake {
+        ip: Option<String>,
+        os: Os,
+        keygens: Cell<u32>,
+    }
+
+    impl Fake {
+        fn new(os: Os, ip: Option<&str>) -> Self {
+            Self {
+                ip: ip.map(str::to_string),
+                os,
+                keygens: Cell::new(0),
+            }
+        }
+    }
+
+    impl Probe for Fake {
+        fn tailscale_ip(&self) -> Option<String> {
+            self.ip.clone()
+        }
+        fn keygen(&self, path: &Path) -> Result<()> {
+            self.keygens.set(self.keygens.get() + 1);
+            std::fs::write(path, "private\n")?;
+            std::fs::write(
+                format!("{}.pub", path.display()),
+                "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIfake me@box\n",
+            )?;
+            Ok(())
+        }
+        fn os(&self) -> Os {
+            self.os
+        }
+    }
+
+    fn env(dir: &Path, name: &str, host: &str, user: &str) -> Env {
+        Env {
+            ssh_dir: dir.join(name).join(".ssh"),
+            machines_dir: dir.join(name).join("machines"),
+            state_dir: dir.join(name).join("state"),
+            hostname: host.into(),
+            user: user.into(),
+        }
+    }
+
+    fn rec(id: &str, alias: &str) -> Record {
+        Record {
+            id: id.into(),
+            name: "box".into(),
+            alias: alias.into(),
+            os: "linux".into(),
+            user: "ana".into(),
+            host: "100.64.0.9".into(),
+            pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIpeer".into(),
+            ts: 1,
+        }
+    }
+
+    fn put_rec(env: &Env, r: &Record) {
+        std::fs::create_dir_all(&env.machines_dir).unwrap();
+        std::fs::write(
+            env.machines_dir.join(format!("{}.json", r.id)),
+            serde_json::to_vec(r).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn read(p: PathBuf) -> String {
+        std::fs::read_to_string(p).unwrap_or_default()
+    }
+
+    #[test]
+    fn block_is_rendered_and_replaced_idempotently_keeping_foreign_lines() {
+        let lines = vec!["a".to_string(), "b".to_string()];
+        let block = render_block(&lines).unwrap();
+        assert_eq!(block, format!("{BEGIN}\na\nb\n{END}"));
+        let mine = "ssh-ed25519 AAAA mine\n";
+        let once = replace_block(mine, Some(&block));
+        assert_eq!(once, format!("{mine}{block}\n"));
+        assert_eq!(replace_block(&once, Some(&block)), once);
+        // A changed block replaces the old one in place; lines after it stay.
+        let after = format!("{once}ssh-rsa BBBB later\n");
+        let changed = replace_block(&after, Some(&render_block(&["c".into()]).unwrap()));
+        assert_eq!(
+            changed,
+            format!("{mine}{BEGIN}\nc\n{END}\nssh-rsa BBBB later\n")
+        );
+        // Removing it leaves exactly the foreign lines.
+        assert_eq!(
+            replace_block(&after, None),
+            format!("{mine}ssh-rsa BBBB later\n")
+        );
+        assert_eq!(replace_block("", None), "");
+        assert!(render_block(&[]).is_none());
+    }
+
+    #[test]
+    fn keys_with_options_newlines_or_old_types_are_refused() {
+        assert_eq!(
+            parse_key("ssh-ed25519 AAAAC3Nza me@x\n").as_deref(),
+            Some("ssh-ed25519 AAAAC3Nza")
+        );
+        assert!(parse_key("ecdsa-sha2-nistp256 AAAAE2VjZHNh c").is_some());
+        assert!(parse_key("command=\"rm -rf /\" ssh-ed25519 AAAA").is_none());
+        assert!(parse_key("from=\"*\" ssh-ed25519 AAAA").is_none());
+        assert!(parse_key("ssh-ed25519 AAAA\nssh-ed25519 BBBB").is_none());
+        assert!(parse_key("ssh-ed25519 AAAA\rcommand=x").is_none());
+        assert!(parse_key("ssh-rsa AAAAB3Nza").is_none());
+        assert!(parse_key("ssh-dss AAAAB3Nza").is_none());
+        assert!(parse_key("ssh-ed25519").is_none());
+        assert!(parse_key("ssh-ed25519 AA\"AA").is_none());
+        assert!(parse_key("").is_none());
+    }
+
+    #[test]
+    fn include_is_the_first_line_once_and_removed_on_off() {
+        let cfg = "Host work\n  User me\n";
+        let on = with_include(cfg, true);
+        assert_eq!(on, format!("{INCLUDE}\n{cfg}"));
+        assert_eq!(with_include(&on, true), on, "once");
+        assert_eq!(with_include(&on, false), cfg);
+        assert_eq!(with_include(&format!("{INCLUDE}\n"), false), "");
+    }
+
+    #[test]
+    fn keygen_runs_only_when_the_key_is_missing_and_never_overwrites() {
+        let t = tempfile::tempdir().unwrap();
+        let e = env(t.path(), "a", "box", "ana");
+        let p = Fake::new(Os::Other, None);
+        publish(&e, &p, true).unwrap();
+        assert_eq!(p.keygens.get(), 1);
+        publish(&e, &p, true).unwrap();
+        assert_eq!(p.keygens.get(), 1, "the key exists now");
+        // A private key without its .pub is an error, not an overwrite.
+        std::fs::remove_file(e.ssh_dir.join("id_ed25519.pub")).unwrap();
+        assert!(publish(&e, &p, true).is_err());
+        assert_eq!(p.keygens.get(), 1);
+        assert_eq!(read(e.ssh_dir.join("id_ed25519")), "private\n");
+    }
+
+    #[test]
+    fn host_is_the_tailscale_ip_or_the_hostname_and_alias_follows_the_os() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, b, c) = (
+            env(t.path(), "a", "mac-book", "ana"),
+            env(t.path(), "b", "tower", "ana"),
+            env(t.path(), "c", "laptop", "ana"),
+        );
+        publish(&a, &Fake::new(Os::Mac, Some("100.64.1.2")), true).unwrap();
+        publish(&b, &Fake::new(Os::Other, None), true).unwrap();
+        publish(&c, &Fake::new(Os::Windows, None), true).unwrap();
+        let get = |e: &Env| read_records(e).pop().unwrap();
+        let (ra, rb, rc) = (get(&a), get(&b), get(&c));
+        assert_eq!((ra.alias.as_str(), ra.host.as_str()), ("mac", "100.64.1.2"));
+        assert_eq!((rb.alias.as_str(), rb.host.as_str()), ("pc", "tower"));
+        assert_eq!(rc.alias, "pc");
+        assert_eq!(rb.user, "ana");
+        assert!(rb.pubkey.starts_with("ssh-ed25519 "));
+    }
+
+    #[test]
+    fn a_chosen_alias_is_used_and_a_clash_gets_a_number() {
+        let t = tempfile::tempdir().unwrap();
+        let e = env(t.path(), "a", "box", "ana");
+        assert!(set_alias(&e, "bad name").is_err());
+        assert!(set_alias(&e, "").is_err());
+        let p = Fake::new(Os::Other, None);
+        put_rec(&e, &rec("other", "pc"));
+        publish(&e, &p, true).unwrap();
+        let mine: Vec<_> = read_records(&e)
+            .into_iter()
+            .filter(|r| r.id != "other")
+            .collect();
+        assert_eq!(mine[0].alias, "pc-2");
+        set_alias(&e, "tower").unwrap();
+        publish(&e, &p, true).unwrap();
+        let mine: Vec<_> = read_records(&e)
+            .into_iter()
+            .filter(|r| r.id != "other")
+            .collect();
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].alias, "tower");
+    }
+
+    #[test]
+    fn an_unchanged_record_is_not_written_again() {
+        let t = tempfile::tempdir().unwrap();
+        let e = env(t.path(), "a", "box", "ana");
+        let p = Fake::new(Os::Other, None);
+        publish(&e, &p, true).unwrap();
+        let id = load_local(&e).id;
+        let file = own_file(&e, &id);
+        let first = std::fs::read(&file).unwrap();
+        // A record with an old time and the same fields stays as it is.
+        let mut old: Record = serde_json::from_slice(&first).unwrap();
+        old.ts = 5;
+        std::fs::write(&file, serde_json::to_vec_pretty(&old).unwrap()).unwrap();
+        let before = std::fs::read(&file).unwrap();
+        publish(&e, &p, true).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        // A changed field is written.
+        let p2 = Fake::new(Os::Other, Some("100.64.0.7"));
+        publish(&e, &p2, true).unwrap();
+        assert_ne!(std::fs::read(&file).unwrap(), before);
+    }
+
+    #[test]
+    fn two_homes_a_publishes_b_applies_and_off_removes() {
+        let t = tempfile::tempdir().unwrap();
+        let a = env(t.path(), "a", "mac-book", "ana");
+        let b = env(t.path(), "b", "tower", "bob");
+        let pa = Fake::new(Os::Mac, Some("100.64.1.2"));
+        let pb = Fake::new(Os::Other, Some("100.64.3.4"));
+
+        // B already has its own key lines and its own Host entries.
+        std::fs::create_dir_all(&b.ssh_dir).unwrap();
+        std::fs::write(b.ssh_dir.join("authorized_keys"), "ssh-rsa OLD mine\n").unwrap();
+        std::fs::write(b.ssh_dir.join("config"), "Host mac\n  User me\n").unwrap();
+
+        pass(&a, &pa, true).unwrap();
+        pass(&b, &pb, true).unwrap();
+        // The personal repo carries the records: copy each to the other.
+        for (from, to) in [(&a, &b), (&b, &a)] {
+            for r in read_records(from) {
+                put_rec(to, &r);
+            }
+        }
+        pass(&b, &pb, true).unwrap();
+        pass(&a, &pa, true).unwrap();
+
+        let keys = read(b.ssh_dir.join("authorized_keys"));
+        assert!(keys.starts_with("ssh-rsa OLD mine\n"));
+        assert!(keys.contains(BEGIN) && keys.contains(END));
+        assert!(keys.contains(&format!(
+            "from=\"{FROM}\",no-agent-forwarding,no-X11-forwarding ssh-ed25519 "
+        )));
+        assert!(keys.contains(" claude-sync:mac\n"));
+        assert!(!keys.contains("claude-sync:pc"), "its own key is not added");
+        let conf = read(b.ssh_dir.join(CONF));
+        // B defines `mac` itself, so A is reachable as `mac-cs`.
+        assert_eq!(conf, "Host mac-cs\n  HostName 100.64.1.2\n  User ana\n");
+        let cfg = read(b.ssh_dir.join("config"));
+        assert!(cfg.starts_with("Include claude-sync.conf\nHost mac\n"));
+        // A, with no clash, gets the plain alias for B.
+        let conf_a = read(a.ssh_dir.join(CONF));
+        assert_eq!(conf_a, "Host pc\n  HostName 100.64.3.4\n  User bob\n");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: PathBuf| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(a.ssh_dir.join("authorized_keys")), 0o600);
+            assert_eq!(mode(a.ssh_dir.clone()), 0o700);
+        }
+
+        // Running again changes nothing.
+        let before = (keys.clone(), conf.clone(), cfg.clone());
+        pass(&b, &pb, true).unwrap();
+        assert_eq!(
+            before,
+            (
+                read(b.ssh_dir.join("authorized_keys")),
+                read(b.ssh_dir.join(CONF)),
+                read(b.ssh_dir.join("config"))
+            )
+        );
+
+        // Off on B removes what it wrote and its own record, and nothing else.
+        let b_id = load_local(&b).id;
+        pass(&b, &pb, false).unwrap();
+        assert_eq!(
+            read(b.ssh_dir.join("authorized_keys")),
+            "ssh-rsa OLD mine\n"
+        );
+        assert!(!b.ssh_dir.join(CONF).exists());
+        assert_eq!(read(b.ssh_dir.join("config")), "Host mac\n  User me\n");
+        assert!(!own_file(&b, &b_id).exists());
+    }
+
+    #[test]
+    fn windows_writes_the_conf_but_not_authorized_keys() {
+        let t = tempfile::tempdir().unwrap();
+        let e = env(t.path(), "w", "winbox", "ana");
+        put_rec(&e, &rec("other", "mac"));
+        pass(&e, &Fake::new(Os::Windows, None), true).unwrap();
+        assert!(!e.ssh_dir.join("authorized_keys").exists());
+        assert!(read(e.ssh_dir.join(CONF)).contains("Host mac\n"));
+        assert!(read(e.ssh_dir.join("config")).starts_with(INCLUDE));
+    }
+
+    #[test]
+    fn records_with_unsafe_fields_are_ignored() {
+        let t = tempfile::tempdir().unwrap();
+        let e = env(t.path(), "a", "box", "ana");
+        let mut bad_alias = rec("1", "x y");
+        bad_alias.alias = "x\nProxyCommand evil".into();
+        let mut bad_user = rec("2", "u");
+        bad_user.user = "a b".into();
+        let mut bad_host = rec("3", "h");
+        bad_host.host = "h; rm".into();
+        let mut bad_key = rec("4", "k");
+        bad_key.pubkey = "command=\"x\" ssh-ed25519 AAAA".into();
+        for r in [
+            &bad_alias,
+            &bad_user,
+            &bad_host,
+            &bad_key,
+            &rec("5", "good"),
+        ] {
+            put_rec(&e, r);
+        }
+        pass(&e, &Fake::new(Os::Other, None), true).unwrap();
+        let conf = read(e.ssh_dir.join(CONF));
+        assert!(conf.contains("Host good\n"));
+        assert!(!conf.contains("evil") && !conf.contains("rm") && !conf.contains("Host u\n"));
+        assert_eq!(
+            read(e.ssh_dir.join("authorized_keys"))
+                .matches("claude-sync:")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn off_when_nothing_was_ever_written_touches_nothing() {
+        let t = tempfile::tempdir().unwrap();
+        let e = env(t.path(), "a", "box", "ana");
+        pass(&e, &Fake::new(Os::Other, None), false).unwrap();
+        assert!(!e.ssh_dir.exists());
+    }
+}

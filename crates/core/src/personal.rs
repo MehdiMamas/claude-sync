@@ -8,6 +8,8 @@
 //! - `CLAUDE.md`: the user's own text of `~/.claude/CLAUDE.md`
 //! - `memory/<key>/**`: `~/.claude/projects/<folder>/memory/**`, keyed by `keys::key_for`
 //! - `state/**`: `~/.claude/personal-state/**`, small state that mods save (see `state`)
+//! - `machines/<id>.json`: one record per device that turned on SSH peers (`ssh_peers.rs`);
+//!   it syncs whatever is chosen under Kinds, and lives in `<state_dir>/machines/`
 //! - `settings.json`: your own `~/.claude/settings.json` without what groups set and what
 //!   cannot work on another machine (see `settings_file`)
 //!
@@ -40,6 +42,8 @@ pub const DEVICES: &str = "devices.json";
 pub const README: &str = "README.md";
 pub const CLAUDE_MD: &str = "CLAUDE.md";
 pub const MEMORY: &str = "memory";
+/// `machines/<id>.json`: the SSH peer records (`ssh_peers.rs`).
+pub const MACHINES: &str = "machines";
 pub const FORMAT: u32 = 1;
 /// The folder under `~/.claude` that `state/**` maps to.
 pub const LOCAL_STATE_DIR: &str = state::LOCAL_DIR;
@@ -65,6 +69,12 @@ pub fn is_personal_path(path: &str) -> bool {
             !rest.is_empty()
                 && keys::is_key(key)
                 && rest.iter().all(|s| safe_segment(s) && !s.starts_with('.'))
+        }
+        [MACHINES, id] => {
+            id.len() > ".json".len()
+                && id.ends_with(".json")
+                && safe_segment(id)
+                && !id.starts_with('.')
         }
         [state::DIR, rest @ ..] => {
             !rest.is_empty() && rest.iter().all(|s| safe_segment(s) && !s.starts_with('.'))
@@ -100,7 +110,9 @@ impl Default for Kinds {
 
 impl Kinds {
     fn syncs(&self, path: &str) -> bool {
-        Kind::ALL.into_iter().any(|k| k.covers(path) && k.on(self))
+        // Machine records exist only while SSH peers is on, whatever kinds are chosen.
+        (path.starts_with("machines/") && is_personal_path(path))
+            || Kind::ALL.into_iter().any(|k| k.covers(path) && k.on(self))
     }
 }
 
@@ -266,6 +278,11 @@ pub enum NewDevice {
     Joined,
     /// The repo exists but new devices don't join by themselves: offer it.
     Offer,
+}
+
+/// Where this device keeps the machine records (`machines/` of the repo).
+pub fn machines_dir(paths: &crate::Paths) -> PathBuf {
+    paths.state_dir.join(MACHINES)
 }
 
 /// With a git-clone `personal-state`, `state/**` outside `state/claude-sync/` is not synced.
@@ -869,6 +886,7 @@ impl Engine {
                 Err(e) => return Err(e.into()),
             }
         }
+        self.scan_machines(&mut out)?;
         if kinds.state {
             self.scan_state(&mut out)?;
         }
@@ -954,6 +972,29 @@ impl Engine {
             }
         }
         Ok(out)
+    }
+
+    /// `<state_dir>/machines/*.json` as `machines/*.json`.
+    fn scan_machines(&self, out: &mut LocalScan) -> crate::Result<()> {
+        let entries = match std::fs::read_dir(machines_dir(&self.paths)) {
+            Ok(e) => e,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            let repo_path = format!("{MACHINES}/{name}");
+            if entry.file_type()?.is_file()
+                && is_personal_path(&repo_path)
+                && entry.metadata()?.len() as usize <= MAX_FILE
+            {
+                out.files.insert(repo_path, std::fs::read(entry.path())?);
+            }
+        }
+        Ok(())
     }
 
     /// `~/.claude/settings.json` as `settings.json`, without what groups set or what is machine-specific.
@@ -1128,6 +1169,18 @@ impl Engine {
                 if self.write_settings(local.get(path), want, &backup_root, scan)? {
                     written.push(path.clone());
                 }
+                continue;
+            }
+            if let Some(name) = path.strip_prefix("machines/") {
+                let file = machines_dir(&self.paths).join(name);
+                match want {
+                    Some(bytes) => write_atomic(&file, bytes)?,
+                    None => match std::fs::remove_file(&file) {
+                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                        _ => {}
+                    },
+                }
+                written.push(path.clone());
                 continue;
             }
             let (under_home, stop, folder) = if let Some(rel) = path.strip_prefix("state/") {

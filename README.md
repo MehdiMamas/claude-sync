@@ -54,6 +54,10 @@ What you tell Claude to remember about you is yours, not the group's. Turn on **
 
 Each person can sign in on as many computers as they like. Before the app changes one of your own files for the first time, it saves a copy in `~/.claude-sync/backups/`. When two people change the same file at once, the group's version wins and your version is saved next to it.
 
+### Reach your own machines
+
+Turn on SSH between your own computers with `claude-sync-cli ssh enable` (or `claude-sync ssh enable`, the same in the app). Each of your computers then publishes its public key and name through your personal repo, and the others add them: the key goes into a marked block of `~/.ssh/authorized_keys` (only from Tailscale addresses, no agent or X11 forwarding) and the name into `~/.ssh/claude-sync.conf`, which `~/.ssh/config` includes on its first line. After the next sync you can type `ssh mac` or `ssh pc`; change this computer's name with `ssh alias <name>`. It needs Tailscale (or a reachable host name) and the SSH server turned on (macOS: Remote Login). The choice is for all your computers; `ssh disable` removes everything it wrote. Personal memory sync must be on, since the records travel through it. Windows gets the names but its `authorized_keys` is not changed.
+
 ## What access it asks for
 
 Sign-in uses GitHub's device flow and asks for two scopes:

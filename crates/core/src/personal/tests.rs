@@ -1196,6 +1196,54 @@ impl Dev {
     }
 }
 
+#[tokio::test]
+async fn machine_records_travel_between_devices_and_deletion_too() {
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.personal_enable().await.unwrap();
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    mac.personal_check_new_device().await.unwrap();
+
+    let rec = machines_dir(&pc.paths).join("aaaa.json");
+    write_atomic(&rec, b"{\"id\":\"aaaa\"}\n").unwrap();
+    pc.sync().await;
+    mac.sync().await;
+    let there = machines_dir(&mac.paths).join("aaaa.json");
+    assert_eq!(std::fs::read(&there).unwrap(), b"{\"id\":\"aaaa\"}\n");
+
+    std::fs::remove_file(&rec).unwrap();
+    pc.sync().await;
+    mac.sync().await;
+    assert!(!there.exists());
+}
+
+#[test]
+fn machine_record_paths_are_personal() {
+    for ok in ["machines/x.json", "machines/0123abcd.json"] {
+        assert!(is_personal_path(ok), "{ok}");
+    }
+    for bad in [
+        "machines",
+        "machines/",
+        "machines/.json",
+        "machines/x.txt",
+        "machines/../x",
+        "machines/a/b.json",
+        "machines/.x.json",
+    ] {
+        assert!(!is_personal_path(bad), "{bad}");
+    }
+    // They sync whatever kinds are chosen.
+    let none = Kinds {
+        claude_md: false,
+        memory: false,
+        state: false,
+        settings: false,
+    };
+    assert!(none.syncs("machines/x.json"));
+    assert!(!none.syncs("state/x.json"));
+}
+
 #[test]
 fn state_paths_are_personal() {
     for ok in [MODE_PATH, LOG_PATH, "state/router/x.json"] {

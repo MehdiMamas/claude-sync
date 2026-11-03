@@ -12,6 +12,8 @@ usage: claude-sync-cli <command> [--json]
   sync                          one full sync now
   status                        sign-in, groups, personal memory
   personal status|enable|disable
+  ssh status|enable|disable     reach your own machines over SSH (ssh <alias>)
+  ssh alias <name>              the name your other machines use for this one
   review list                   changes waiting for you (CLAUDE.md, local edits, jobs)
   review accept <id>            accept one (ids come from `review list`)
   review undo <id>              decline or undo one
@@ -25,6 +27,14 @@ pub enum Personal {
     Status,
     Enable,
     Disable,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Ssh {
+    Status,
+    Enable,
+    Disable,
+    Alias(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -51,6 +61,7 @@ pub enum Cmd {
     Sync,
     Status,
     Personal(Personal),
+    Ssh(Ssh),
     Review(Review),
     Daemon,
     Service(Service),
@@ -92,6 +103,10 @@ pub fn parse(args: &[String]) -> Result<(Cmd, bool), String> {
         ["personal", "status"] => Cmd::Personal(Personal::Status),
         ["personal", "enable"] => Cmd::Personal(Personal::Enable),
         ["personal", "disable"] => Cmd::Personal(Personal::Disable),
+        ["ssh", "status"] => Cmd::Ssh(Ssh::Status),
+        ["ssh", "enable"] => Cmd::Ssh(Ssh::Enable),
+        ["ssh", "disable"] => Cmd::Ssh(Ssh::Disable),
+        ["ssh", "alias", name] => Cmd::Ssh(Ssh::Alias((*name).into())),
         ["review", "list"] => Cmd::Review(Review::List),
         ["review", "accept", id] => Cmd::Review(Review::Accept((*id).into())),
         ["review", "undo", id] => Cmd::Review(Review::Undo((*id).into())),
@@ -132,6 +147,14 @@ mod tests {
             Ok((Cmd::Personal(Personal::Enable), false))
         );
         assert_eq!(
+            parse(&v(&["ssh", "enable", "--json"])),
+            Ok((Cmd::Ssh(Ssh::Enable), true))
+        );
+        assert_eq!(
+            parse(&v(&["ssh", "alias", "tower"])),
+            Ok((Cmd::Ssh(Ssh::Alias("tower".into())), false))
+        );
+        assert_eq!(
             parse(&v(&["review", "accept", "md:a/b:x1"])),
             Ok((Cmd::Review(Review::Accept("md:a/b:x1".into())), false))
         );
@@ -170,6 +193,9 @@ mod tests {
             v(&["join"]),
             v(&["join", "not-a-group"]),
             v(&["review"]),
+            v(&["ssh"]),
+            v(&["ssh", "alias"]),
+            v(&["ssh", "x"]),
             v(&["review", "accept"]),
             v(&["service", "restart"]),
             v(&["status", "extra"]),
