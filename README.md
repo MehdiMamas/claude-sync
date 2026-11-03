@@ -19,6 +19,19 @@ Download the latest version from the [Releases page](https://github.com/MehdiMam
 
 The app updates itself after that.
 
+### Servers and WSL (no desktop)
+
+The headless `claude-sync-cli` needs no display. Install it with no sudo:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MehdiMamas/claude-sync/main/scripts/install-cli.sh | bash
+claude-sync-cli login            # shows a code to enter at github.com/login/device
+claude-sync-cli join <owner/repo>
+claude-sync-cli service install  # keeps it syncing (systemd user unit, or cron)
+```
+
+Before the first join it backs up your `CLAUDE.md` to `~/.claude-sync/backup/` and removes group text you had pasted into it. `claude-sync-cli update` installs newer releases. Run `claude-sync-cli` with no arguments for every command.
+
 ## Use it
 
 1. Open claude-sync and click **Sign in with GitHub**. Your browser opens GitHub; enter the code the app shows.

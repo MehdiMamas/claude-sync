@@ -19,6 +19,7 @@ It costs nothing to run. GitHub (free private repos, OAuth device flow) holds al
 
 ```
 crates/core/        Rust library: GitHub client, group format, sync engine, apply layer, settings merge, secret scan
+crates/cli/         Headless CLI `claude-sync-cli`: same engine, token file, daemon loop, systemd/cron service
 app/                Tauri 2 app: tray, autostart, updater, UI (app/ui, plain TypeScript + Vite), feedback capture
 relay/              Vercel project (TypeScript functions): /api/update, /api/download, /api/feedback, /api/health
 scripts/            Local checks, the version bump and the local Windows release script
@@ -513,3 +514,14 @@ Create it at GitHub, Settings, Developer settings, GitHub Apps, New GitHub App:
 - Each user installs it with "All repositories" on their account, and the host installs it on any org that owns a group repo.
 
 **Settings UI.** Settings has a "GitHub App (beta)" card: a toggle for the `githubApp` setting (off by default, takes effect at next sign-in; disabled with "This build has no GitHub App" when `app_info.appClientIdMissing`). When on, an "Install the App" button calls `open_app_install` and `app_coverage` fills a list of group repos the App does not reach ("Not covered: owner/repo"). Code: `app/ui/src/screens/settings.ts`, `coverageLines` in `app/ui/src/copy.ts`.
+
+## Headless CLI and the shared loop
+
+`crates/cli` runs the same engine as the app without Tauri. Shared pieces live in core so both behave alike: `wake::next_wake` (when the loop wakes), `report::StatusReport` (the `status` text and JSON) and `lock::SyncLock`.
+
+- **Lock.** Every sync takes an exclusive file lock on `<state>/sync.lock` (`File::try_lock`). If another process holds it, a background pass is skipped with "Another claude-sync is syncing right now"; `sync` by hand waits up to 60 s. The app keeps its in-process mutex as well. The daemon also holds `<state>/daemon.lock` so a cron check or a second start exits at once.
+- **Token.** The CLI stores `{login, tokens}` in `<state>/token` with mode 0600 (written through a temp file and renamed). A refresh saves the new tokens; an expired refresh token deletes the file. The daemon reloads the file each pass and rebuilds its engine if the token changed, so two processes do not fight over a refresh token.
+- **Loop.** One pass (`daemon::tick`): honor pause and the rate limit, take the lock, `sync_all` or `sync_if_changed`, check personal memory, then the hooks (job reconcile, plugin ensure).
+- **Service.** `service install` writes `~/.config/systemd/user/claude-sync.service` (`Restart=on-failure`) when systemd runs, otherwise crontab lines `@reboot` and `*/5 * * * *`.
+- **Adopting an existing setup.** `join` backs up `CLAUDE.md` and strips group text pasted outside the managed block before the first sync delivers it.
+- **Release.** `release.yml` builds `claude-sync-cli-<target>` for Linux (x86_64, aarch64), macOS (both) and Windows, with `.sha256` files; `update` checks the relay and downloads from the public release.

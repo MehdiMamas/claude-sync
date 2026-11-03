@@ -711,6 +711,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "claude-sync-cli"
+version = "0.1.21"
+dependencies = [
+ "chrono",
+ "claude-sync-core",
+ "gethostname 0.4.3",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
 name = "claude-sync-core"
 version = "0.1.21"
 dependencies = [
@@ -5615,6 +5632,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",
