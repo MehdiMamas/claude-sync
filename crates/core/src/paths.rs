@@ -68,6 +68,10 @@ impl Paths {
     pub fn requests_file(&self) -> PathBuf {
         self.state_dir.join("requests.json")
     }
+    /// Held while a sync pass runs, so the app and the command line never sync at once.
+    pub fn lock_file(&self) -> PathBuf {
+        self.state_dir.join("sync.lock")
+    }
     /// Base snapshot of a group (§6).
     pub fn base_dir(&self, g: &crate::GroupId) -> PathBuf {
         self.group_dir(g).join("base")

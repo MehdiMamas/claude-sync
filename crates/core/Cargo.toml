@@ -31,8 +31,14 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 tracing-appender = "0.2.3"
 
 # keyring has no Linux backend unless one is enabled; without it a sign-in lives in a mock store.
+# The `secret-service` feature (on by default) adds it; the headless CLI turns it off, because
+# it keeps its token in a file and the backend needs libdbus-1-dev to build.
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"], optional = true }
+
+[features]
+default = ["secret-service"]
+secret-service = ["dep:keyring"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
