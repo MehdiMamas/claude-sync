@@ -278,6 +278,7 @@ pub fn rename_group(paths: &Paths, old: &GroupId, new: &GroupId) -> crate::Resul
 pub fn merge(local: &[u8], remote: &[u8]) -> Option<Vec<u8>> {
     let l: Choices = serde_json::from_slice(local).ok()?;
     let mut out: Choices = serde_json::from_slice(remote).ok()?;
+    let remote_value = serde_json::to_value(&out).ok()?;
     for (k, lg) in l.groups {
         match out.groups.get(&k) {
             Some(rg) if rg.ts >= lg.ts => {}
@@ -297,6 +298,11 @@ pub fn merge(local: &[u8], remote: &[u8]) -> Option<Vec<u8>> {
     }
     if l.app.ts > out.app.ts {
         out.app = l.app;
+    }
+    // Same values in another key order (e.g. a version that keeps a newer key in `extra`)
+    // is no change: keep the remote bytes so the two never push each other's order.
+    if serde_json::to_value(&out).ok()? == remote_value {
+        return Some(remote.to_vec());
     }
     let mut bytes = serde_json::to_vec_pretty(&out).ok()?;
     bytes.push(b'\n');
@@ -370,6 +376,13 @@ mod tests {
         st.disabled.clear();
         st.save(&p).unwrap();
         assert!(load(&p).unwrap().group(&g1).off);
+    }
+
+    #[test]
+    fn merge_keeps_remote_bytes_when_only_key_order_differs() {
+        let remote = br#"{"personal":{"off":false,"ts":1},"order":{"list":[],"ts":0},"sshPeers":{"on":true,"ts":5}}"#;
+        let local = br#"{"personal":{"off":false,"ts":1},"sshPeers":{"on":true,"ts":5},"order":{"list":[],"ts":0}}"#;
+        assert_eq!(merge(local, remote).unwrap(), remote.to_vec());
     }
 
     #[test]
