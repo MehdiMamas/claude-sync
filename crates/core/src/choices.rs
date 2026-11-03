@@ -8,6 +8,7 @@
 //!                                "acceptedJobs": { "job-id": "<hash>" }, "offJobs": ["job-id"],
 //!                                "droppedLines": ["a line"], "member": true, "ts": 1760000000000 } },
 //!   "personal": { "off": true, "ts": 1760000000000 },
+//!   "sshPeers": { "on": true, "ts": 1760000000000 },
 //!   "order": { "list": ["owner/repo"], "ts": 1760000000000 },
 //!   "app": { "paused": false, "intervalSecs": 60, "startAtLogin": true, "ts": 1760000000000 } }
 //! ```
@@ -88,11 +89,21 @@ pub struct PersonalChoice {
     pub ts: u64,
 }
 
+/// Reach your own machines over SSH (`ssh_peers.rs`), on every device of the account.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SshPeersChoice {
+    pub on: bool,
+    pub ts: u64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Choices {
     pub groups: BTreeMap<String, GroupChoice>,
     pub personal: PersonalChoice,
+    #[serde(rename = "sshPeers")]
+    pub ssh_peers: SshPeersChoice,
     pub order: Order,
     pub app: AppChoice,
     /// Keys a newer version wrote are kept.
@@ -240,6 +251,17 @@ pub fn set_personal_off(paths: &Paths, off: bool) -> crate::Result<Choices> {
     Ok(c)
 }
 
+/// Turn reaching your own machines over SSH on (or off) for every device.
+pub fn set_ssh_peers(paths: &Paths, on: bool) -> crate::Result<Choices> {
+    let mut c = load(paths)?;
+    c.ssh_peers = SshPeersChoice {
+        on,
+        ts: stamp(c.ssh_peers.ts),
+    };
+    write_json(&file(paths), &c)?;
+    Ok(c)
+}
+
 /// A group moved to a new `owner/repo`: its choices move with it.
 pub fn rename_group(paths: &Paths, old: &GroupId, new: &GroupId) -> crate::Result<()> {
     let mut c = load(paths)?;
@@ -266,6 +288,9 @@ pub fn merge(local: &[u8], remote: &[u8]) -> Option<Vec<u8>> {
     }
     if l.personal.ts > out.personal.ts {
         out.personal = l.personal;
+    }
+    if l.ssh_peers.ts > out.ssh_peers.ts {
+        out.ssh_peers = l.ssh_peers;
     }
     if l.order.ts > out.order.ts {
         out.order = l.order;
@@ -376,6 +401,40 @@ mod tests {
         assert!(out.groups["a/z"].off, "only remote has it");
         assert!(out.personal.off, "remote is newer");
         assert!(merge(b"nope", &remote).is_none());
+    }
+
+    #[test]
+    fn ssh_peers_merges_by_its_own_ts() {
+        let mk = |on: bool, ts: u64, off: bool, pts: u64| {
+            let c = Choices {
+                ssh_peers: SshPeersChoice { on, ts },
+                personal: PersonalChoice { off, ts: pts },
+                ..Default::default()
+            };
+            serde_json::to_vec(&c).unwrap()
+        };
+        // Local ssh choice is newer, remote personal choice is newer: each key decides alone.
+        let out: Choices =
+            serde_json::from_slice(&merge(&mk(true, 5, false, 1), &mk(false, 3, true, 9)).unwrap())
+                .unwrap();
+        assert!(out.ssh_peers.on && out.ssh_peers.ts == 5);
+        assert!(out.personal.off);
+        let out: Choices = serde_json::from_slice(
+            &merge(&mk(true, 2, false, 1), &mk(false, 3, false, 1)).unwrap(),
+        )
+        .unwrap();
+        assert!(!out.ssh_peers.on, "remote is newer");
+    }
+
+    #[test]
+    fn set_ssh_peers_saves_and_stamps() {
+        let (_t, p) = paths();
+        assert!(!load(&p).unwrap().ssh_peers.on);
+        let a = set_ssh_peers(&p, true).unwrap().ssh_peers;
+        assert!(a.on && a.ts > 0);
+        let b = set_ssh_peers(&p, false).unwrap().ssh_peers;
+        assert!(!b.on && b.ts > a.ts);
+        assert!(!load(&p).unwrap().ssh_peers.on);
     }
 
     #[test]
