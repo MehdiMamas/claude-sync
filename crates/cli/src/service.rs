@@ -104,9 +104,28 @@ fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
-fn crontab_read() -> String {
-    // No crontab yet makes `crontab -l` fail: that is an empty one.
-    run("crontab", &["-l"]).unwrap_or_default()
+/// What `crontab -l` answered: its text, an empty table (the user has none yet), or an error.
+/// Only "no crontab for <user>" is empty; any other failure must not become an empty table,
+/// because the caller writes the table back and would wipe the user's other lines.
+fn crontab_decide(success: bool, stdout: &str, stderr: &str) -> Result<String, String> {
+    if success {
+        Ok(stdout.to_string())
+    } else if stderr.to_lowercase().contains("no crontab") {
+        Ok(String::new())
+    } else {
+        Err(format!("crontab -l failed: {}", stderr.trim()))
+    }
+}
+
+fn crontab_read() -> Result<String, String> {
+    let out = Command::new("crontab").arg("-l").output().map_err(|e| {
+        format!("cannot run crontab: {e} (install cron, or run `claude-sync-cli daemon` yourself)")
+    })?;
+    crontab_decide(
+        out.status.success(),
+        &String::from_utf8_lossy(&out.stdout),
+        &String::from_utf8_lossy(&out.stderr),
+    )
 }
 
 fn crontab_write(text: &str) -> Result<(), String> {
@@ -162,7 +181,7 @@ pub fn install() -> Result<String, String> {
             Ok(msg)
         }
         Mode::Cron => {
-            crontab_write(&merge_cron(&crontab_read(), &exe))?;
+            crontab_write(&merge_cron(&crontab_read()?, &exe))?;
             // Cron starts it within 5 minutes; start it now too.
             let started = Command::new(&exe)
                 .arg("daemon")
@@ -192,7 +211,13 @@ pub fn remove() -> Result<String, String> {
             done.push(format!("removed {}", path.display()));
         }
     }
-    let table = crontab_read();
+    // No crontab program (no cron here) means nothing of ours is in it; any other
+    // failure aborts before anything is written.
+    let table = match crontab_read() {
+        Ok(t) => t,
+        Err(e) if e.starts_with("cannot run crontab") => String::new(),
+        Err(e) => return Err(e),
+    };
     if table.lines().any(|l| l.trim_end().ends_with(CRON_MARK)) {
         crontab_write(&strip_cron(&table))?;
         done.push("removed the crontab lines".into());
@@ -222,6 +247,7 @@ pub fn status() -> Result<String, String> {
         }
     }
     let n = crontab_read()
+        .unwrap_or_default()
         .lines()
         .filter(|l| l.trim_end().ends_with(CRON_MARK))
         .count();
@@ -236,6 +262,26 @@ pub fn status() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_missing_crontab_counts_as_empty() {
+        assert_eq!(
+            crontab_decide(true, "0 * * * * x\n", ""),
+            Ok("0 * * * * x\n".into())
+        );
+        assert_eq!(
+            crontab_decide(false, "", "no crontab for mehdi\n"),
+            Ok(String::new())
+        );
+        let e = crontab_decide(
+            false,
+            "",
+            "crontab: error while loading: permission denied\n",
+        )
+        .unwrap_err();
+        assert!(e.contains("permission denied"));
+        assert!(crontab_decide(false, "", "").is_err());
+    }
 
     #[test]
     fn the_unit_runs_the_daemon_and_restarts_it() {

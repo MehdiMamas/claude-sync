@@ -3,7 +3,7 @@
 //! `run-job`, and calling the same core functions as the Settings screen.
 use crate::ctx::{now_unix, Ctx};
 use crate::guard;
-pub use claude_sync_core::report::{ago, personal_text, requests_text, status_text};
+use claude_sync_core::report::personal_text;
 use claude_sync_core::Paths;
 
 /// Sent to the running app after a change so its screens reload.
