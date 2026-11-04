@@ -1239,7 +1239,6 @@ impl Engine {
         Ok(written)
     }
 
-    /// Move the real `settings.json` from the view it had to the merged one, with a backup.
     /// Remove local marketplace entries an earlier version wrote without their path (#171),
     /// even when nothing else in the synced settings changed. True when the file changed.
     fn repair_settings(&self, backup_root: &Path) -> crate::Result<bool> {
@@ -1260,6 +1259,7 @@ impl Engine {
         Ok(true)
     }
 
+    /// Move the real `settings.json` from the view it had to the merged one, with a backup.
     fn write_settings(
         &self,
         old: Option<&Vec<u8>>,

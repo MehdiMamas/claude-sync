@@ -529,7 +529,8 @@ pub fn machine_specific(v: &mut Value) {
 }
 
 /// Remove `extraKnownMarketplaces` entries that point at a local folder or file. With
-/// `broken_only`, only those left with no `path` (they make Claude Code warn at start);
+/// `broken_only`, only those left with no `path` (they make Claude Code warn at start),
+/// and a source with a `path` but no kind gets its kind back (#174);
 /// otherwise every `directory` or `file` source and every source with an absolute path,
 /// whole, since a local folder can't work on another machine (#171).
 pub fn drop_local_marketplaces(v: &mut Value, broken_only: bool) {
@@ -537,6 +538,9 @@ pub fn drop_local_marketplaces(v: &mut Value, broken_only: bool) {
         return;
     };
     m.retain(|_, entry| {
+        if broken_only {
+            restore_source_kind(entry);
+        }
         let src = entry.get("source");
         let local = src
             .and_then(|s| s.get("source"))
@@ -555,6 +559,26 @@ pub fn drop_local_marketplaces(v: &mut Value, broken_only: bool) {
     if m.is_empty() {
         remove_at(v, "/extraKnownMarketplaces");
     }
+}
+
+/// Put back the kind of a local marketplace source that kept only its `path` (#174):
+/// `file` for a `.json` path, else `directory`.
+fn restore_source_kind(entry: &mut Value) {
+    let Some(Value::Object(src)) = entry.get_mut("source") else {
+        return;
+    };
+    if src.contains_key("source") {
+        return;
+    }
+    let Some(path) = src.get("path").and_then(Value::as_str) else {
+        return;
+    };
+    let kind = if path.ends_with(".json") {
+        "file"
+    } else {
+        "directory"
+    };
+    src.insert("source".to_string(), Value::String(kind.to_string()));
 }
 
 fn mentions_absolute_path(v: &Value) -> bool {
@@ -713,6 +737,27 @@ mod tests {
         assert_eq!(
             v,
             json!({"extraKnownMarketplaces": {"dir": {"source": {"source": "directory", "path": "/home/me/x"}}}})
+        );
+    }
+
+    #[test]
+    fn broken_only_puts_back_the_kind_of_a_path_only_source() {
+        let mut v = json!({"extraKnownMarketplaces": {
+            "d": {"source": {"path": "/x/m"}},
+            "f": {"source": {"path": "/x/m.json"}},
+            "gh": {"source": {"source": "github", "repo": "o/r"}},
+            "ok": {"source": {"source": "directory", "path": "/x/ok"}},
+            "none": {"source": {"source": "directory"}}
+        }});
+        drop_local_marketplaces(&mut v, true);
+        assert_eq!(
+            v,
+            json!({"extraKnownMarketplaces": {
+                "d": {"source": {"source": "directory", "path": "/x/m"}},
+                "f": {"source": {"source": "file", "path": "/x/m.json"}},
+                "gh": {"source": {"source": "github", "repo": "o/r"}},
+                "ok": {"source": {"source": "directory", "path": "/x/ok"}}
+            }})
         );
     }
 
