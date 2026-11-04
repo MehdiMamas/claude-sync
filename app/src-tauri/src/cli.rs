@@ -171,7 +171,9 @@ fn refresh_running_app() {
         return;
     }
     if let Ok(exe) = std::env::current_exe() {
-        let _ = std::process::Command::new(exe).arg(REFRESH_ARG).spawn();
+        let mut cmd = std::process::Command::new(exe);
+        cmd.arg(REFRESH_ARG);
+        let _ = claude_sync_core::claude_cli::quiet(&mut cmd).spawn();
     }
 }
 

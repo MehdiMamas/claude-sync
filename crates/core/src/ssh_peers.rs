@@ -8,10 +8,13 @@
 //! Everything is user scope. Paths and the outside commands (`tailscale`, `ssh-keygen`)
 //! are injected ([`Env`], [`Probe`]) so tests never touch the real `~/.ssh`.
 use crate::apply::sha256_hex;
+use crate::claude_cli;
 use crate::state::{now_unix, write_atomic};
 use crate::{Error, Paths, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 pub const BEGIN: &str = "# >>> claude-sync peers >>>";
 pub const END: &str = "# <<< claude-sync peers <<<";
@@ -40,27 +43,59 @@ pub trait Probe {
 
 pub struct RealProbe;
 
+/// How long the `tailscale ip` answer (also "none") is reused.
+const TAILSCALE_TTL: Duration = Duration::from_secs(600);
+
+/// The last `tailscale ip` answer and when it was fetched.
+type TsSlot = Option<(Instant, Option<String>)>;
+
+/// The slot's answer when it is younger than `ttl`, else `fetch()`, stored with `now`.
+fn cached_ip(
+    slot: &Mutex<TsSlot>,
+    now: Instant,
+    ttl: Duration,
+    fetch: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, value)) = guard.as_ref() {
+        if now.saturating_duration_since(*at) < ttl {
+            return value.clone();
+        }
+    }
+    let value = fetch();
+    *guard = Some((now, value.clone()));
+    value
+}
+
+fn fetch_tailscale_ip() -> Option<String> {
+    let mut cmd = std::process::Command::new("tailscale");
+    cmd.args(["ip", "-4"]);
+    let out = claude_cli::quiet(&mut cmd)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let first = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .to_string();
+    first.parse::<std::net::Ipv4Addr>().ok()?;
+    Some(first)
+}
+
 impl Probe for RealProbe {
     fn tailscale_ip(&self) -> Option<String> {
-        let out = std::process::Command::new("tailscale")
-            .args(["ip", "-4"])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())?;
-        let first = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .next()?
-            .trim()
-            .to_string();
-        first.parse::<std::net::Ipv4Addr>().ok()?;
-        Some(first)
+        static SLOT: OnceLock<Mutex<TsSlot>> = OnceLock::new();
+        let slot = SLOT.get_or_init(|| Mutex::new(None));
+        cached_ip(slot, Instant::now(), TAILSCALE_TTL, fetch_tailscale_ip)
     }
 
     fn keygen(&self, path: &Path) -> Result<()> {
-        let status = std::process::Command::new("ssh-keygen")
-            .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        let mut cmd = std::process::Command::new("ssh-keygen");
+        cmd.args(["-q", "-t", "ed25519", "-N", "", "-f"])
             .arg(path)
-            .stdin(std::process::Stdio::null())
+            .stdin(std::process::Stdio::null());
+        let status = claude_cli::quiet(&mut cmd)
             .status()
             .map_err(|e| Error::Invalid(format!("could not run ssh-keygen: {e}")))?;
         if status.success() {
@@ -552,6 +587,28 @@ pub fn sync_pass(paths: &Paths, hostname: String) -> Result<()> {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn tailscale_answer_is_reused_inside_the_ttl_also_when_none() {
+        let slot = Mutex::new(None);
+        let ttl = Duration::from_secs(600);
+        let t0 = Instant::now();
+        let calls = Cell::new(0);
+        let fetch = |v: Option<&str>| {
+            calls.set(calls.get() + 1);
+            v.map(String::from)
+        };
+        assert_eq!(cached_ip(&slot, t0, ttl, || fetch(None)), None);
+        let t1 = t0 + Duration::from_secs(599);
+        assert_eq!(cached_ip(&slot, t1, ttl, || fetch(Some("100.1.1.1"))), None);
+        assert_eq!(calls.get(), 1);
+        let t2 = t0 + Duration::from_secs(601);
+        assert_eq!(
+            cached_ip(&slot, t2, ttl, || fetch(Some("100.1.1.1"))),
+            Some("100.1.1.1".into())
+        );
+        assert_eq!(calls.get(), 2);
+    }
 
     struct Fake {
         ip: Option<String>,

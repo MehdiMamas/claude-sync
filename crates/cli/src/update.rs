@@ -138,11 +138,9 @@ fn tempdir(exe: &Path) -> Result<PathBuf, String> {
 fn replace(archive: &[u8], name: &str, work: &Path, exe: &Path) -> Result<(), String> {
     let file = work.join(name);
     std::fs::write(&file, archive).map_err(|e| e.to_string())?;
-    let status = std::process::Command::new("tar")
-        .arg("-xf")
-        .arg(&file)
-        .arg("-C")
-        .arg(work)
+    let mut cmd = std::process::Command::new("tar");
+    cmd.arg("-xf").arg(&file).arg("-C").arg(work);
+    let status = claude_sync_core::claude_cli::quiet(&mut cmd)
         .status()
         .map_err(|e| format!("cannot run tar: {e}"))?;
     if !status.success() {
