@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// `<state_dir>/plugins.json`: what was last done per group.
 pub const STATE_FILE: &str = "plugins.json";
@@ -388,6 +388,25 @@ pub struct Outcome {
 
 static RUNNING: Mutex<()> = Mutex::new(());
 
+/// Minutes to wait after the 1st, 2nd, 3rd... consecutive failed run; the last repeats.
+const BACKOFF_MINUTES: [u64; 4] = [5, 15, 30, 60];
+
+/// One group's failures since the app started (in memory only).
+struct Backoff {
+    failures: usize,
+    until: Instant,
+    /// What the failed run was for; a different one (new fingerprint or enabled set) runs.
+    work: String,
+}
+
+/// Per state folder and group, so tests with their own folders never meet.
+static BACKOFFS: Mutex<BTreeMap<String, Backoff>> = Mutex::new(BTreeMap::new());
+
+fn backoff_wait(failures: usize) -> Duration {
+    let i = failures.clamp(1, BACKOFF_MINUTES.len()) - 1;
+    Duration::from_secs(BACKOFF_MINUTES[i] * 60)
+}
+
 /// Bring `group`'s plugins in line after an apply (see the module doc). Does nothing unless
 /// one of its bundled marketplaces or its enabled plugins changed since the last run, or
 /// `force` (Retry). `cli` is called only when there is work, and `None` means Claude Code is
@@ -397,6 +416,19 @@ pub fn ensure(
     group: &GroupId,
     cli: &dyn Fn() -> Option<Box<dyn PluginCli>>,
     force: bool,
+) -> crate::Result<Outcome> {
+    ensure_at(paths, group, cli, force, Instant::now())
+}
+
+/// [`ensure`] with the clock injected. After a failed run (warnings, or no Claude Code) the
+/// same work is not tried again for 5, 15, 30, then 60 minutes; `force`, a changed
+/// fingerprint or enabled set, or a success clears that.
+fn ensure_at(
+    paths: &Paths,
+    group: &GroupId,
+    cli: &dyn Fn() -> Option<Box<dyn PluginCli>>,
+    force: bool,
+    now: Instant,
 ) -> crate::Result<Outcome> {
     let _one_at_a_time = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
     let manifest = Manifest::load(paths)?;
@@ -455,7 +487,33 @@ pub fn ensure(
         return Ok(out);
     }
 
+    let bkey = format!("{}|{}", paths.state_dir.display(), group);
+    let work = sha256_hex(format!("{mps:?}\n{enabled:?}\n{current:?}").as_bytes());
+    {
+        let mut backoffs = BACKOFFS.lock().unwrap_or_else(|e| e.into_inner());
+        match backoffs.get(&bkey) {
+            Some(b) if !force && b.work == work && now < b.until => return Ok(out),
+            Some(b) if force || b.work != work => {
+                backoffs.remove(&bkey);
+            }
+            _ => {}
+        }
+    }
+    let fail = |now: Instant| {
+        let mut backoffs = BACKOFFS.lock().unwrap_or_else(|e| e.into_inner());
+        let failures = backoffs.get(&bkey).map_or(0, |b| b.failures) + 1;
+        backoffs.insert(
+            bkey.clone(),
+            Backoff {
+                failures,
+                until: now + backoff_wait(failures),
+                work: work.clone(),
+            },
+        );
+    };
+
     let Some(cli) = cli() else {
+        fail(now);
         if prev.warnings != [CLAUDE_NOT_FOUND] {
             tracing::warn!(group = %group, "claude not found; group plugins not installed");
         }
@@ -509,6 +567,14 @@ pub fn ensure(
             }
         }
     }
+    if out.warnings.is_empty() {
+        BACKOFFS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&bkey);
+    } else {
+        fail(now);
+    }
     record(&mut st, out.warnings.clone());
     st.save(paths)?;
     if out
@@ -533,7 +599,7 @@ pub fn ensure(
 mod tests {
     use super::*;
     use crate::apply::ManagedMarketplace;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     #[derive(Default)]
@@ -657,9 +723,65 @@ mod tests {
             let cli = move || Some(Box::new(Handle(fake.clone())) as Box<dyn PluginCli>);
             ensure(&self.paths, &self.group, &cli, force).unwrap()
         }
+        fn ensure_at(&self, force: bool, now: Instant) -> Outcome {
+            let fake = self.fake.clone();
+            let cli = move || Some(Box::new(Handle(fake.clone())) as Box<dyn PluginCli>);
+            ensure_at(&self.paths, &self.group, &cli, force, now).unwrap()
+        }
         fn calls(&self) -> Vec<String> {
             std::mem::take(&mut *self.fake.calls.borrow_mut())
         }
+    }
+
+    #[test]
+    fn failed_runs_back_off_until_the_window_force_or_new_work() {
+        let e = Env::new();
+        let none = || None;
+        let at = |force, now| ensure_at(&e.paths, &e.group, &none, force, now).unwrap();
+        let asked = Cell::new(0);
+        let counting = || {
+            asked.set(asked.get() + 1);
+            None
+        };
+        let counted = |force, now| {
+            ensure_at(&e.paths, &e.group, &counting, force, now).unwrap();
+        };
+        let t0 = Instant::now();
+        assert_eq!(at(false, t0).warnings, [CLAUDE_NOT_FOUND]);
+        // Inside the 5 minutes: skipped, the CLI is not even looked for.
+        counted(false, t0 + Duration::from_secs(299));
+        assert_eq!(asked.get(), 0);
+        // After it: asked again, fails again, so the next wait is 15 minutes.
+        let t1 = t0 + Duration::from_secs(301);
+        counted(false, t1);
+        assert_eq!(asked.get(), 1);
+        counted(false, t1 + Duration::from_secs(14 * 60));
+        assert_eq!(asked.get(), 1);
+        counted(false, t1 + Duration::from_secs(15 * 60 + 1));
+        assert_eq!(asked.get(), 2);
+        // Retry (force) asks at once and clears the wait.
+        let t2 = t1 + Duration::from_secs(16 * 60);
+        counted(true, t2);
+        assert_eq!(asked.get(), 3);
+        counted(false, t2 + Duration::from_secs(1));
+        assert_eq!(asked.get(), 3);
+        // New work (a changed marketplace) is tried without waiting.
+        e.marketplace(&[("router", "2.0.0"), ("manager", "1.0.0")]);
+        counted(false, t2 + Duration::from_secs(2));
+        assert_eq!(asked.get(), 4);
+        // A success clears it.
+        assert!(e.ensure_at(true, t2 + Duration::from_secs(3)).ran);
+        assert!(BACKOFFS
+            .lock()
+            .unwrap()
+            .keys()
+            .all(|k| !k.starts_with(&*e.paths.state_dir.display().to_string())));
+    }
+
+    #[test]
+    fn backoff_windows() {
+        let m = |n| backoff_wait(n).as_secs() / 60;
+        assert_eq!([m(1), m(2), m(3), m(4), m(9)], [5, 15, 30, 60, 60]);
     }
 
     #[test]
@@ -871,8 +993,8 @@ mod tests {
         let o = ensure(&e.paths, &e.group, &none, false).unwrap();
         assert_eq!(o.warnings, [CLAUDE_NOT_FOUND]);
         assert_eq!(warnings(&e.paths, &e.group).unwrap(), [CLAUDE_NOT_FOUND]);
-        // Claude Code gets installed: the next sync does the work.
-        let o = e.ensure(false);
+        // Claude Code gets installed: the next sync after the wait does the work.
+        let o = e.ensure_at(false, Instant::now() + Duration::from_secs(301));
         assert_eq!(o.installed, ["manager@mods", "router@mods"]);
         assert!(warnings(&e.paths, &e.group).unwrap().is_empty());
         forget(&e.paths, &e.group).unwrap();
