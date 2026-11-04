@@ -67,20 +67,39 @@ fn cached_ip(
     value
 }
 
-fn fetch_tailscale_ip() -> Option<String> {
-    let mut cmd = std::process::Command::new("tailscale");
-    cmd.args(["ip", "-4"]);
-    let out = claude_cli::quiet(&mut cmd)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())?;
-    let first = String::from_utf8_lossy(&out.stdout)
+/// Where to look for the Tailscale CLI, in order. A macOS GUI app gets launchd's PATH,
+/// and the Tailscale app ships its CLI only inside the bundle.
+fn ts_candidates(os: Os) -> Vec<&'static str> {
+    let mut v = vec!["tailscale"];
+    match os {
+        Os::Mac => v.push("/Applications/Tailscale.app/Contents/MacOS/Tailscale"),
+        Os::Windows => v.push(r"C:\Program Files\Tailscale\tailscale.exe"),
+        Os::Other => {}
+    }
+    v
+}
+
+/// The first line of `tailscale ip -4` when it is an IPv4 address.
+fn parse_ts_ip(stdout: &[u8]) -> Option<String> {
+    let first = String::from_utf8_lossy(stdout)
         .lines()
         .next()?
         .trim()
         .to_string();
     first.parse::<std::net::Ipv4Addr>().ok()?;
     Some(first)
+}
+
+fn fetch_tailscale_ip() -> Option<String> {
+    ts_candidates(RealProbe.os()).into_iter().find_map(|bin| {
+        let mut cmd = std::process::Command::new(bin);
+        cmd.args(["ip", "-4"]);
+        let out = claude_cli::quiet(&mut cmd)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())?;
+        parse_ts_ip(&out.stdout)
+    })
 }
 
 impl Probe for RealProbe {
@@ -587,6 +606,29 @@ pub fn sync_pass(paths: &Paths, hostname: String) -> Result<()> {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn tailscale_ip_output_is_parsed_strictly() {
+        assert_eq!(
+            parse_ts_ip(b"100.64.1.2\nfd7a::1\n"),
+            Some("100.64.1.2".into())
+        );
+        assert_eq!(parse_ts_ip(b"  100.64.1.2  \n"), Some("100.64.1.2".into()));
+        assert_eq!(parse_ts_ip(b""), None);
+        assert_eq!(parse_ts_ip(b"not running\n"), None);
+        assert_eq!(parse_ts_ip(b"fd7a::1\n"), None);
+    }
+
+    #[test]
+    fn tailscale_bundle_paths_are_tried_per_os() {
+        assert_eq!(ts_candidates(Os::Other), vec!["tailscale"]);
+        let mac = ts_candidates(Os::Mac);
+        assert_eq!(mac[0], "tailscale");
+        assert!(mac[1].starts_with("/Applications/Tailscale.app/"));
+        let win = ts_candidates(Os::Windows);
+        assert_eq!(win.len(), 2);
+        assert!(win[1].ends_with("tailscale.exe"));
+    }
 
     #[test]
     fn tailscale_answer_is_reused_inside_the_ttl_also_when_none() {
