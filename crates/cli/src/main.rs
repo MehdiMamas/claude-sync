@@ -67,6 +67,13 @@ fn run(argv: &[String]) -> i32 {
         ));
         return 0;
     }
+    // A one-off command after the sign-in expired tries the gh sign-in first (as the daemon does).
+    if !matches!(cmd, Cmd::Login | Cmd::Logout) {
+        if let Ok(auth::Standing::Expired(login)) = auth::standing(&paths) {
+            let api = claude_sync_core::github::API;
+            let _ = rt.block_on(auth::recover_from_gh(&paths, api, &login));
+        }
+    }
     match rt.block_on(cmds::execute(&paths, cmd)) {
         Ok(out) => {
             if json {

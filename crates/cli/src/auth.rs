@@ -165,6 +165,56 @@ pub async fn login(
     Ok(user.login)
 }
 
+/// After the saved sign-in expired: save the `gh` sign-in of the same account as this
+/// sign-in, if GitHub accepts it. `gh_token` gives that token (`gh auth token`; `None` when
+/// gh is missing or signed out). Returns whether a new sign-in was saved. The token is never
+/// logged.
+pub async fn recover_with(
+    paths: &Paths,
+    api: &str,
+    login: &str,
+    gh_token: impl FnOnce() -> Option<String>,
+) -> Result<bool, String> {
+    let Some(token) = gh_token()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+    else {
+        return Ok(false);
+    };
+    let Ok(user) = GitHub::with_api(token.clone(), api.to_string())
+        .user()
+        .await
+    else {
+        return Ok(false);
+    };
+    if !user.login.eq_ignore_ascii_case(login) {
+        return Ok(false);
+    }
+    store::save(
+        paths,
+        &Saved {
+            login: user.login.clone(),
+            tokens: Tokens::plain(token),
+        },
+    )?;
+    tracing::info!("sign-in of {login} recovered from the gh sign-in");
+    Ok(true)
+}
+
+/// `recover_with` for the real `gh` command (`gh auth token`, argument list, no shell).
+pub async fn recover_from_gh(paths: &Paths, api: &str, login: &str) -> Result<bool, String> {
+    recover_with(paths, api, login, || {
+        let out = std::process::Command::new("gh")
+            .args(["auth", "token"])
+            .output()
+            .ok()?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    })
+    .await
+}
+
 /// Remove the token and the login.
 pub fn logout(paths: &Paths) -> Result<(), String> {
     store::delete(paths)?;
@@ -277,6 +327,48 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("cancelled"), "{err}");
         assert!(store::load(&paths(d.path())).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn an_expired_sign_in_is_recovered_from_the_gh_token_of_the_same_account() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/user"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"login": "octo"})),
+            )
+            .mount(&server)
+            .await;
+        let d = tempfile::tempdir().unwrap();
+        let p = paths(d.path());
+        let api = server.uri();
+        assert!(recover_with(&p, &api, "octo", || Some("gho_gh\n".into()))
+            .await
+            .unwrap());
+        assert_eq!(
+            store::load(&p).unwrap().unwrap().tokens.access_token,
+            "gho_gh"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_gh_token_of_another_account_or_none_is_not_used() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/user"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"login": "someone"})),
+            )
+            .mount(&server)
+            .await;
+        let d = tempfile::tempdir().unwrap();
+        let p = paths(d.path());
+        let api = server.uri();
+        assert!(!recover_with(&p, &api, "octo", || Some("gho_x".into()))
+            .await
+            .unwrap());
+        assert!(!recover_with(&p, &api, "octo", || None).await.unwrap());
+        assert!(store::load(&p).unwrap().is_none());
     }
 
     #[test]

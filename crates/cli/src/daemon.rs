@@ -3,7 +3,7 @@ use crate::auth::{self, Signed, Standing};
 use crate::config;
 use crate::jobs::Hooks;
 use claude_sync_core::engine::SyncReport;
-use claude_sync_core::github::with_caller;
+use claude_sync_core::github::{self, with_caller};
 use claude_sync_core::lock::SyncLock;
 use claude_sync_core::personal::NewDevice;
 use claude_sync_core::state::AppState;
@@ -147,10 +147,12 @@ pub async fn run(paths: &Paths, hooks: Arc<dyn Hooks>, shutdown: impl Future<Out
     let mut cached: Option<(Signed, Arc<Engine>)> = None;
     let mut was_limited = false;
     let mut personal_checked = false;
+    let mut expired_logged = false;
     tracing::info!("daemon started, version {}", config::VERSION);
     loop {
         let wait = match auth::standing(paths) {
             Ok(Standing::In(signed)) => {
+                expired_logged = false;
                 // A token another process refreshed replaces ours (refresh tokens are
                 // used once).
                 let same = cached.as_ref().is_some_and(|(c, _)| {
@@ -188,8 +190,22 @@ pub async fn run(paths: &Paths, hooks: Arc<dyn Hooks>, shutdown: impl Future<Out
             }
             Ok(Standing::Expired(l)) => {
                 cached = None;
-                tracing::warn!("sign-in of {l} expired; run `claude-sync-cli login`");
-                poll_interval(paths)
+                match auth::recover_from_gh(paths, github::API, &l).await {
+                    Ok(true) => Duration::ZERO,
+                    Ok(false) => {
+                        if !expired_logged {
+                            expired_logged = true;
+                            tracing::error!(
+                                "sign-in of {l} expired and no gh sign-in for it was found; run `claude-sync-cli login` (sync is stopped until then)"
+                            );
+                        }
+                        poll_interval(paths)
+                    }
+                    Err(e) => {
+                        tracing::error!("sign-in recovery failed: {e}");
+                        poll_interval(paths)
+                    }
+                }
             }
             Ok(Standing::Out) => {
                 cached = None;
