@@ -301,6 +301,9 @@ fn ssh(paths: &Paths, s: Ssh) -> Result<Out, String> {
     }
     for p in &st.peers {
         text.push_str(&format!("\n  ssh {}  ({}, {})", p.alias, p.name, p.os));
+        if let Some(l) = &p.lan {
+            text.push_str(&format!(" lan {l}"));
+        }
     }
     if st.on && st.peers.is_empty() {
         text.push_str("\nNo other machine yet; they appear after their next sync.");
