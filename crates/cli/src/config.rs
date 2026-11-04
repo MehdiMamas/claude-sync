@@ -6,10 +6,11 @@ pub const RELAY_URL: &str = match option_env!("CLAUDE_SYNC_RELAY_URL") {
     None => "https://claude-sync-relay.invalid",
 };
 
-/// Public client ID of the GitHub OAuth App (device flow). Empty = not configured.
+/// Public client ID of the GitHub OAuth App (device flow). A public value by design (see the
+/// README, "Sign-in"); a build without the variable uses this one, so `login` works everywhere.
 pub const GITHUB_CLIENT_ID: &str = match option_env!("CLAUDE_SYNC_GITHUB_CLIENT_ID") {
     Some(id) => id,
-    None => "",
+    None => "Ov23liM4fyK64GPQbGkC",
 };
 
 /// Public client ID of the GitHub App (per-repo access), used when the state has `githubApp`.
