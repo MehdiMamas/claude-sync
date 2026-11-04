@@ -588,7 +588,8 @@ fn host_names(peers: &[(Record, String)], mine: &[String]) -> Vec<String> {
         };
         let mut name = first.clone();
         if used.contains(&name) {
-            name = format!("{first}-{}", &r.id[..r.id.len().min(4)]);
+            let short: String = r.id.chars().take(4).collect();
+            name = format!("{first}-{short}");
             let base = name.clone();
             let mut n = 2;
             while used.contains(&name) {
