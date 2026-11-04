@@ -97,7 +97,9 @@ fn every_spawn_hides_its_console_window() {
 
 #[test]
 fn run_command_input_uses_quiet() {
-    let text = std::fs::read_to_string(repo_root().join("crates/core/src/claude_cli.rs")).unwrap();
+    let text = std::fs::read_to_string(repo_root().join("crates/core/src/claude_cli.rs"))
+        .unwrap()
+        .replace("\r\n", "\n");
     let start = text
         .find("pub fn run_command_input(")
         .expect("run_command_input");
