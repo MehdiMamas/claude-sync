@@ -19,6 +19,7 @@ const FILES = [
   { path: "Cargo.toml", re: /(^\[workspace\.package\][^[]*?^version = ")([^"]+)(")/m },
   { path: "Cargo.lock", re: /(^name = "claude-sync-app"\r?\nversion = ")([^"]+)(")/m },
   { path: "Cargo.lock", re: /(^name = "claude-sync-core"\r?\nversion = ")([^"]+)(")/m },
+  { path: "Cargo.lock", re: /(^name = "claude-sync-cli"\r?\nversion = ")([^"]+)(")/m },
   { path: "app/package.json", re: /(^ {2}"version": ")([^"]+)(")/m },
   { path: "app/ui/package.json", re: /(^ {2}"version": ")([^"]+)(")/m },
 ];
