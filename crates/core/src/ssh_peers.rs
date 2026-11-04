@@ -528,7 +528,7 @@ pub fn publish(env: &Env, probe: &dyn Probe, on: bool) -> Result<()> {
     });
     let taken: Vec<String> = read_records(env)
         .into_iter()
-        .filter(|r| r.id != id)
+        .filter(|r| r.id < id)
         .map(|r| r.alias)
         .collect();
     let mut alias = base.clone();
@@ -575,6 +575,35 @@ fn peers(env: &Env, own_id: &str) -> Vec<(Record, String)> {
         .collect()
 }
 
+/// The `Host` name per peer, in order: the alias (`<alias>-cs` when the user's own config
+/// has it), made unique against `mine`, earlier peers and their `-lan` names.
+fn host_names(peers: &[(Record, String)], mine: &[String]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut used: Vec<String> = mine.to_vec();
+    for (r, _) in peers {
+        let first = if mine.contains(&r.alias) {
+            format!("{}-cs", r.alias)
+        } else {
+            r.alias.clone()
+        };
+        let mut name = first.clone();
+        if used.contains(&name) {
+            let short: String = r.id.chars().take(4).collect();
+            name = format!("{first}-{short}");
+            let base = name.clone();
+            let mut n = 2;
+            while used.contains(&name) {
+                name = format!("{base}-{n}");
+                n += 1;
+            }
+        }
+        used.push(name.clone());
+        used.push(format!("{name}-lan"));
+        names.push(name);
+    }
+    names
+}
+
 /// Add the other machines to `authorized_keys` (not on Windows) and `claude-sync.conf`, or
 /// remove everything this module wrote when `on` is false.
 pub fn apply(env: &Env, probe: &dyn Probe, on: bool) -> Result<()> {
@@ -605,16 +634,7 @@ pub fn apply(env: &Env, probe: &dyn Probe, on: bool) -> Result<()> {
     if on {
         let mine = user_hosts(config.as_deref().unwrap_or(""));
         let mut conf = String::new();
-        let names: Vec<String> = list
-            .iter()
-            .map(|(r, _)| {
-                if mine.contains(&r.alias) {
-                    format!("{}-cs", r.alias)
-                } else {
-                    r.alias.clone()
-                }
-            })
-            .collect();
+        let names = host_names(&list, &mine);
         let lan_ok = !windows && probe.has_nc();
         for ((r, _), name) in list.iter().zip(&names) {
             conf.push_str(&format!(
@@ -677,13 +697,17 @@ pub struct Status {
 pub fn status(paths: &Paths, env: &Env) -> Result<Status> {
     let on = crate::choices::load(paths)?.ssh_peers.on;
     let l = load_local(env);
+    let list = peers(env, &l.id);
+    let config = read_text(&env.ssh_dir.join("config"))?;
+    let names = host_names(&list, &user_hosts(config.as_deref().unwrap_or("")));
     Ok(Status {
         on,
         alias: l.alias,
-        peers: peers(env, &l.id)
+        peers: list
             .into_iter()
-            .map(|(r, _)| Peer {
-                alias: r.alias,
+            .zip(names)
+            .map(|((r, _), alias)| Peer {
+                alias,
                 name: r.name,
                 os: r.os,
                 host: r.host,
@@ -936,18 +960,18 @@ mod tests {
         assert!(set_alias(&e, "bad name").is_err());
         assert!(set_alias(&e, "").is_err());
         let p = Fake::new(Os::Other, None);
-        put_rec(&e, &rec("other", "pc"));
+        put_rec(&e, &rec("0", "pc"));
         publish(&e, &p, true).unwrap();
         let mine: Vec<_> = read_records(&e)
             .into_iter()
-            .filter(|r| r.id != "other")
+            .filter(|r| r.id != "0")
             .collect();
         assert_eq!(mine[0].alias, "pc-2");
         set_alias(&e, "tower").unwrap();
         publish(&e, &p, true).unwrap();
         let mine: Vec<_> = read_records(&e)
             .into_iter()
-            .filter(|r| r.id != "other")
+            .filter(|r| r.id != "0")
             .collect();
         assert_eq!(mine.len(), 1);
         assert_eq!(mine[0].alias, "tower");
@@ -1145,7 +1169,8 @@ mod tests {
         pass(&e, &Fake::new(Os::Other, None).nc(), true).unwrap();
         let conf = read(e.ssh_dir.join(CONF));
         assert_eq!(conf.matches("Host mac-lan\n").count(), 1);
-        assert!(conf.contains("Host mac-lan\n  HostName 100.64.0.9\n"));
+        assert!(conf.contains("Host mac-lan\n  HostName 192.168.1.5\n"));
+        assert!(conf.contains("Host mac-lan-p\n"));
         // A `-cs` rename gives `-cs-lan`.
         let renamed = conf_for(Os::Other, true, &r, "Host mac\n  User me\n");
         assert!(renamed.contains("Host mac-cs-lan\n"));
@@ -1239,5 +1264,89 @@ mod tests {
         let e = env(t.path(), "a", "box", "ana");
         pass(&e, &Fake::new(Os::Other, None), false).unwrap();
         assert!(!e.ssh_dir.exists());
+    }
+
+    fn peer(id: &str, alias: &str) -> (Record, String) {
+        (rec(id, alias), "AAAA".into())
+    }
+
+    #[test]
+    fn the_higher_id_moves_on_a_clash_and_the_lower_keeps_its_alias() {
+        let t = tempfile::tempdir().unwrap();
+        let e = env(t.path(), "a", "box", "ana");
+        let p = Fake::new(Os::Other, None);
+        publish(&e, &p, true).unwrap();
+        let id = load_local(&e).id;
+        assert_eq!(read_records(&e)[0].alias, "pc");
+        // Another machine with a lower id holds "pc": this one moves.
+        put_rec(&e, &rec("0", "pc"));
+        publish(&e, &p, true).unwrap();
+        let mine = |e: &Env| read_records(e).into_iter().find(|r| r.id == id).unwrap();
+        assert_eq!(mine(&e).alias, "pc-2");
+        // A second publish changes nothing.
+        let file = own_file(&e, &id);
+        let before = std::fs::read(&file).unwrap();
+        publish(&e, &p, true).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        // A machine with a higher id never takes the name from this one.
+        let t2 = tempfile::tempdir().unwrap();
+        let e2 = env(t2.path(), "b", "box", "ana");
+        put_rec(&e2, &rec("zzzz", "pc"));
+        publish(&e2, &p, true).unwrap();
+        let own = load_local(&e2).id;
+        let r = read_records(&e2).into_iter().find(|r| r.id == own).unwrap();
+        assert_eq!(r.alias, "pc");
+    }
+
+    #[test]
+    fn host_names_are_unique_against_user_hosts_peers_and_lan_names() {
+        let peers = vec![
+            peer("aaaa1111", "pc"),
+            peer("bbbb2222", "pc"),
+            peer("cccc3333", "work"),
+            peer("dddd4444", "pc-lan"),
+            peer("eeee5555", "pc-bbbb"),
+        ];
+        let mine = vec!["work".to_string()];
+        let names = host_names(&peers, &mine);
+        assert_eq!(
+            names,
+            ["pc", "pc-bbbb", "work-cs", "pc-lan-dddd", "pc-bbbb-eeee"]
+        );
+        let mut all: Vec<String> = Vec::new();
+        for n in &names {
+            all.push(n.clone());
+            all.push(format!("{n}-lan"));
+        }
+        all.extend(mine);
+        let mut sorted = all.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), all.len());
+    }
+
+    #[test]
+    fn apply_and_status_show_the_names_that_were_written() {
+        let t = tempfile::tempdir().unwrap();
+        let e = env(t.path(), "a", "box", "ana");
+        let paths = Paths::resolve(
+            Some(t.path().join("claude")),
+            Some(t.path().join("sync")),
+            None,
+        )
+        .unwrap();
+        put_rec(&e, &rec("aaaa1111", "pc"));
+        put_rec(&e, &rec("bbbb2222", "pc"));
+        apply(&e, &Fake::new(Os::Other, None), true).unwrap();
+        let conf = read(e.ssh_dir.join(CONF));
+        assert!(conf.contains("Host pc\n"));
+        assert!(conf.contains("Host pc-bbbb\n"));
+        let names: Vec<String> = status(&paths, &e)
+            .unwrap()
+            .peers
+            .into_iter()
+            .map(|p| p.alias)
+            .collect();
+        assert_eq!(names, ["pc", "pc-bbbb"]);
     }
 }
