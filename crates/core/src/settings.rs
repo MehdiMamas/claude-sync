@@ -522,8 +522,38 @@ pub fn machine_specific(v: &mut Value) {
     {
         remove_at(v, ptr);
     }
+    drop_local_marketplaces(v, false);
     if let Value::Object(m) = v {
         drop_machine_paths(m);
+    }
+}
+
+/// Remove `extraKnownMarketplaces` entries that point at a local folder or file. With
+/// `broken_only`, only those left with no `path` (they make Claude Code warn at start);
+/// otherwise every `directory` or `file` source and every source with an absolute path,
+/// whole, since a local folder can't work on another machine (#171).
+pub fn drop_local_marketplaces(v: &mut Value, broken_only: bool) {
+    let Some(Value::Object(m)) = v.pointer_mut("/extraKnownMarketplaces") else {
+        return;
+    };
+    m.retain(|_, entry| {
+        let src = entry.get("source");
+        let local = src
+            .and_then(|s| s.get("source"))
+            .and_then(Value::as_str)
+            .is_some_and(|k| k == "directory" || k == "file");
+        let has_path = src
+            .and_then(|s| s.get("path"))
+            .is_some_and(Value::is_string);
+        let drop = if broken_only {
+            local && !has_path
+        } else {
+            local || src.is_some_and(mentions_absolute_path)
+        };
+        !drop
+    });
+    if m.is_empty() {
+        remove_at(v, "/extraKnownMarketplaces");
     }
 }
 
@@ -655,6 +685,36 @@ pub(crate) fn filter_blocked(shared: &Value, skipped: &mut Vec<String>) -> Value
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn local_marketplaces_go_whole() {
+        let mut v = json!({"extraKnownMarketplaces": {
+            "dir": {"source": {"source": "directory", "path": "/home/me/x"}},
+            "broken": {"source": {"source": "directory"}},
+            "gh": {"source": {"source": "github", "repo": "o/r"}}
+        }});
+        machine_specific(&mut v);
+        assert_eq!(
+            v,
+            json!({"extraKnownMarketplaces": {"gh": {"source": {"source": "github", "repo": "o/r"}}}})
+        );
+        let mut only_local = json!({"extraKnownMarketplaces": {"dir": {"source": {"source": "file", "path": "C:\\x.json"}}}, "a": 1});
+        machine_specific(&mut only_local);
+        assert_eq!(only_local, json!({"a": 1}));
+    }
+
+    #[test]
+    fn broken_only_keeps_local_marketplaces_with_a_path() {
+        let mut v = json!({"extraKnownMarketplaces": {
+            "dir": {"source": {"source": "directory", "path": "/home/me/x"}},
+            "broken": {"source": {"source": "directory"}}
+        }});
+        drop_local_marketplaces(&mut v, true);
+        assert_eq!(
+            v,
+            json!({"extraKnownMarketplaces": {"dir": {"source": {"source": "directory", "path": "/home/me/x"}}}})
+        );
+    }
 
     fn m(local: Value, shared: Value, prev: &Owned) -> Merged {
         merge(&local, &shared, prev).expect("merge")

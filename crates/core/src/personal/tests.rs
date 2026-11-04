@@ -1882,3 +1882,42 @@ fn jsonl_line_endings_are_unchanged_by_the_index_rule() {
     );
     assert_eq!(Some(r.merged[LOG_PATH].clone()), want);
 }
+
+#[tokio::test]
+async fn local_marketplaces_never_sync_and_broken_ones_are_repaired() {
+    use serde_json::json;
+    let world = FakeGitHub::new();
+    let pc = dev(&world, "ana", "pc", WIN_HOME);
+    pc.set_settings(json!({
+        "theme": "dark",
+        "extraKnownMarketplaces": {
+            "mine": {"source": {"source": "directory", "path": "C:\\Users\\ana\\mine"}},
+            "gh": {"source": {"source": "github", "repo": "ana/gh"}}
+        }
+    }));
+    pc.personal_enable().await.unwrap();
+    let repo = personal_repo(&world, "ana");
+    assert_eq!(
+        repo_settings(&repo)["extraKnownMarketplaces"],
+        json!({"gh": {"source": {"source": "github", "repo": "ana/gh"}}})
+    );
+    // An entry an earlier version wrote with no path goes on the next pass; one with its
+    // path stays.
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    mac.set_settings(json!({"extraKnownMarketplaces": {
+        "broken": {"source": {"source": "directory"}},
+        "local": {"source": {"source": "directory", "path": "/Users/ana/local"}}
+    }}));
+    mac.personal_enable().await.unwrap();
+    mac.sync().await;
+    let m = mac.settings_value();
+    assert!(m["extraKnownMarketplaces"].get("broken").is_none());
+    assert_eq!(
+        m["extraKnownMarketplaces"]["local"]["source"]["path"],
+        "/Users/ana/local"
+    );
+    assert_eq!(
+        m["extraKnownMarketplaces"]["gh"]["source"]["repo"],
+        "ana/gh"
+    );
+}

@@ -179,4 +179,6 @@ pub fn apply(real: &mut Value, old: Option<&Vec<u8>>, new: Option<&Vec<u8>>, ski
             set_at(real, &ptr, v);
         }
     }
+    // An earlier version wrote local marketplaces without their path (#171).
+    settings::drop_local_marketplaces(real, true);
 }

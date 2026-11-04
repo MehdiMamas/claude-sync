@@ -1155,6 +1155,9 @@ impl Engine {
             .backups_dir()
             .join("personal")
             .join(utc_stamp(now_unix()));
+        if !scan.is_held(settings_file::PATH) && self.repair_settings(&backup_root)? {
+            written.push(settings_file::PATH.into());
+        }
         for path in paths {
             let want = merged.get(path);
             if local.get(path) == want || scan.is_held(path) {
@@ -1237,6 +1240,26 @@ impl Engine {
     }
 
     /// Move the real `settings.json` from the view it had to the merged one, with a backup.
+    /// Remove local marketplace entries an earlier version wrote without their path (#171),
+    /// even when nothing else in the synced settings changed. True when the file changed.
+    fn repair_settings(&self, backup_root: &Path) -> crate::Result<bool> {
+        let file = self.paths.claude_home.join("settings.json");
+        let Ok(existing) = std::fs::read(&file) else {
+            return Ok(false);
+        };
+        let Some(mut real) = crate::settings::parse_object(&existing) else {
+            return Ok(false);
+        };
+        let before = real.clone();
+        crate::settings::drop_local_marketplaces(&mut real, true);
+        if real == before {
+            return Ok(false);
+        }
+        write_atomic(&backup_root.join(settings_file::PATH), &existing)?;
+        write_atomic(&file, &crate::settings::to_bytes(&real))?;
+        Ok(true)
+    }
+
     fn write_settings(
         &self,
         old: Option<&Vec<u8>>,
