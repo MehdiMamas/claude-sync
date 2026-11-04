@@ -1921,3 +1921,19 @@ async fn local_marketplaces_never_sync_and_broken_ones_are_repaired() {
         "ana/gh"
     );
 }
+
+#[tokio::test]
+async fn a_path_only_local_marketplace_gets_its_kind_back() {
+    use serde_json::json;
+    let world = FakeGitHub::new();
+    let mac = dev(&world, "ana", "mac", MAC_HOME);
+    mac.set_settings(json!({"extraKnownMarketplaces": {
+        "tracker": {"source": {"path": "/Users/ana/tracker"}}
+    }}));
+    mac.personal_enable().await.unwrap();
+    mac.sync().await;
+    assert_eq!(
+        mac.settings_value()["extraKnownMarketplaces"]["tracker"]["source"],
+        json!({"source": "directory", "path": "/Users/ana/tracker"})
+    );
+}
