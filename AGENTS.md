@@ -39,7 +39,7 @@ The app binary is also the CLI (`app/src-tauri/src/cli.rs`, handled before Tauri
 - On macOS and Linux the release app links `~/.local/bin/claude-sync` to its binary at startup (only if that folder exists and the name is free). Windows has no shim: run the full path of `claude-sync.exe`. Debug builds add no link; run `target/debug/claude-sync`.
 - On Windows the release exe is a GUI program, so PowerShell shows none of its output when you call it directly: pipe it, e.g. `& "$env:LOCALAPPDATA\claude-sync\claude-sync.exe" status --json | Out-String` (#149).
 
-- SSH between your own machines (`crates/core/src/ssh_peers.rs`, architecture §21): the sync loops call `ssh_peers::sync_pass` after personal sync. It edits only the marked block of `~/.ssh/authorized_keys`, `~/.ssh/claude-sync.conf` and the `Include` first line of `~/.ssh/config`; tests inject `Env` and `Probe` and never touch the real `~/.ssh`.
+- SSH between your own machines (`crates/core/src/ssh_peers.rs`, architecture §21): the sync loops call `ssh_peers::sync_pass` after personal sync. It edits only the marked block of `~/.ssh/authorized_keys`, `~/.ssh/claude-sync.conf` and the `Include` first line of `~/.ssh/config`; tests inject `Env` and `Probe` and never touch the real `~/.ssh`. A peer's record may carry a private `lan` IPv4 address: with `nc` on PATH the conf entry falls back to it when Tailscale is down (architecture §21).
 
 ## Conventions
 - One change per PR; paste the commands you ran with exit codes and counts, and name the OS.

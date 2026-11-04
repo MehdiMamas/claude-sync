@@ -129,6 +129,9 @@ async fn execute(paths: &Paths, cmd: Cmd, json: bool) -> Result<String, String> 
             }
             for p in &st.peers {
                 text.push_str(&format!("\n  ssh {}  ({}, {})", p.alias, p.name, p.os));
+                if let Some(l) = &p.lan {
+                    text.push_str(&format!(" lan {l}"));
+                }
             }
             Ok(text)
         }

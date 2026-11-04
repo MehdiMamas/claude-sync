@@ -39,6 +39,10 @@ pub trait Probe {
     /// Create an ed25519 key at `path` (and `path.pub`) without a passphrase.
     fn keygen(&self, path: &Path) -> Result<()>;
     fn os(&self) -> Os;
+    /// This device's private LAN IPv4 address, when it is reachable from the LAN.
+    fn lan_ip(&self) -> Option<String>;
+    /// Whether an executable `nc` is on PATH.
+    fn has_nc(&self) -> bool;
 }
 
 pub struct RealProbe;
@@ -131,6 +135,66 @@ impl Probe for RealProbe {
             _ => Os::Other,
         }
     }
+
+    fn lan_ip(&self) -> Option<String> {
+        // Connecting a UDP socket sends no packet; it only picks the outgoing address.
+        let addr = std::net::UdpSocket::bind("0.0.0.0:0")
+            .and_then(|s| s.connect("1.1.1.1:53").and_then(|()| s.local_addr()))
+            .ok()
+            .map(|a| a.ip());
+        let wsl = std::env::var_os("WSL_DISTRO_NAME").is_some()
+            || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists();
+        lan_from(addr, wsl, self.os())
+    }
+
+    fn has_nc(&self) -> bool {
+        let Some(path) = std::env::var_os("PATH") else {
+            return false;
+        };
+        std::env::split_paths(&path).any(|d| is_executable(&d.join("nc")))
+    }
+}
+
+#[cfg(unix)]
+fn is_executable(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(p: &Path) -> bool {
+    p.is_file()
+}
+
+/// The private block (`10.0.0.0/8`, `172.16.0.0/12` or `192.168.0.0/16`) holding `ip`.
+fn private_block(ip: &str) -> Option<&'static str> {
+    let [a, b, ..] = ip.parse::<std::net::Ipv4Addr>().ok()?.octets();
+    match (a, b) {
+        (10, _) => Some("10.0.0.0/8"),
+        (172, 16..=31) => Some("172.16.0.0/12"),
+        (192, 168) => Some("192.168.0.0/16"),
+        _ => None,
+    }
+}
+
+/// A LAN address as written in a record: canonical IPv4 text in a private block.
+fn valid_lan(s: &str) -> bool {
+    s.parse::<std::net::Ipv4Addr>()
+        .is_ok_and(|ip| ip.to_string() == s)
+        && private_block(s).is_some()
+}
+
+/// The LAN address to publish from what the device reports: none on Windows or inside
+/// WSL (its NAT address is not reachable from the LAN), nor for a non-private or IPv6 address.
+fn lan_from(addr: Option<std::net::IpAddr>, wsl: bool, os: Os) -> Option<String> {
+    if wsl || os == Os::Windows {
+        return None;
+    }
+    let std::net::IpAddr::V4(ip) = addr? else {
+        return None;
+    };
+    let s = ip.to_string();
+    private_block(&s).map(|_| s)
 }
 
 /// Where everything is. Tests point all of it into a temp folder.
@@ -172,6 +236,9 @@ pub struct Record {
     pub host: String,
     pub pubkey: String,
     pub ts: u64,
+    /// The device's private LAN IPv4 address, used when Tailscale is down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lan: Option<String>,
 }
 
 impl Record {
@@ -267,9 +334,13 @@ pub fn parse_key(line: &str) -> Option<String> {
 }
 
 /// One `authorized_keys` line for a peer.
-fn key_line(r: &Record, key: &str) -> String {
+fn key_line(r: &Record, key: &str, lan_block: Option<&str>) -> String {
+    let from = match lan_block {
+        Some(b) => format!("{FROM},{b}"),
+        None => FROM.to_string(),
+    };
     format!(
-        "from=\"{FROM}\",no-agent-forwarding,no-X11-forwarding {key} claude-sync:{}",
+        "from=\"{from}\",no-agent-forwarding,no-X11-forwarding {key} claude-sync:{}",
         r.alias
     )
 }
@@ -475,6 +546,7 @@ pub fn publish(env: &Env, probe: &dyn Probe, on: bool) -> Result<()> {
         host: probe.tailscale_ip().unwrap_or_else(|| env.hostname.clone()),
         pubkey,
         ts: now_unix() * 1000,
+        lan: probe.lan_ip().filter(|l| valid_lan(l)),
     };
     let file = own_file(env, &id);
     let unchanged = std::fs::read(&file)
@@ -495,8 +567,9 @@ fn peers(env: &Env, own_id: &str) -> Vec<(Record, String)> {
         .into_iter()
         .filter(|r| r.id != own_id && valid_alias(&r.alias) && valid_user(&r.user))
         .filter(|r| valid_host(&r.host))
-        .filter_map(|r| {
+        .filter_map(|mut r| {
             let key = parse_key(&r.pubkey)?;
+            r.lan = r.lan.take().filter(|l| valid_lan(l));
             Some((r, key))
         })
         .collect()
@@ -511,7 +584,11 @@ pub fn apply(env: &Env, probe: &dyn Probe, on: bool) -> Result<()> {
 
     if !windows {
         let path = env.ssh_dir.join("authorized_keys");
-        let lines: Vec<String> = list.iter().map(|(r, k)| key_line(r, k)).collect();
+        let lan_block = probe.lan_ip().as_deref().and_then(private_block);
+        let lines: Vec<String> = list
+            .iter()
+            .map(|(r, k)| key_line(r, k, lan_block))
+            .collect();
         let old = read_text(&path)?;
         if old.is_some() || !lines.is_empty() {
             let new = replace_block(
@@ -528,16 +605,36 @@ pub fn apply(env: &Env, probe: &dyn Probe, on: bool) -> Result<()> {
     if on {
         let mine = user_hosts(config.as_deref().unwrap_or(""));
         let mut conf = String::new();
-        for (r, _) in &list {
-            let name = if mine.contains(&r.alias) {
-                format!("{}-cs", r.alias)
-            } else {
-                r.alias.clone()
-            };
+        let names: Vec<String> = list
+            .iter()
+            .map(|(r, _)| {
+                if mine.contains(&r.alias) {
+                    format!("{}-cs", r.alias)
+                } else {
+                    r.alias.clone()
+                }
+            })
+            .collect();
+        let lan_ok = !windows && probe.has_nc();
+        for ((r, _), name) in list.iter().zip(&names) {
             conf.push_str(&format!(
                 "Host {name}\n  HostName {}\n  User {}\n",
                 r.host, r.user
             ));
+            let Some(lan) = r.lan.as_deref().filter(|_| lan_ok) else {
+                continue;
+            };
+            let host = &r.host;
+            conf.push_str(&format!(
+                "  HostKeyAlias {host}\n  ProxyCommand sh -c 'nc -z -w 2 %h %p 2>/dev/null && exec nc %h %p; nc -z -w 2 {lan} %p 2>/dev/null && exec nc {lan} %p; exit 1'\n"
+            ));
+            let lan_name = format!("{name}-lan");
+            if !mine.contains(&lan_name) && !names.contains(&lan_name) {
+                conf.push_str(&format!(
+                    "Host {lan_name}\n  HostName {lan}\n  User {}\n  HostKeyAlias {host}\n",
+                    r.user
+                ));
+            }
         }
         put(&conf_path, &conf)?;
         // Even with no peers yet the file exists (empty) so the Include never dangles.
@@ -567,6 +664,7 @@ pub struct Peer {
     pub os: String,
     pub host: String,
     pub user: String,
+    pub lan: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -590,6 +688,7 @@ pub fn status(paths: &Paths, env: &Env) -> Result<Status> {
                 os: r.os,
                 host: r.host,
                 user: r.user,
+                lan: r.lan,
             })
             .collect(),
     })
@@ -656,6 +755,8 @@ mod tests {
         ip: Option<String>,
         os: Os,
         keygens: Cell<u32>,
+        lan: Option<String>,
+        nc: bool,
     }
 
     impl Fake {
@@ -664,7 +765,17 @@ mod tests {
                 ip: ip.map(str::to_string),
                 os,
                 keygens: Cell::new(0),
+                lan: None,
+                nc: false,
             }
+        }
+        fn lan(mut self, ip: &str) -> Self {
+            self.lan = Some(ip.into());
+            self
+        }
+        fn nc(mut self) -> Self {
+            self.nc = true;
+            self
         }
     }
 
@@ -683,6 +794,12 @@ mod tests {
         }
         fn os(&self) -> Os {
             self.os
+        }
+        fn lan_ip(&self) -> Option<String> {
+            self.lan.clone()
+        }
+        fn has_nc(&self) -> bool {
+            self.nc
         }
     }
 
@@ -706,6 +823,7 @@ mod tests {
             host: "100.64.0.9".into(),
             pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIpeer".into(),
             ts: 1,
+            lan: None,
         }
     }
 
@@ -972,6 +1090,147 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    fn conf_for(os: Os, nc: bool, r: &Record, config: &str) -> String {
+        let t = tempfile::tempdir().unwrap();
+        let e = env(t.path(), "a", "box", "ana");
+        std::fs::create_dir_all(&e.ssh_dir).unwrap();
+        std::fs::write(e.ssh_dir.join("config"), config).unwrap();
+        put_rec(&e, r);
+        let mut p = Fake::new(os, None);
+        p.nc = nc;
+        pass(&e, &p, true).unwrap();
+        read(e.ssh_dir.join(CONF))
+    }
+
+    const PROXY: &str = "  HostKeyAlias 100.64.0.9\n  ProxyCommand sh -c 'nc -z -w 2 %h %p 2>/dev/null && exec nc %h %p; nc -z -w 2 192.168.1.5 %p 2>/dev/null && exec nc 192.168.1.5 %p; exit 1'\n";
+
+    #[test]
+    fn a_peer_lan_gives_a_proxy_command_and_a_lan_host() {
+        let mut r = rec("o", "mac");
+        r.lan = Some("192.168.1.5".into());
+        let conf = conf_for(Os::Other, true, &r, "");
+        assert_eq!(
+            conf,
+            format!(
+                "Host mac\n  HostName 100.64.0.9\n  User ana\n{PROXY}Host mac-lan\n  HostName 192.168.1.5\n  User ana\n  HostKeyAlias 100.64.0.9\n"
+            )
+        );
+        let mac = conf_for(Os::Mac, true, &r, "");
+        assert_eq!(mac, conf);
+    }
+
+    #[test]
+    fn without_nc_or_on_windows_the_entry_is_todays() {
+        let mut r = rec("o", "mac");
+        r.lan = Some("192.168.1.5".into());
+        let today = "Host mac\n  HostName 100.64.0.9\n  User ana\n";
+        assert_eq!(conf_for(Os::Other, false, &r, ""), today);
+        assert_eq!(conf_for(Os::Windows, true, &r, ""), today);
+        assert_eq!(conf_for(Os::Other, true, &rec("o", "mac"), ""), today);
+    }
+
+    #[test]
+    fn a_taken_lan_host_name_is_skipped() {
+        let mut r = rec("o", "mac");
+        r.lan = Some("192.168.1.5".into());
+        let user = conf_for(Os::Other, true, &r, "Host mac-lan\n  User me\n");
+        assert!(user.contains(PROXY) && !user.contains("Host mac-lan"));
+        // Another peer's alias equal to `mac-lan`.
+        let t = tempfile::tempdir().unwrap();
+        let e = env(t.path(), "a", "box", "ana");
+        put_rec(&e, &r);
+        put_rec(&e, &rec("p", "mac-lan"));
+        pass(&e, &Fake::new(Os::Other, None).nc(), true).unwrap();
+        let conf = read(e.ssh_dir.join(CONF));
+        assert_eq!(conf.matches("Host mac-lan\n").count(), 1);
+        assert!(conf.contains("Host mac-lan\n  HostName 100.64.0.9\n"));
+        // A `-cs` rename gives `-cs-lan`.
+        let renamed = conf_for(Os::Other, true, &r, "Host mac\n  User me\n");
+        assert!(renamed.contains("Host mac-cs-lan\n"));
+    }
+
+    #[test]
+    fn bad_lan_values_are_rejected_on_publish_and_dropped_on_read() {
+        for bad in [
+            "192.168.1.1; rm",
+            "192.168.01.1",
+            " 192.168.1.1",
+            "8.8.8.8",
+            "100.64.0.1",
+            "172.32.0.1",
+            "::1",
+        ] {
+            assert!(!valid_lan(bad), "{bad}");
+            let t = tempfile::tempdir().unwrap();
+            let e = env(t.path(), "a", "box", "ana");
+            publish(&e, &Fake::new(Os::Other, None).lan(bad), true).unwrap();
+            assert_eq!(read_records(&e)[0].lan, None, "{bad}");
+            let mut r = rec("o", "mac");
+            r.lan = Some(bad.into());
+            put_rec(&e, &r);
+            let own = load_local(&e).id;
+            let got = peers(&e, &own);
+            assert_eq!(got.len(), 1);
+            assert_eq!(got[0].0.lan, None, "{bad}");
+        }
+        for good in ["10.1.2.3", "172.16.0.1", "172.31.255.1", "192.168.4.10"] {
+            assert!(valid_lan(good), "{good}");
+        }
+    }
+
+    #[test]
+    fn from_gains_the_writers_private_block() {
+        let keys = |lan: Option<&str>| {
+            let t = tempfile::tempdir().unwrap();
+            let e = env(t.path(), "a", "box", "ana");
+            put_rec(&e, &rec("o", "mac"));
+            let mut p = Fake::new(Os::Other, None);
+            p.lan = lan.map(String::from);
+            apply(&e, &p, true).unwrap();
+            read(e.ssh_dir.join("authorized_keys"))
+        };
+        assert!(keys(Some("192.168.4.10")).contains(&format!("from=\"{FROM},192.168.0.0/16\",")));
+        assert!(keys(Some("10.1.2.3")).contains(&format!("from=\"{FROM},10.0.0.0/8\",")));
+        assert!(keys(Some("172.20.1.1")).contains(&format!("from=\"{FROM},172.16.0.0/12\",")));
+        assert!(keys(None).contains(&format!("from=\"{FROM}\",no-agent")));
+        assert_eq!(
+            key_line(&rec("o", "mac"), "ssh-ed25519 K", None),
+            format!("from=\"{FROM}\",no-agent-forwarding,no-X11-forwarding ssh-ed25519 K claude-sync:mac")
+        );
+    }
+
+    #[test]
+    fn lan_serializes_only_when_set() {
+        let r = rec("o", "mac");
+        assert!(!serde_json::to_string(&r).unwrap().contains("lan"));
+        let old = r#"{"id":"o","name":"b","alias":"mac","os":"linux","user":"a","host":"h","pubkey":"k","ts":1}"#;
+        assert_eq!(serde_json::from_str::<Record>(old).unwrap().lan, None);
+        let mut with = r;
+        with.lan = Some("10.0.0.2".into());
+        let back: Record = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+        assert_eq!(back.lan.as_deref(), Some("10.0.0.2"));
+    }
+
+    #[test]
+    fn lan_from_decides_from_what_the_device_reports() {
+        use std::net::IpAddr;
+        let ip = |s: &str| Some(s.parse::<IpAddr>().unwrap());
+        assert_eq!(
+            lan_from(ip("192.168.1.7"), false, Os::Other).as_deref(),
+            Some("192.168.1.7")
+        );
+        assert_eq!(
+            lan_from(ip("10.0.0.7"), false, Os::Mac).as_deref(),
+            Some("10.0.0.7")
+        );
+        assert_eq!(lan_from(ip("192.168.1.7"), false, Os::Windows), None);
+        assert_eq!(lan_from(ip("172.20.0.2"), true, Os::Other), None);
+        assert_eq!(lan_from(ip("8.8.8.8"), false, Os::Other), None);
+        assert_eq!(lan_from(ip("100.64.0.1"), false, Os::Other), None);
+        assert_eq!(lan_from(ip("fd00::1"), false, Os::Other), None);
+        assert_eq!(lan_from(None, false, Os::Other), None);
     }
 
     #[test]
