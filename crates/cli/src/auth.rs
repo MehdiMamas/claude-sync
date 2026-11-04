@@ -204,8 +204,9 @@ pub async fn recover_with(
 /// `recover_with` for the real `gh` command (`gh auth token`, argument list, no shell).
 pub async fn recover_from_gh(paths: &Paths, api: &str, login: &str) -> Result<bool, String> {
     recover_with(paths, api, login, || {
-        let out = std::process::Command::new("gh")
-            .args(["auth", "token"])
+        let mut cmd = std::process::Command::new("gh");
+        cmd.args(["auth", "token"]);
+        let out = claude_sync_core::claude_cli::quiet(&mut cmd)
             .output()
             .ok()?;
         out.status
