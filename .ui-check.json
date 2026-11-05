@@ -1,5 +1,5 @@
 {
-  "start": "pnpm -C app/ui install --frozen-lockfile && pnpm -C app/ui dev",
+  "start": "npx --yes pnpm@9 -C app/ui install --frozen-lockfile && npx --yes pnpm@9 -C app/ui dev",
   "port": 1420,
   "routes": ["/#/settings", "/#/groups"],
   "startTimeoutSeconds": 180
