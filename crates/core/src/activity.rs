@@ -158,11 +158,6 @@ impl Tracker {
             updated_at: now,
         })
     }
-
-    /// Forget the last write (sharing was turned off), so turning it on writes at once.
-    pub fn reset(&mut self) {
-        self.last = None;
-    }
 }
 
 pub fn write(paths: &Paths, w: &Write) -> crate::Result<()> {
@@ -192,6 +187,28 @@ pub fn pass(paths: &Paths, tracker: &mut Tracker, now: u64, idle: impl FnOnce() 
         if let Err(e) = write(paths, &w) {
             tracing::warn!("could not write activity.json: {e}");
         }
+    }
+}
+
+/// The 30 s loop of the app and the daemon. It does nothing but read the choice while
+/// sharing is off. Runs until the task is aborted.
+pub async fn run_loop(paths: Paths) {
+    let mut tracker = Tracker::default();
+    loop {
+        let p = paths.clone();
+        match tokio::task::spawn_blocking(move || {
+            pass(&p, &mut tracker, crate::state::now_unix(), idle_seconds);
+            tracker
+        })
+        .await
+        {
+            Ok(t) => tracker = t,
+            Err(e) => {
+                tracing::error!("activity pass failed: {e}");
+                tracker = Tracker::default();
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(READ_EVERY_SECS)).await;
     }
 }
 
