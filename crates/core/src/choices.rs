@@ -9,6 +9,7 @@
 //!                                "droppedLines": ["a line"], "member": true, "ts": 1760000000000 } },
 //!   "personal": { "off": true, "ts": 1760000000000 },
 //!   "sshPeers": { "on": true, "ts": 1760000000000 },
+//!   "activity": { "share": true, "ts": 1760000000000 },
 //!   "order": { "list": ["owner/repo"], "ts": 1760000000000 },
 //!   "app": { "paused": false, "intervalSecs": 60, "startAtLogin": true, "ts": 1760000000000 } }
 //! ```
@@ -97,6 +98,15 @@ pub struct SshPeersChoice {
     pub ts: u64,
 }
 
+/// Share whether you are at the computer (`activity.rs`), on every device of the account.
+/// Off until you turn it on.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ActivityChoice {
+    pub share: bool,
+    pub ts: u64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Choices {
@@ -104,6 +114,7 @@ pub struct Choices {
     pub personal: PersonalChoice,
     #[serde(rename = "sshPeers")]
     pub ssh_peers: SshPeersChoice,
+    pub activity: ActivityChoice,
     pub order: Order,
     pub app: AppChoice,
     /// Keys a newer version wrote are kept.
@@ -262,6 +273,17 @@ pub fn set_ssh_peers(paths: &Paths, on: bool) -> crate::Result<Choices> {
     Ok(c)
 }
 
+/// Turn sharing your activity on (or off) for every device.
+pub fn set_activity(paths: &Paths, share: bool) -> crate::Result<Choices> {
+    let mut c = load(paths)?;
+    c.activity = ActivityChoice {
+        share,
+        ts: stamp(c.activity.ts),
+    };
+    write_json(&file(paths), &c)?;
+    Ok(c)
+}
+
 /// A group moved to a new `owner/repo`: its choices move with it.
 pub fn rename_group(paths: &Paths, old: &GroupId, new: &GroupId) -> crate::Result<()> {
     let mut c = load(paths)?;
@@ -292,6 +314,9 @@ pub fn merge(local: &[u8], remote: &[u8]) -> Option<Vec<u8>> {
     }
     if l.ssh_peers.ts > out.ssh_peers.ts {
         out.ssh_peers = l.ssh_peers;
+    }
+    if l.activity.ts > out.activity.ts {
+        out.activity = l.activity;
     }
     if l.order.ts > out.order.ts {
         out.order = l.order;
@@ -437,6 +462,37 @@ mod tests {
         )
         .unwrap();
         assert!(!out.ssh_peers.on, "remote is newer");
+    }
+
+    #[test]
+    fn activity_is_off_by_default_and_keeps_unknown_keys() {
+        let (_t, p) = paths();
+        assert!(!load(&p).unwrap().activity.share);
+        std::fs::create_dir_all(file(&p).parent().unwrap()).unwrap();
+        std::fs::write(file(&p), br#"{"future":{"x":1}}"#).unwrap();
+        let c = set_activity(&p, true).unwrap();
+        assert!(c.activity.share && c.activity.ts > 0);
+        let back = load(&p).unwrap();
+        assert!(back.activity.share);
+        assert_eq!(back.extra["future"]["x"], 1);
+        assert!(!set_activity(&p, false).unwrap().activity.share);
+    }
+
+    #[test]
+    fn activity_merges_by_its_own_ts() {
+        let mk = |share: bool, ts: u64| {
+            let c = Choices {
+                activity: ActivityChoice { share, ts },
+                ..Default::default()
+            };
+            serde_json::to_vec(&c).unwrap()
+        };
+        let out: Choices =
+            serde_json::from_slice(&merge(&mk(true, 5), &mk(false, 3)).unwrap()).unwrap();
+        assert!(out.activity.share, "local is newer");
+        let out: Choices =
+            serde_json::from_slice(&merge(&mk(true, 2), &mk(false, 3)).unwrap()).unwrap();
+        assert!(!out.activity.share, "remote is newer");
     }
 
     #[test]
