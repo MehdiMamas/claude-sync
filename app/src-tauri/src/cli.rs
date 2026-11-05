@@ -1,5 +1,5 @@
 //! The command line (docs/architecture.md §11a): `claude-sync status` and
-//! `claude-sync personal enable|disable|status` and `claude-sync ssh enable|disable|status|alias <name>`. Handled before Tauri starts, like
+//! `claude-sync personal enable|disable|status` and `claude-sync ssh enable|disable|status|alias <name>` and `claude-sync activity enable|disable|status`. Handled before Tauri starts, like
 //! `run-job`, and calling the same core functions as the Settings screen.
 use crate::ctx::{now_unix, Ctx};
 use crate::guard;
@@ -10,9 +10,9 @@ use claude_sync_core::Paths;
 pub const REFRESH_ARG: &str = "--refresh";
 
 /// Subcommands this module handles.
-pub const COMMANDS: [&str; 3] = ["status", "personal", "ssh"];
+pub const COMMANDS: [&str; 4] = ["status", "personal", "ssh", "activity"];
 
-const USAGE: &str = "usage: claude-sync status [--json]\n       claude-sync personal enable|disable|status [--json]\n       claude-sync ssh enable|disable|status|alias <name> [--json]";
+const USAGE: &str = "usage: claude-sync status [--json]\n       claude-sync personal enable|disable|status [--json]\n       claude-sync ssh enable|disable|status|alias <name> [--json]\n       claude-sync activity enable|disable|status [--json]";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Cmd {
@@ -21,6 +21,14 @@ pub enum Cmd {
     PersonalEnable,
     PersonalDisable,
     Ssh(Ssh),
+    Activity(Activity),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Activity {
+    Status,
+    Enable,
+    Disable,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -48,6 +56,9 @@ pub fn parse(args: &[String]) -> Result<(Cmd, bool), &'static str> {
         ["ssh", "enable"] => Cmd::Ssh(Ssh::Enable),
         ["ssh", "disable"] => Cmd::Ssh(Ssh::Disable),
         ["ssh", "alias", name] => Cmd::Ssh(Ssh::Alias((*name).into())),
+        ["activity", "status"] => Cmd::Activity(Activity::Status),
+        ["activity", "enable"] => Cmd::Activity(Activity::Enable),
+        ["activity", "disable"] => Cmd::Activity(Activity::Disable),
         _ => return Err(USAGE),
     };
     Ok((cmd, json))
@@ -134,6 +145,26 @@ async fn execute(paths: &Paths, cmd: Cmd, json: bool) -> Result<String, String> 
                 }
             }
             Ok(text)
+        }
+        Cmd::Activity(a) => {
+            use claude_sync_core::{activity, choices};
+            // The running app and the daemon read the choice every 30 seconds.
+            let c = match a {
+                Activity::Enable => choices::set_activity(paths, true),
+                Activity::Disable => choices::set_activity(paths, false),
+                Activity::Status => choices::load(paths),
+            }
+            .map_err(|e| e.to_string())?;
+            if !c.activity.share {
+                activity::remove(paths);
+            }
+            if json {
+                return Ok(serde_json::json!({ "share": c.activity.share }).to_string());
+            }
+            Ok(format!(
+                "Sharing your activity is {}.",
+                if c.activity.share { "on" } else { "off" }
+            ))
         }
         Cmd::PersonalStatus | Cmd::PersonalEnable | Cmd::PersonalDisable => {
             let engine = ctx.engine()?;
@@ -286,6 +317,11 @@ mod tests {
             parse(&v(&["ssh", "enable"])),
             Ok((Cmd::Ssh(Ssh::Enable), false))
         );
+        assert_eq!(
+            parse(&v(&["activity", "enable", "--json"])),
+            Ok((Cmd::Activity(Activity::Enable), true))
+        );
+        assert!(parse(&v(&["activity"])).is_err());
         assert!(parse(&v(&["ssh"])).is_err());
         assert!(parse(&v(&["ssh", "alias"])).is_err());
         assert!(parse(&v(&["personal"])).is_err());

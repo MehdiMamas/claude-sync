@@ -536,3 +536,14 @@ Opt-in and personal: `sshPeers` `{on, ts}` in the choices file (§16a), merged b
 - **Service.** `service install` writes `~/.config/systemd/user/claude-sync.service` (`Restart=on-failure`) when systemd runs, otherwise crontab lines `@reboot` and `*/5 * * * *`.
 - **Adopting an existing setup.** `join` backs up `CLAUDE.md` and strips group text pasted outside the managed block before the first sync delivers it.
 - **Release.** `release.yml` builds `claude-sync-cli-<target>` for Linux (x86_64, aarch64), macOS (both) and Windows, with `.sha256` files; `update` checks the relay and downloads from the public release.
+
+## 22. Sharing whether you are at the computer (issue #195, step 1)
+
+Opt-in and personal: `activity` `{share, ts}` in the choices file (§16a), off by default, merged by its own `ts`. Step 1 is local only: nothing is sent between machines (that is step 2).
+
+- **Reader** (`core::activity::idle_seconds`): seconds since the last keyboard or mouse input, by direct OS calls. Windows: `GetLastInputInfo` and `GetTickCount` (wrapping subtraction). macOS: IOKit `IOHIDSystem` property `HIDIdleTime` (nanoseconds). Other systems: `None`, written as `unknown`, never as idle.
+- **State machine** (`activity::Tracker`, pure, clock and reading passed in): `active` below 120 s idle, `idle` from 120 s, `unknown` with no reading. It asks for a write on a change of state or after 300 s without one.
+- **File** `<state>/activity.json`: `{schema: 1, state, idleSeconds, updatedAt}`. Removed when sharing is off.
+- **Loop** (`activity::run_loop`): one pass every 30 s in the app (`background::start`) and in the daemon. A pass reads the choice first; off means the file is removed and no OS call is made. Idle cost: one OS call per 30 s, 0 to 12 small local writes per hour, no network.
+- **Settings:** the row "Share activity and presence" (`app/ui/src/screens/settings.ts`); the consent copy and the decision logic are in `app/ui/src/activity-consent.ts`. Commands `get_activity` and `set_activity`.
+- **Command line:** `claude-sync activity status|enable|disable` (app binary) and `claude-sync-cli activity status|enable|disable`.

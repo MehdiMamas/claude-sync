@@ -5,6 +5,7 @@ import { coverageLines } from "../copy";
 import { api, errorText, type Settings } from "../api";
 import { busy, errorBox, h, replace, spinner, toast } from "../dom";
 import { onRefresh, store } from "../store";
+import { ACTIVITY_COPY, decide, statusText } from "../activity-consent";
 import { forgetHelperState } from "./helper";
 import { personalCard } from "./personal";
 
@@ -74,6 +75,50 @@ function helperCard(): HTMLElement {
       "Uses your Claude Code login on this computer. It adds Explain and Summarise buttons for conflicts, CLAUDE.md changes and group activity. Nothing is sent until you click one. Text with a secret in it is never sent.",
     ),
     status,
+  );
+}
+
+/** "Share activity and presence": off by default; the consent dialog comes before it turns on. */
+function activityCard(): HTMLElement {
+  const status = h("strong", { role: "status" }, statusText(false));
+  const toggle = h("button", { type: "button" }, ACTIVITY_COPY.turnOn);
+  const dialog = h("dialog", { class: "consent", "aria-labelledby": "activity-consent-h" });
+  const show = (on: boolean) => {
+    status.textContent = statusText(on);
+    toggle.textContent = on ? ACTIVITY_COPY.turnOff : ACTIVITY_COPY.turnOn;
+  };
+  const apply = (on: boolean) =>
+    api.setActivity(on).then(
+      (v) => show(v.share),
+      (e) => toast(errorText(e), "error"),
+    );
+  const yes = h("button", { type: "button", class: "primary" }, ACTIVITY_COPY.turnOn);
+  const no = h("button", { type: "button" }, ACTIVITY_COPY.notNow);
+  yes.addEventListener("click", () => {
+    dialog.close();
+    void apply(decide(false, "turnOn"));
+  });
+  no.addEventListener("click", () => dialog.close());
+  dialog.append(
+    h("h2", { id: "activity-consent-h" }, ACTIVITY_COPY.heading),
+    ...ACTIVITY_COPY.paragraphs.map((t) => h("p", null, t)),
+    h("div", { class: "actions" }, yes, no),
+  );
+  toggle.addEventListener("click", () => {
+    if (status.textContent === "On") void apply(decide(true, "turnOff"));
+    else dialog.showModal();
+  });
+  api.getActivity().then(
+    (v) => show(v.share),
+    (e) => toast(errorText(e), "error"),
+  );
+  return h(
+    "section",
+    { class: "card", "aria-labelledby": "activity-h" },
+    h("h2", { id: "activity-h" }, ACTIVITY_COPY.label),
+    h("p", { class: "muted small" }, "Whether you are at this computer, from the seconds since the last mouse or keyboard input."),
+    h("div", { class: "actions" }, status, toggle),
+    dialog,
   );
 }
 
@@ -197,6 +242,7 @@ function form(s: Settings): HTMLElement[] {
       h("div", { class: "check" }, paused, h("label", { for: "s-paused" }, "Pause syncing")),
     ),
     personal.card,
+    activityCard(),
     h(
       "section",
       { class: "card", "aria-labelledby": "notify-h" },

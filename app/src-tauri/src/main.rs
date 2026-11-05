@@ -181,6 +181,8 @@ fn main() {
             commands::copy_preview,
             commands::copy_to_group,
             commands::sync_now,
+            commands::get_activity,
+            commands::set_activity,
             commands::get_settings,
             commands::set_settings,
             commands::notifications,

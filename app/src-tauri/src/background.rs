@@ -24,6 +24,10 @@ pub fn start(app: &AppHandle) {
     tauri::async_runtime::spawn(async move { update_loop(a).await });
     let a = app.clone();
     tauri::async_runtime::spawn(async move { requests_loop(a).await });
+    // Reads the idle time every 30 s, and only while sharing activity is on.
+    tauri::async_runtime::spawn(claude_sync_core::activity::run_loop(
+        app.state::<Arc<Ctx>>().paths.clone(),
+    ));
     start_watcher(app);
 }
 
