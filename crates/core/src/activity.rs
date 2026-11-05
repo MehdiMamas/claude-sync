@@ -88,8 +88,7 @@ mod os {
             };
             let mut ns: i64 = 0;
             let ok = !value.is_null()
-                && CFNumberGetValue(value as CFNumberRef, SINT64, (&mut ns as *mut i64).cast())
-                    != 0;
+                && CFNumberGetValue(value as CFNumberRef, SINT64, (&mut ns as *mut i64).cast());
             if !value.is_null() {
                 CFRelease(value);
             }
