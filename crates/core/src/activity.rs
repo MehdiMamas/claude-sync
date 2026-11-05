@@ -53,7 +53,7 @@ mod os {
 
     type Port = u32;
     const UTF8: u32 = 0x0800_0100;
-    const SINT64: isize = 4;
+    const SINT64: u32 = 4;
 
     #[link(name = "IOKit", kind = "framework")]
     extern "C" {
