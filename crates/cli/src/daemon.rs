@@ -140,6 +140,14 @@ fn now_unix() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// Sync every poll interval until `shutdown` completes. The token file is read again at
 /// every pass, so `login` and `logout` take effect without a restart.
 pub async fn run(paths: &Paths, hooks: Arc<dyn Hooks>, shutdown: impl Future<Output = ()>) {
@@ -149,6 +157,9 @@ pub async fn run(paths: &Paths, hooks: Arc<dyn Hooks>, shutdown: impl Future<Out
     let mut personal_checked = false;
     let mut expired_logged = false;
     tracing::info!("daemon started, version {}", config::VERSION);
+    // Idle only while the choice is off; it reads the choice every pass.
+    let activity = tokio::spawn(claude_sync_core::activity::run_loop(paths.clone()));
+    let _stop_activity = AbortOnDrop(activity);
     loop {
         let wait = match auth::standing(paths) {
             Ok(Standing::In(signed)) => {

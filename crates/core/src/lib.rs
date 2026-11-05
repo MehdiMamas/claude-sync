@@ -1,6 +1,7 @@
 //! claude-sync core: GitHub client, group format, sync engine, apply layer.
 //! Design: docs/architecture.md. Section numbers below (§N) refer to it.
 
+pub mod activity;
 pub mod apply;
 pub mod choices;
 pub mod claude_cli;

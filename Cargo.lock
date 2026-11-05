@@ -735,6 +735,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "core-foundation-sys",
  "ignore",
  "keyring",
  "libc",
@@ -753,6 +754,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
  "wiremock",
 ]
 

@@ -1135,3 +1135,15 @@ li.clash p {
 .helper-out.error {
   border-left-color: var(--danger, #c0392b);
 }
+
+dialog.consent {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  max-width: min(32rem, calc(100vw - 2rem));
+}
+dialog.consent::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}

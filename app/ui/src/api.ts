@@ -270,6 +270,10 @@ export interface Settings {
   /** Sign in with the GitHub App instead of the OAuth app (takes effect at next sign-in). */
   githubApp: boolean;
 }
+/** Sharing whether you are at the computer. Off until turned on. */
+export interface ActivityView {
+  share: boolean;
+}
 /** Which group repos the GitHub App can reach. */
 export interface Coverage {
   covered: GroupId[];
@@ -528,6 +532,8 @@ export const api = {
   editClaudeMdLine: (source: ClashSource, line: string, text: string) => call<void>("edit_claude_md_line", { source, line, text }),
   copyPreview: (from: GroupId, to: GroupId) => call<CopyPreview>("copy_preview", { from, to }),
   copyToGroup: (from: GroupId, to: GroupId, request: CopyRequest) => call<Copied>("copy_to_group", { from, to, request }),
+  getActivity: () => call<ActivityView>("get_activity"),
+  setActivity: (share: boolean) => call<ActivityView>("set_activity", { share }),
   getSettings: () => call<Settings>("get_settings"),
   setSettings: (settings: Partial<Settings>) => call<Settings>("set_settings", { settings }),
   helperStatus: () => call<HelperStatus>("helper_status"),

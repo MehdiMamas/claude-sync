@@ -829,6 +829,32 @@ pub fn set_settings(app: AppHandle, ctx: CtxState, settings: SettingsPatch) -> R
     Ok(settings_of(&app, &ctx))
 }
 
+#[derive(Serialize)]
+pub struct ActivityView {
+    share: bool,
+}
+
+/// Whether sharing your activity (at the computer or not) is on. Off until you turn it on.
+#[tauri::command]
+pub fn get_activity(ctx: CtxState) -> Res<ActivityView> {
+    let c =
+        claude_sync_core::choices::load(&ctx.paths).map_err(guard::logged("read the choices"))?;
+    Ok(ActivityView {
+        share: c.activity.share,
+    })
+}
+
+/// Turn sharing on or off. Off deletes the value on this machine at once.
+#[tauri::command]
+pub fn set_activity(ctx: CtxState, share: bool) -> Res<ActivityView> {
+    claude_sync_core::choices::set_activity(&ctx.paths, share)
+        .map_err(guard::logged("save the activity choice"))?;
+    if !share {
+        claude_sync_core::activity::remove(&ctx.paths);
+    }
+    Ok(ActivityView { share })
+}
+
 /// Which of this device's group repos the GitHub App can reach (issue #39).
 #[tauri::command]
 pub async fn app_coverage(app: AppHandle) -> Res<claude_sync_core::github::Coverage> {

@@ -72,6 +72,7 @@ let notifications: Notification[] = q.has("noNotifications")
 let nextNotification = 7;
 let desktopNotifications = true;
 let githubApp = false;
+let activityShare = false;
 const helperStatus = () => ({ available: q.has("helper") });
 const notificationListeners: ((p: Events["notifications-changed"]) => void)[] = [];
 function notificationsChanged(): void {
@@ -551,6 +552,11 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   },
   open_url: (a) => {
     window.open(String(a.url), "_blank", "noopener");
+  },
+  get_activity: () => ({ share: activityShare }),
+  set_activity: (a) => {
+    activityShare = Boolean(a.share);
+    return { share: activityShare };
   },
   get_settings: () => ({ deviceName: "desktop", pollSeconds: 60, autostart: true, paused: false, desktopNotifications, githubApp }),
   set_settings: (a) => {

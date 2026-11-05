@@ -1,5 +1,5 @@
 //! The commands. Each returns the text for a person and the value for `--json`.
-use crate::args::{Cmd, Personal, Review, Service, Ssh};
+use crate::args::{Activity, Cmd, Personal, Review, Service, Ssh};
 use crate::auth::{self, Hosts, Standing};
 use crate::daemon;
 use crate::jobs::{Hooks, RealHooks};
@@ -61,6 +61,7 @@ pub async fn execute(paths: &Paths, cmd: Cmd) -> Result<Out, String> {
         Cmd::Status => status(paths).await,
         Cmd::Personal(p) => personal(paths, p).await,
         Cmd::Ssh(s) => ssh(paths, s),
+        Cmd::Activity(a) => activity(paths, a),
         Cmd::Review(r) => review_cmd(paths, r).await,
         Cmd::Service(s) => {
             let text = match s {
@@ -311,6 +312,28 @@ fn ssh(paths: &Paths, s: Ssh) -> Result<Out, String> {
     Ok(Out::new(
         text,
         serde_json::to_value(&st).map_err(|e| e.to_string())?,
+    ))
+}
+
+/// Share whether you are at the computer. These set the choice; the loop does the rest.
+fn activity(paths: &Paths, a: Activity) -> Result<Out, String> {
+    use claude_sync_core::choices;
+    let c = match a {
+        Activity::Enable => choices::set_activity(paths, true),
+        Activity::Disable => choices::set_activity(paths, false),
+        Activity::Status => choices::load(paths),
+    }
+    .map_err(|e| e.to_string())?;
+    if !c.activity.share {
+        claude_sync_core::activity::remove(paths);
+    }
+    let share = c.activity.share;
+    Ok(Out::new(
+        format!(
+            "Sharing your activity is {}.",
+            if share { "on" } else { "off" }
+        ),
+        json!({ "share": share }),
     ))
 }
 
