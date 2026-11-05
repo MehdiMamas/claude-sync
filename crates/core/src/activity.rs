@@ -96,7 +96,7 @@ mod os {
                 CFRelease(key.cast());
             }
             IOObjectRelease(service);
-            (ok && ns >= 0).then(|| ns as u64 / 1_000_000_000)
+            (ok && ns >= 0).then_some(ns as u64 / 1_000_000_000)
         }
     }
 }
