@@ -44,7 +44,7 @@ beforeEach(() => {
   resetAuthCache();
   resetUpdateCache();
   fm = mockFetch();
-  mockUser(fm, "MehdiMamas");
+  mockUser(fm, "alice");
   fm.on("GET", `${REPO}/releases/latest`, release("v0.3.0", FULL));
   fm.on("GET", `${REPO}/releases/assets/101`, new Response(SIG_WIN + "\n"));
   fm.on("GET", `${REPO}/releases/assets/103`, new Response(SIG_MAC));
