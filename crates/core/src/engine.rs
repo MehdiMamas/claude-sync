@@ -2253,15 +2253,34 @@ fn remove_file_if_exists(file: &Path) -> crate::Result<()> {
 }
 
 /// `<dir>/head.json` and `<dir>/files/<path>`.
+///
+/// A snapshot that cannot be read (a write cut by a restart leaves empty files) is not an
+/// error: `base.old` is tried next, then the folder is kept as `base.broken` and the base is
+/// empty, so the next sync fetches the group again.
 pub(crate) fn load_base_dir(dir: &Path) -> crate::Result<Base> {
-    let dir = dir.to_path_buf();
     // `base.old` only survives a crash in the middle of `save_base`.
-    let dir = [dir.clone(), dir.with_extension("old")]
-        .into_iter()
-        .find(|d| d.join("head.json").is_file());
-    let Some(dir) = dir else {
-        return Ok(Base::default());
-    };
+    let mut last = None;
+    for d in [dir.to_path_buf(), dir.with_extension("old")] {
+        if !d.join("head.json").is_file() {
+            continue;
+        }
+        match read_base_dir(&d) {
+            Ok(base) => return Ok(base),
+            Err(e) => last = Some(e),
+        }
+    }
+    if let Some(e) = last {
+        tracing::warn!(error = %e, "the base snapshot is unreadable; keeping it as base.broken and fetching the group again");
+        let broken = dir.with_extension("broken");
+        // A failed rename must not keep the sync stuck: the empty base is returned anyway.
+        if remove_dir_if_exists(&broken).is_ok() {
+            let _ = std::fs::rename(dir, &broken);
+        }
+    }
+    Ok(Base::default())
+}
+
+fn read_base_dir(dir: &Path) -> crate::Result<Base> {
     let head: Head = serde_json::from_slice(&std::fs::read(dir.join("head.json"))?)?;
     let files = match read_tree(&dir.join("files")) {
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => FileSet::new(),
@@ -2278,7 +2297,9 @@ pub(crate) fn save_base_dir(dir: &Path, base: &Base) -> crate::Result<()> {
     for (path, bytes) in &base.files {
         let file = join_rel(&new.join("files"), path);
         std::fs::create_dir_all(file.parent().expect("has a parent"))?;
-        std::fs::write(file, bytes)?;
+        let mut f = std::fs::File::create(file)?;
+        std::io::Write::write_all(&mut f, bytes)?;
+        f.sync_all()?;
     }
     write_json(&new.join("head.json"), &base.head)?;
     remove_dir_if_exists(&old)?;
@@ -4815,5 +4836,156 @@ Use tabs.
         bo.engine.revert_commit(&id, &target).await.unwrap();
         assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
         assert_eq!(repo.file("skills/x/SKILL.md").unwrap(), "x\n");
+    }
+
+    fn sample_base(commit: &str) -> Base {
+        let mut files = FileSet::new();
+        files.insert("agents/a.md".into(), b"base\n".to_vec());
+        Base {
+            head: Head {
+                commit: commit.into(),
+                tree: "t".into(),
+                date: None,
+                etag: None,
+            },
+            files,
+        }
+    }
+
+    /// A base dir whose `head.json` was cut to 0 bytes, under a temp folder.
+    fn cut_base(t: &tempfile::TempDir) -> PathBuf {
+        let dir = t.path().join("base");
+        save_base_dir(&dir, &sample_base("c1")).unwrap();
+        std::fs::write(dir.join("head.json"), b"").unwrap();
+        dir
+    }
+
+    #[test]
+    fn an_empty_head_loads_the_old_base() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = cut_base(&t);
+        // The state a crash between the two renames of a save leaves.
+        let old = dir.with_extension("old");
+        save_base_dir(&old, &sample_base("c0")).unwrap();
+        let got = load_base_dir(&dir).unwrap();
+        assert_eq!(got.head.commit, "c0");
+        assert_eq!(got.files["agents/a.md"], b"base\n");
+    }
+
+    #[test]
+    fn an_empty_head_counts_as_no_base_and_is_kept() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = cut_base(&t);
+        let got = load_base_dir(&dir).unwrap();
+        assert!(got.files.is_empty() && got.head.commit.is_empty());
+        assert!(!dir.exists());
+        assert!(dir.with_extension("broken").join("head.json").is_file());
+        // Saving afterwards works and loads back.
+        save_base_dir(&dir, &sample_base("c2")).unwrap();
+        assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c2");
+    }
+
+    #[test]
+    fn a_garbage_head_counts_as_no_base() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = cut_base(&t);
+        std::fs::write(dir.join("head.json"), b"{\"commit\": \"c1\", ").unwrap();
+        assert!(load_base_dir(&dir).unwrap().files.is_empty());
+        assert!(dir.with_extension("broken").is_dir());
+    }
+
+    #[test]
+    fn an_unreadable_files_tree_counts_as_no_base() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("base");
+        save_base_dir(&dir, &sample_base("c1")).unwrap();
+        // `files` is a plain file, so the tree cannot be listed.
+        std::fs::remove_dir_all(dir.join("files")).unwrap();
+        std::fs::write(dir.join("files"), b"x").unwrap();
+        assert!(load_base_dir(&dir).unwrap().files.is_empty());
+        assert!(dir.with_extension("broken").is_dir());
+    }
+
+    #[test]
+    fn a_good_base_loads_unchanged() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("base");
+        save_base_dir(&dir, &sample_base("c1")).unwrap();
+        let got = load_base_dir(&dir).unwrap();
+        assert_eq!(got.head.commit, "c1");
+        assert_eq!(got.files.len(), 1);
+        assert!(!dir.with_extension("broken").exists());
+    }
+
+    #[test]
+    fn a_cut_save_leaves_the_old_base_loadable() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("base");
+        save_base_dir(&dir, &sample_base("c1")).unwrap();
+        // A save cut after the files were written, before the head and the swap.
+        let new = dir.with_extension("new");
+        std::fs::create_dir_all(new.join("files")).unwrap();
+        std::fs::write(new.join("files").join("x.md"), b"half").unwrap();
+        assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c1");
+        assert!(!dir.with_extension("broken").exists());
+    }
+
+    #[test]
+    fn a_failed_rename_to_broken_still_gives_an_empty_base() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = cut_base(&t);
+        // `base.broken` is a file, so it cannot be replaced by the folder.
+        std::fs::write(dir.with_extension("broken"), b"x").unwrap();
+        let got = load_base_dir(&dir).unwrap();
+        assert!(got.files.is_empty());
+        assert!(dir.is_dir(), "left where it was");
+    }
+
+    #[test]
+    fn read_base_file_ignores_an_empty_head() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            claude_home: t.path().join("claude"),
+            state_dir: t.path().join("state"),
+        };
+        let id = GroupId::new("ana", group::DEFAULT_REPO);
+        let dir = paths.base_dir(&id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("head.json"), b"").unwrap();
+        assert_eq!(read_base_file(&paths, &id, "schedules.json").unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn sync_recovers_from_an_empty_base() {
+        let (_, id, repo, bo) = joined_host().await;
+        let base = bo.engine.paths.base_dir(&id);
+        std::fs::write(base.join("head.json"), b"").unwrap();
+        for entry in std::fs::read_dir(base.join("files")).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_file() {
+                std::fs::write(p, b"").unwrap();
+            }
+        }
+        bo.engine.sync_all().await.unwrap();
+        assert!(base.with_extension("broken").is_dir());
+        assert_eq!(bo.engine.load_base(&id).unwrap().head, repo.current_head());
+    }
+
+    #[tokio::test]
+    async fn an_empty_base_keeps_a_local_edit_and_a_local_delete() {
+        let (_, id, repo, bo) = joined_host().await;
+        let before = commit_count(&repo);
+        bo.apply.edit(&id, "agents/a.md", "mine\n");
+        bo.apply.delete(&id, group::SHARED_SETTINGS);
+        let base = bo.engine.paths.base_dir(&id);
+        std::fs::write(base.join("head.json"), b"").unwrap();
+        bo.engine.sync_all().await.unwrap();
+        assert!(base.with_extension("broken").is_dir());
+        assert_eq!(commit_count(&repo), before, "nothing pushed");
+        println!(
+            "edit={:?} delete={:?}",
+            bo.apply.file(&id, "agents/a.md"),
+            bo.apply.file(&id, group::SHARED_SETTINGS)
+        );
     }
 }

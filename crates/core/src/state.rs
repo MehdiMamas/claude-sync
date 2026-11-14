@@ -44,10 +44,16 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> crate::Result<()> {
     std::fs::create_dir_all(dir)?;
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    std::fs::write(&tmp, bytes)?;
+    let mut f = std::fs::File::create(&tmp)?;
+    std::io::Write::write_all(&mut f, bytes)?;
+    f.sync_all()?;
+    drop(f);
     std::fs::rename(&tmp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })?;
+    // Make the rename itself durable. A folder cannot be opened this way on Windows.
+    #[cfg(unix)]
+    std::fs::File::open(dir)?.sync_all()?;
     Ok(())
 }
 
