@@ -5171,13 +5171,45 @@ Use tabs.
         assert!(!left.contains(&"base.broken".to_string()));
     }
 
+    /// Run `f` and return what it logged at WARN or above, one line per event.
+    fn warnings(f: impl FnOnce()) -> Vec<String> {
+        use std::sync::{Arc, Mutex};
+        struct W(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for W {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let b = buf.clone();
+        let sub = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(move || W(b.clone()))
+            .finish();
+        tracing::subscriber::with_default(sub, f);
+        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        out.lines().map(str::to_string).collect()
+    }
+
     #[test]
     fn a_failed_folder_sync_does_not_fail_the_save() {
         let t = tempfile::tempdir().unwrap();
         let dir = t.path().join("base");
         save_base_dir(&dir, &sample_base("c1")).unwrap();
         let fail = |_: &Path| Err(std::io::Error::other("EINVAL"));
-        save_base_dir_with(&dir, &sample_base("c2"), &fail).unwrap();
+        let logged = warnings(|| save_base_dir_with(&dir, &sample_base("c2"), &fail).unwrap());
+        assert!(!logged.is_empty(), "the failure is logged");
+        assert!(
+            logged
+                .iter()
+                .all(|l| l.contains("could not sync the folder") && l.contains("EINVAL")),
+            "{logged:?}"
+        );
         assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c2");
         assert!(!dir.with_extension("old").exists(), "cleanup ran");
         assert!(!dir.with_extension("new").exists());
@@ -5190,7 +5222,11 @@ Use tabs.
         let old = dir.with_extension("old");
         std::fs::create_dir(&old).unwrap();
         std::fs::write(old.join("head.json"), b"").unwrap();
-        let got = load_base_dir(&dir).unwrap();
+        let mut got = None;
+        let logged = warnings(|| got = Some(load_base_dir(&dir).unwrap()));
+        let got = got.unwrap();
+        assert_eq!(logged.len(), 1, "exactly one warning: {logged:?}");
+        assert!(logged[0].contains("the base snapshot is unreadable"));
         assert!(got.files.is_empty() && got.head.commit.is_empty());
         assert!(!dir.exists() && !old.exists());
         assert!(dir.with_extension("broken").join("head.json").is_file());
