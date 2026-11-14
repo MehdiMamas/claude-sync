@@ -14,16 +14,16 @@ import { groupKey, type Backend, Clash, ClashSide, ClashSource, ClaudeMdReview, 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
 let signedIn = !q.has("signedOut") && !q.has("expired");
-let expiredLogin = q.has("expired") ? "mehdimamas" : null;
+let expiredLogin = q.has("expired") ? "alice" : null;
 
 const groups: GroupStatus[] = q.has("empty")
   ? []
   : [
       {
-        id: { owner: "mehdimamas", repo: "claude-sync-data" },
-        name: "Mehdi & friends",
-        host: "mehdimamas",
-        members: ["mehdimamas", "sara-dev", "yassine"],
+        id: { owner: "alice", repo: "claude-sync-data" },
+        name: "Alice & friends",
+        host: "alice",
+        members: ["alice", "bob", "carol"],
         invited: ["octocat"],
         lastSyncUnix: now - 120,
         lastError: null,
@@ -42,7 +42,7 @@ const groups: GroupStatus[] = q.has("empty")
         id: { owner: "acme", repo: "claude-team" },
         name: "Acme team",
         host: "acme-bot",
-        members: ["acme-bot", "mehdimamas"],
+        members: ["acme-bot", "alice"],
         invited: [],
         lastSyncUnix: now - 400,
         lastError: null,
@@ -64,10 +64,10 @@ let notifications: Notification[] = q.has("noNotifications")
   : [
       { id: 6, time: now - 40, title: "Invitation to a claude-sync group", body: "lina-k invited you to lina-k/prompts. Open claude-sync to accept.", kind: "group", group: { owner: "lina-k", repo: "prompts" }, read: false },
       { id: 5, time: now - 1500, title: "Plugins changed", body: "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them.", kind: "plugins", group: groups[0]?.id ?? null, read: false },
-      { id: 4, time: now - 3600, title: "Conflict in a shared file", body: "skills/review/SKILL.md (mehdimamas/claude-sync-data): the group's version won; yours was saved.", kind: "group", group: groups[0]?.id ?? null, read: true },
-      { id: 3, time: now - 7200, title: "Local change to a shared file", body: "skills/review/SKILL.md was changed on this machine. Share it with mehdimamas/claude-sync-data?", kind: "local-edit", group: groups[0]?.id ?? null, read: true },
+      { id: 4, time: now - 3600, title: "Conflict in a shared file", body: "skills/review/SKILL.md (alice/claude-sync-data): the group's version won; yours was saved.", kind: "group", group: groups[0]?.id ?? null, read: true },
+      { id: 3, time: now - 7200, title: "Local change to a shared file", body: "skills/review/SKILL.md was changed on this machine. Share it with alice/claude-sync-data?", kind: "local-edit", group: groups[0]?.id ?? null, read: true },
       { id: 2, time: now - 90000, title: "claude-sync update ready", body: "Version 0.2.0 installs when you quit, or restart now from Settings.", kind: "update", group: null, read: true },
-      { id: 1, time: now - 200000, title: "Signed in", body: "claude-sync is signed in as mehdimamas.", kind: "other", group: null, read: true },
+      { id: 1, time: now - 200000, title: "Signed in", body: "claude-sync is signed in as alice.", kind: "other", group: null, read: true },
     ];
 let nextNotification = 7;
 let desktopNotifications = true;
@@ -80,11 +80,11 @@ function notificationsChanged(): void {
   for (const l of notificationListeners) l({ unread });
 }
 
-const mehdiContents: GroupContents = {
+const aliceContents: GroupContents = {
   marketplaces: [
     {
       name: "claude-mods",
-      description: "Mehdi's Claude Code mods: model routing and managed worker sessions.",
+      description: "Alice's Claude Code mods: model routing and managed worker sessions.",
       path: "C:/Users/me/.claude-sync/marketplaces/claude-mods",
       heldBy: null,
       plugins: [
@@ -105,11 +105,11 @@ const mehdiContents: GroupContents = {
       ["session-manager@claude-mods", false],
     ],
   },
-  claudeMd: "C:/Users/me/.claude-sync/groups/mehdimamas__claude-sync-data/CLAUDE.md",
+  claudeMd: "C:/Users/me/.claude-sync/groups/alice__claude-sync-data/CLAUDE.md",
 };
 
 const acmeContents: GroupContents = {
-  marketplaces: [{ name: "claude-mods", description: null, path: null, heldBy: { owner: "mehdimamas", repo: "claude-sync-data" }, plugins: [] }],
+  marketplaces: [{ name: "claude-mods", description: null, path: null, heldBy: { owner: "alice", repo: "claude-sync-data" }, plugins: [] }],
   skills: [],
   agents: [],
   commands: [],
@@ -124,12 +124,12 @@ let personal: PersonalStatus = {
   decided: q.has("personalOff"),
   offer: q.has("personalOffer"),
   kinds: { claudeMd: true, memory: true, state: true, settings: true },
-  repo: "mehdimamas/claude-sync-personal",
-  repoUrl: "https://github.com/mehdimamas/claude-sync-personal",
+  repo: "alice/claude-sync-personal",
+  repoUrl: "https://github.com/alice/claude-sync-personal",
   deviceId: "d1",
   devices: [
     { id: "d1", name: "desktop", os: "windows", lastSeenUnix: now - 60, thisDevice: true },
-    { id: "d2", name: "macbook", os: "macos", lastSeenUnix: now - 7200, thisDevice: false },
+    { id: "d2", name: "alice-laptop", os: "macos", lastSeenUnix: now - 7200, thisDevice: false },
   ],
   newDevicesJoin: q.has("personalOffer") ? false : true,
   lastSyncUnix: now - 90,
@@ -149,7 +149,7 @@ const ownClaudeMd = `# How I work
 const sharedClaudeMd = new Set<string>();
 
 // Rules and settings that clash between the groups and the user's own CLAUDE.md (§7b).
-const mehdi: ClashSource = { kind: "group", id: { owner: "mehdimamas", repo: "claude-sync-data" } };
+const alice: ClashSource = { kind: "group", id: { owner: "alice", repo: "claude-sync-data" } };
 const acme: ClashSource = { kind: "group", id: { owner: "acme", repo: "claude-team" } };
 const own: ClashSource = { kind: "own" };
 const side = (source: ClashSource, name: string, text: string): ClashSide => ({ source, name, text });
@@ -162,23 +162,23 @@ let clashes: Clash[] = q.has("noConflicts")
         id: "d1",
         kind: "duplicate",
         pointer: null,
-        a: side(mehdi, "Mehdi & friends", "- Run the tests before saying something works."),
+        a: side(alice, "Alice & friends", "- Run the tests before saying something works."),
         b: side(own, "Your CLAUDE.md", "- Run the tests before saying something works."),
       },
       {
         id: "c1",
         kind: "contradiction",
         pointer: null,
-        a: side(mehdi, "Mehdi & friends", "- Always answer in English."),
+        a: side(alice, "Alice & friends", "- Always answer in English."),
         b: side(acme, "Acme team", "- Never answer in English; use the customer's language."),
       },
-      { id: "s1", kind: "setting", pointer: "/model", a: side(mehdi, "Mehdi & friends", '"opus"'), b: side(acme, "Acme team", '"sonnet"') },
+      { id: "s1", kind: "setting", pointer: "/model", a: side(alice, "Alice & friends", '"opus"'), b: side(acme, "Acme team", '"sonnet"') },
     ];
 // Lines a text would clash with once shared, by their normalized form.
 const known: [string, Clash["kind"], ClashSide][] = [
   ["run the tests before saying something works", "duplicate", side(own, "Your CLAUDE.md", "- Run the tests before saying something works.")],
   ["always answer in english", "contradiction", side(acme, "Acme team", "- Never answer in English; use the customer's language.")],
-  ["answer in short, plain sentences", "duplicate", side(mehdi, "Mehdi & friends", "- Answer in short, plain sentences.")],
+  ["answer in short, plain sentences", "duplicate", side(alice, "Alice & friends", "- Answer in short, plain sentences.")],
 ];
 const norm = (line: string) => line.replace(/^\s*(?:[-*+]|\d+\.)\s+/, "").replace(/[.!]+$/, "").trim().toLowerCase();
 const groupClaudeMd = `# How we work
@@ -195,7 +195,7 @@ const groupClaudeMd = `# How we work
 const copyPreview = (to: GroupId): CopyPreview => ({
   to,
   toName: groups.find((g) => g.id.owner === to.owner && g.id.repo === to.repo)?.name ?? `${to.owner}/${to.repo}`,
-  host: to.owner === "acme" ? "acme-bot" : "mehdimamas",
+  host: to.owner === "acme" ? "acme-bot" : "alice",
   canPush: !q.has("noPush"),
   syncs: { claudeMd: true, skills: true, agents: true, settings: true },
   claudeMd: groupClaudeMd,
@@ -213,7 +213,7 @@ const copyPreview = (to: GroupId): CopyPreview => ({
 
 const setPersonal = (patch: Partial<PersonalStatus>) => (personal = { ...personal, ...patch });
 
-const mehdiJobs: JobsOverview = {
+const aliceJobs: JobsOverview = {
   unsupported: null,
   jobs: [
     {
@@ -261,14 +261,14 @@ const mehdiJobs: JobsOverview = {
       hasReport: true,
     },
   ],
-  problems: [{ group: { owner: "mehdimamas", repo: "claude-sync-data" }, id: "nightly", message: 'cron "0 3 1 * *": day of month and month must be *; only weekly schedules are supported' }],
+  problems: [{ group: { owner: "alice", repo: "claude-sync-data" }, id: "nightly", message: 'cron "0 3 1 * *": day of month and month must be *; only weekly schedules are supported' }],
   autoAccept: false,
 };
 const emptyJobs: JobsOverview = { unsupported: null, jobs: [], problems: [], autoAccept: false };
 let pluginWarnings = ["couldn't install session-manager@claude-mods: it needs your confirmation (it declares commands); install it in a terminal with claude plugin install"];
 
 function job(a: Record<string, unknown>): JobView {
-  const j = mehdiJobs.jobs.find((x) => x.id === a.id);
+  const j = aliceJobs.jobs.find((x) => x.id === a.id);
   if (!j) throw `no job ${String(a.id)}`;
   return j;
 }
@@ -278,24 +278,24 @@ const H = 3600;
 const D = 86400;
 const commits: CommitInfo[] = (
   [
-    ["MehdiMamas@DESKTOP-MEHDI: setup-scout: read X and LinkedIn through Chrome on scheduled runs too (read only); job passes --chrome so the scheduled run can use the browser extension when it is connected, and skips both sources quietly when it is not", "MehdiMamas", 600],
-    ["mehdi@desktop: session-manager: Show each worker's cost in the pane (#190)\n\n- The pane lists dollars per worker, rounded to the cent\n- Totals update when a report arrives", "mehdi", 15 * 60],
-    ["mehdi@desktop: session-manager: Leave finished workers warm (Fixes #182/#183)\n\nBefore: finished workers were stopped right after their report.\nNow: they stay warm for about 10 min so they can be reused.\n\n- Auto-stop only touches finished leaf workers\n- `stop_worker` is for stuck or wrong workers", "mehdi", 17 * 60],
-    ["mehdi@desktop: session-manager: Wake idle sessions every 30 min (#181)\n\n- The heartbeat checks workers, background tasks and CI\n- Skipped when the machine is paused", "mehdi", 19 * 60],
-    ["mehdi@desktop: session-manager: Refuse depth above 2 in delegate (#98)\n\n- A worker at the limit never starts workers\n- The error names `ci_wait` and `verify` instead", "mehdi", 21 * 60],
-    ["mehdi@desktop: session-manager: Fix pause leaving 3 managers running (#138)\n\n- Pause now records every session, so resume brings back 100% of them", "mehdi", 23 * 60],
-    ["sara-dev@Saras-MacBook.local: update CLAUDE.md", "sara-dev", 50 * 60],
-    ["sara-dev@Saras-MacBook.local: update CLAUDE.md", "sara-dev", 54 * 60],
-    ["sara-dev@saras-macbook.local: update CLAUDE.md", "sara-dev", 58 * 60],
-    ["MehdiMamas@desktop-mehdi: add member ibrahim-ahidar", "MehdiMamas", 3 * H],
-    ["yassine@yassine-mbp: share skills/pdf-tools", "yassine", D + 2 * H],
-    ["MehdiMamas@DESKTOP-MEHDI: group memory: personal vs group scope, group-memory skill, mods are made claude-sync wide", "MehdiMamas", D + 5 * H],
-    ["sara-dev@laptop: skills/review: tighten the checklist\n\nAsks for a test per bug fix and flags unused exports.", "sara-dev", 2 * D],
-    ["yassine@yassine-mbp: update settings.shared.json", "yassine", 3 * D],
-    ["MehdiMamas@DESKTOP-MEHDI: update plugins/claude-mods/mods/model-router/router.js, plugins/claude-mods/mods/model-router/README.md", "MehdiMamas", 4 * D],
-    ["session-manager: 0.2.0", "MehdiMamas", 9 * D],
-    ["yassine@yassine-mbp: remove agents/old-reviewer.md", "yassine", 10 * D],
-    ["MehdiMamas@DESKTOP-MEHDI: create group (start the repo)", "MehdiMamas", 12 * D],
+    ["Alice@ALICE-DESKTOP: setup-scout: read the news feeds through the browser on scheduled runs too (read only); job passes --chrome so the scheduled run can use the browser extension when it is connected, and skips both sources quietly when it is not", "Alice", 600],
+    ["alice@desktop: session-manager: Show each worker's cost in the pane (#190)\n\n- The pane lists dollars per worker, rounded to the cent\n- Totals update when a report arrives", "alice", 15 * 60],
+    ["alice@desktop: session-manager: Leave finished workers warm (Fixes #182/#183)\n\nBefore: finished workers were stopped right after their report.\nNow: they stay warm for about 10 min so they can be reused.\n\n- Auto-stop only touches finished leaf workers\n- `stop_worker` is for stuck or wrong workers", "alice", 17 * 60],
+    ["alice@desktop: session-manager: Wake idle sessions every 30 min (#181)\n\n- The heartbeat checks workers, background tasks and CI\n- Skipped when the machine is paused", "alice", 19 * 60],
+    ["alice@desktop: session-manager: Refuse depth above 2 in delegate (#98)\n\n- A worker at the limit never starts workers\n- The error names `ci_wait` and `verify` instead", "alice", 21 * 60],
+    ["alice@desktop: session-manager: Fix pause leaving 3 managers running (#138)\n\n- Pause now records every session, so resume brings back 100% of them", "alice", 23 * 60],
+    ["bob@Bobs-MacBook.local: update CLAUDE.md", "bob", 50 * 60],
+    ["bob@Bobs-MacBook.local: update CLAUDE.md", "bob", 54 * 60],
+    ["bob@bobs-macbook.local: update CLAUDE.md", "bob", 58 * 60],
+    ["Alice@alice-desktop: add member dave-lee", "Alice", 3 * H],
+    ["carol@carol-mbp: share skills/pdf-tools", "carol", D + 2 * H],
+    ["Alice@ALICE-DESKTOP: group memory: personal vs group scope, group-memory skill, mods are made claude-sync wide", "Alice", D + 5 * H],
+    ["bob@laptop: skills/review: tighten the checklist\n\nAsks for a test per bug fix and flags unused exports.", "bob", 2 * D],
+    ["carol@carol-mbp: update settings.shared.json", "carol", 3 * D],
+    ["Alice@ALICE-DESKTOP: update plugins/claude-mods/mods/model-router/router.js, plugins/claude-mods/mods/model-router/README.md", "Alice", 4 * D],
+    ["session-manager: 0.2.0", "Alice", 9 * D],
+    ["carol@carol-mbp: remove agents/old-reviewer.md", "carol", 10 * D],
+    ["Alice@ALICE-DESKTOP: create group (start the repo)", "Alice", 12 * D],
   ] as const
 ).map(([message, author, ago], i) => ({ sha: `${(0x3f2a9c1d + i * 7919).toString(16)}e0a7b55c`, message, author, atUnix: now - ago }));
 
@@ -307,7 +307,7 @@ let pending: ReviewItem[] = q.has("noReview")
         id: "r1",
         kind: "add",
         lines: ["- Run `pnpm typecheck` before you open a PR.", "- Keep PR titles under 60 characters."],
-        author: "sara-dev",
+        author: "bob",
         commit: "3f2a9c1d0e",
         message: "CLAUDE.md: PR checklist",
         atUnix: now - 900,
@@ -316,7 +316,7 @@ let pending: ReviewItem[] = q.has("noReview")
         id: "r2",
         kind: "remove",
         lines: ["- Answer in French when the user writes in French."],
-        author: "yassine",
+        author: "carol",
         commit: "77b01e4c9a",
         message: "CLAUDE.md: drop language rule",
         atUnix: now - 5400,
@@ -339,22 +339,22 @@ syncReview();
 let proposals: Proposal[] = [
   {
     number: 12,
-    branch: "proposal/sara-dev-20261014",
-    author: "sara-dev",
+    branch: "proposal/bob-20261014",
+    author: "bob",
     title: "Add the review skill",
-    url: "https://github.com/mehdimamas/claude-sync-data/pull/12",
+    url: "https://github.com/alice/claude-sync-data/pull/12",
     files: [{ path: "skills/review/SKILL.md", patch: "@@ -0,0 +1,3 @@\n+---\n+name: review\n+---" }],
-    approvals: ["yassine"],
+    approvals: ["carol"],
     approvedByMe: false,
     mine: false,
     needsUpdate: false,
   },
   {
     number: 13,
-    branch: "proposal/mehdimamas-20261014",
-    author: "mehdimamas",
+    branch: "proposal/alice-20261014",
+    author: "alice",
     title: "Change CLAUDE.md",
-    url: "https://github.com/mehdimamas/claude-sync-data/pull/13",
+    url: "https://github.com/alice/claude-sync-data/pull/13",
     files: [{ path: "CLAUDE.md", patch: "@@ -1,2 +1,3 @@\n # Rules\n-Be brief.\n+Be brief and exact." }],
     approvals: [],
     approvedByMe: false,
@@ -363,10 +363,10 @@ let proposals: Proposal[] = [
   },
   {
     number: 9,
-    branch: "proposal/yassine-20261010",
-    author: "yassine",
+    branch: "proposal/carol-20261010",
+    author: "carol",
     title: "Update the scout agent",
-    url: "https://github.com/mehdimamas/claude-sync-data/pull/9",
+    url: "https://github.com/alice/claude-sync-data/pull/9",
     files: [{ path: "agents/scout.md", patch: "@@ -1 +1 @@\n-model: haiku\n+model: sonnet" }],
     approvals: [],
     approvedByMe: false,
@@ -409,7 +409,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     if (p.mine) throw "you cannot approve your own proposal; another member has to";
     if (p.needsUpdate) throw `proposal #${p.number} needs an update before it can be merged`;
     p.approvedByMe = true;
-    p.approvals = [...p.approvals, "mehdimamas"];
+    p.approvals = [...p.approvals, "alice"];
     return null;
   },
   decline_proposal: (a) => {
@@ -431,7 +431,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     setPersonal({ decided: true, offer: false });
   },
   app_info: () => ({ version: "0.1.0", os: "windows 11 (x86_64)", relayConfigured: true, clientIdMissing: false, appClientIdMissing: false, stateDir: "C:/Users/me/.claude-sync/app" }),
-  auth_status: () => ({ signedIn, login: signedIn ? "mehdimamas" : null, expiredLogin, clientIdMissing: false }),
+  auth_status: () => ({ signedIn, login: signedIn ? "alice" : null, expiredLogin, clientIdMissing: false }),
   start_sign_in: () => ({ userCode: "WDJB-MJHT", verificationUri: "https://github.com/login/device", expiresIn: 900 }),
   cancel_sign_in: () => null,
   sign_out: () => {
@@ -444,10 +444,10 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     const share = a.claudeMd as ClaudeMdShare | undefined;
     if (share?.text.trim()) sharedClaudeMd.add(share.text.trim());
     const g: GroupStatus = {
-      id: { owner: "mehdimamas", repo: (a.repo as string) || "claude-sync-data" },
+      id: { owner: "alice", repo: (a.repo as string) || "claude-sync-data" },
       name: a.name as string,
-      host: "mehdimamas",
-      members: ["mehdimamas"],
+      host: "alice",
+      members: ["alice"],
       invited: [],
       lastSyncUnix: now,
       lastError: null,
@@ -466,7 +466,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     return g;
   },
   invitations: () => (q.has("empty") ? [] : [{ id: 7, repo: { owner: "lina-k", repo: "prompts" }, inviter: "lina-k" }]),
-  discover: () => (q.has("empty") ? [] : [{ owner: "yassine", repo: "claude-sync-data" }]),
+  discover: () => (q.has("empty") ? [] : [{ owner: "carol", repo: "claude-sync-data" }]),
   local_edits: () => (q.has("empty") ? [] : [{ group: groups[0].id, path: "skills/review/SKILL.md", deleted: false }]),
   local_skills: () => (q.has("noSkills") ? [] : ["my-notes", "pdf-tools", "release-checklist"]),
   claude_md_preview: () => (q.has("noClaudeMd") ? "" : ownClaudeMd),
@@ -499,7 +499,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     const claudeMd = r.claudeMd.trim() !== "";
     return { committed: claudeMd || files + r.settings.length > 0, claudeMd, files, settings: r.settings.length };
   },
-  group_contents: (a) => ((a.group as GroupId).owner === "acme" ? acmeContents : mehdiContents),
+  group_contents: (a) => ((a.group as GroupId).owner === "acme" ? acmeContents : aliceContents),
   recent_commits: (a) => (q.has("noHistory") ? [] : commits.slice(0, Number(a.limit ?? 20))),
   change_notes: () => ({ [commits[1].sha]: { before: "the pane showed only a running total", now: "it lists dollars per worker, rounded to the cent" } }),
   revert_preview: (a) => ({
@@ -507,11 +507,11 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     summary: "update CLAUDE.md",
     files: [
       { path: "CLAUDE.md", action: "restore", blocked: null },
-      ...(q.has("changedAgain") ? [{ path: "skills/review/SKILL.md", action: "restore", blocked: "skills/review/SKILL.md changed again after this commit, in 3f2a9c1 by sara-dev; revert that first." }] : []),
+      ...(q.has("changedAgain") ? [{ path: "skills/review/SKILL.md", action: "restore", blocked: "skills/review/SKILL.md changed again after this commit, in 3f2a9c1 by bob; revert that first." }] : []),
     ],
   }),
   revert_commit: (a) => {
-    if (q.has("changedAgain")) throw "Nothing was reverted. skills/review/SKILL.md changed again after this commit, in 3f2a9c1 by sara-dev; revert that first.";
+    if (q.has("changedAgain")) throw "Nothing was reverted. skills/review/SKILL.md changed again after this commit, in 3f2a9c1 by bob; revert that first.";
     return { sha: a.sha as string, summary: "update CLAUDE.md", files: [{ path: "CLAUDE.md", action: "restore", blocked: null }] };
   },
   sync_now: () => ({ groups: [] }),
@@ -520,21 +520,21 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     groups.sort((x, y) => order.findIndex((o) => groupKey(o) === groupKey(x.id)) - order.findIndex((o) => groupKey(o) === groupKey(y.id)));
     return { groups: [] };
   },
-  jobs: (a) => ((a.group as GroupId).owner === "acme" ? emptyJobs : mehdiJobs),
+  jobs: (a) => ((a.group as GroupId).owner === "acme" ? emptyJobs : aliceJobs),
   accept_job: (a) => {
     Object.assign(job(a), { accepted: true, changed: false, enabled: true, registered: true });
-    return mehdiJobs;
+    return aliceJobs;
   },
   set_job_enabled: (a) => {
     Object.assign(job(a), { enabled: a.enabled, registered: a.enabled });
-    return mehdiJobs;
+    return aliceJobs;
   },
   set_jobs_auto_accept: (a) => {
-    mehdiJobs.autoAccept = a.on as boolean;
-    if (mehdiJobs.autoAccept) {
-      for (const j of mehdiJobs.jobs.filter((x) => !x.accepted)) Object.assign(j, { accepted: true, changed: false, registered: j.enabled });
+    aliceJobs.autoAccept = a.on as boolean;
+    if (aliceJobs.autoAccept) {
+      for (const j of aliceJobs.jobs.filter((x) => !x.accepted)) Object.assign(j, { accepted: true, changed: false, registered: j.enabled });
     }
-    return mehdiJobs;
+    return aliceJobs;
   },
   run_job_now: (a) => {
     const j = job(a);
@@ -542,7 +542,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     setTimeout(() => {
       Object.assign(j, { running: false, hasLog: true, lastRun: { startUnix: now, endUnix: now + 3, exitCode: 0, status: "ok", manual: true, log: "C:/Users/me/run.log", report: null } });
     }, 3000);
-    return mehdiJobs;
+    return aliceJobs;
   },
   open_job_file: () => null,
   plugin_warnings: (a) => ((a.group as GroupId).owner === "acme" ? [] : pluginWarnings),
@@ -582,13 +582,13 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   },
   notification_permission: () => "granted",
   open_notification_settings: () => {},
-  app_coverage: () => ({ covered: [{ owner: "mehdimamas", repo: "claude-sync-data" }], missing: [{ owner: "friend-org", repo: "team-memory" }], noInstallation: false }),
+  app_coverage: () => ({ covered: [{ owner: "alice", repo: "claude-sync-data" }], missing: [{ owner: "friend-org", repo: "team-memory" }], noInstallation: false }),
   open_app_install: () => {},
   test_notification: () => {
     notifications.unshift({ id: nextNotification++, time: Math.floor(Date.now() / 1000), title: "Test notification", body: "Notifications from claude-sync show up like this.", kind: "other", group: null, read: false });
     notificationsChanged();
   },
-  feedback_logs: () => "2026-10-13T10:00:01Z INFO sync: 2 groups up to date\n2026-10-13T10:01:01Z INFO sync: pulled mehdimamas/claude-sync-data",
+  feedback_logs: () => "2026-10-13T10:00:01Z INFO sync: 2 groups up to date\n2026-10-13T10:01:01Z INFO sync: pulled alice/claude-sync-data",
   update_status: () => ({ current: "0.1.0", available: !q.has("empty"), version: "0.2.0", notes: null, downloaded: true }),
   check_update: () => ({ current: "0.1.0", available: false, version: null, notes: null, downloaded: false }),
 };

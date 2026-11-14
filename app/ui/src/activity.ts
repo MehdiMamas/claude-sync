@@ -62,7 +62,7 @@ const CONVENTIONAL = new Set(["fix", "feat", "chore", "docs", "refactor", "ci", 
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const lower = (s: string | null | undefined) => (s ?? "").toLowerCase();
 
-/** `DESKTOP-MEHDI`, `desktop-mehdi` and `Mehdis-MacBook.local` are one device each. */
+/** `ALICE-DESKTOP`, `alice-desktop` and `Bobs-MacBook.local` are one device each. */
 export function deviceName(host: string): string {
   return host.toLowerCase().replace(/\.(local|lan|home)$/, "");
 }
@@ -434,7 +434,7 @@ export function timeLabel(atUnix: number, now: Date, locale?: string): string {
   return at.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
 }
 
-/** "MM" for "MehdiMamas", "IA" for "ibrahim-ahidar", "SD" for "sara-dev". */
+/** "AA" for "AliceAdams", "DL" for "dave-lee", "BO" for "bob". */
 export function initials(login: string): string {
   const parts = login.split(/[-_.]+/).filter(Boolean);
   if (parts.length > 1) return (parts[0][0] + parts[1][0]).toUpperCase();

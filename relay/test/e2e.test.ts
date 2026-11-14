@@ -21,7 +21,7 @@ before(async () => {
   resetAuthCache();
   gh = await startStubGitHub({
     relayToken: RELAY_TOKEN,
-    users: { [USER_TOKEN]: "MehdiMamas" },
+    users: { [USER_TOKEN]: "alice" },
     release: {
       repo: "MehdiMamas/claude-sync",
       tag: `v${VERSION}`,

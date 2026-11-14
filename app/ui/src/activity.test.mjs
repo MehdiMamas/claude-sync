@@ -3,45 +3,45 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { avatarUrl, beforeNowFor, changeParts, collapse, dayLabel, deviceName, groupByDay, highlight, hue, initials, parseCommit, timeLabel } from "./activity.ts";
 
-const ctx = { me: "mehdimamas", mods: ["claude-mods", "session-manager", "model-router", "setup-scout"], skills: ["review"] };
-const commit = (message, atUnix = 1_000_000, author = "MehdiMamas", sha = "abc1234def") => ({ sha, message, author, atUnix });
+const ctx = { me: "alice", mods: ["claude-mods", "session-manager", "model-router", "setup-scout"], skills: ["review"] };
+const commit = (message, atUnix = 1_000_000, author = "Alice", sha = "abc1234def") => ({ sha, message, author, atUnix });
 const parse = (message, c = ctx) => parseCommit(commit(message), c);
 
 test("the login@host prefix becomes who and which device, never text", () => {
-  const a = parse("MehdiMamas@DESKTOP-MEHDI: setup-scout: read X and LinkedIn through Chrome on scheduled runs too (read only); job passes --chrome");
-  assert.equal(a.login, "MehdiMamas");
+  const a = parse("Alice@ALICE-DESKTOP: setup-scout: read the news feeds through the browser on scheduled runs too (read only); job passes --chrome");
+  assert.equal(a.login, "Alice");
   assert.equal(a.isYou, true);
-  assert.equal(a.device, "desktop-mehdi");
+  assert.equal(a.device, "alice-desktop");
   assert.equal(a.kind, "mod");
   assert.equal(a.title, "Updated a mod");
   assert.deepEqual(a.chips, ["setup-scout"]);
-  assert.equal(a.detail, "Read X and LinkedIn through Chrome on scheduled runs too (read only); job passes --chrome");
+  assert.equal(a.detail, "Read the news feeds through the browser on scheduled runs too (read only); job passes --chrome");
   assert.ok(!a.title.includes("@") && !a.detail.includes("DESKTOP"));
 });
 
 test("devices differing only in case are one device", () => {
-  assert.equal(parse("MehdiMamas@desktop-mehdi: add member x").device, parse("MehdiMamas@DESKTOP-MEHDI: add member x").device);
-  assert.equal(deviceName("Saras-MacBook.local"), "saras-macbook");
+  assert.equal(parse("Alice@alice-desktop: add member x").device, parse("Alice@ALICE-DESKTOP: add member x").device);
+  assert.equal(deviceName("Bobs-MacBook.local"), "bobs-macbook");
 });
 
 test("members added and removed", () => {
-  const a = parse("MehdiMamas@desktop-mehdi: add member ibrahim-ahidar");
+  const a = parse("Alice@alice-desktop: add member dave-lee");
   assert.equal(a.kind, "memberAdded");
-  assert.equal(a.title, "Added ibrahim-ahidar to the group");
-  const r = parse("sara-dev@laptop: remove member bo");
+  assert.equal(a.title, "Added dave-lee to the group");
+  const r = parse("bob@laptop: remove member bo");
   assert.equal(r.kind, "memberRemoved");
   assert.equal(r.title, "Removed bo from the group");
   assert.equal(r.isYou, false);
-  assert.equal(parse("sara-dev@laptop: add member MehdiMamas").title, "Added you to the group");
+  assert.equal(parse("bob@laptop: add member Alice").title, "Added you to the group");
 });
 
 test("group memory and group creation", () => {
-  const m = parse("MehdiMamas@DESKTOP-MEHDI: group memory: personal vs group scope, group-memory skill, mods are made claude-sync wide");
+  const m = parse("Alice@ALICE-DESKTOP: group memory: personal vs group scope, group-memory skill, mods are made claude-sync wide");
   assert.equal(m.kind, "memory");
   assert.equal(m.title, "Updated group memory");
   assert.deepEqual(m.chips, []);
   assert.equal(m.detail, "Personal vs group scope, group-memory skill, mods are made claude-sync wide");
-  const c = parse("MehdiMamas@DESKTOP-MEHDI: create group (start the repo)");
+  const c = parse("Alice@ALICE-DESKTOP: create group (start the repo)");
   assert.equal(c.kind, "created");
   assert.equal(c.title, "Created the group");
   assert.equal(c.detail, "Start the repo");
@@ -49,8 +49,8 @@ test("group memory and group creation", () => {
 });
 
 test("old commits without the prefix use the commit author", () => {
-  const a = parseCommit(commit("session-manager: 0.2.0", 1, "sara-dev"), ctx);
-  assert.equal(a.login, "sara-dev");
+  const a = parseCommit(commit("session-manager: 0.2.0", 1, "bob"), ctx);
+  assert.equal(a.login, "bob");
   assert.equal(a.device, null);
   assert.equal(a.kind, "mod");
   assert.deepEqual(a.chips, ["session-manager"]);
@@ -147,14 +147,14 @@ test("days and times", () => {
 });
 
 test("avatars", () => {
-  assert.equal(initials("MehdiMamas"), "MM");
-  assert.equal(initials("ibrahim-ahidar"), "IA");
-  assert.equal(initials("yassine"), "YA");
-  assert.equal(hue("MehdiMamas"), hue("mehdimamas"));
+  assert.equal(initials("AliceAdams"), "AA");
+  assert.equal(initials("dave-lee"), "DL");
+  assert.equal(initials("carol"), "CA");
+  assert.equal(hue("AliceAdams"), hue("aliceadams"));
   assert.ok(hue("x") >= 0 && hue("x") < 360);
-  assert.equal(avatarUrl("ibrahim-ahidar"), "https://avatars.githubusercontent.com/ibrahim-ahidar?s=64");
+  assert.equal(avatarUrl("dave-lee"), "https://avatars.githubusercontent.com/dave-lee?s=64");
   // Anything that is not a plain login gets initials only, never a crafted URL.
-  for (const bad of ["", "a/b", "../x", "x?s=1", "x y", "sara-dev (laptop)", "é"]) assert.equal(avatarUrl(bad), null, bad);
+  for (const bad of ["", "a/b", "../x", "x?s=1", "x y", "bob (laptop)", "é"]) assert.equal(avatarUrl(bad), null, bad);
 });
 
 function pick(a) {
@@ -162,17 +162,17 @@ function pick(a) {
 }
 
 test("a folded entry keeps each commit as a member, newest first", () => {
-  const msg = (n) => `mehdi@desktop: session-manager: Change ${n} (#${n})`;
+  const msg = (n) => `alice@desktop: session-manager: Change ${n} (#${n})`;
   const items = [3, 2, 1].map((n) => parse(msg(n)));
   items.forEach((a, i) => (a.sha = `sha${3 - i}`));
   const [folded] = collapse(items.map((a, i) => ({ ...a, atUnix: 1_000_000 - i * 60, firstAtUnix: 1_000_000 - i * 60 })));
   assert.equal(folded.members.length, 3);
   assert.deepEqual(folded.members.map((m) => m.sha), ["sha3", "sha2", "sha1"]);
-  assert.equal(parse("sara-dev@laptop: add member bo").members.length, 1);
+  assert.equal(parse("bob@laptop: add member bo").members.length, 1);
 });
 
 test("changeParts: subject, issues, bullets", () => {
-  const p = changeParts("mehdi@desktop: session-manager: leave finished workers warm (Fixes #182/#183)\n\n- Auto-stop is gentle\n* Second #182 mention");
+  const p = changeParts("alice@desktop: session-manager: leave finished workers warm (Fixes #182/#183)\n\n- Auto-stop is gentle\n* Second #182 mention");
   assert.equal(p.subject, "Leave finished workers warm");
   assert.deepEqual(p.issues, [182, 183]);
   assert.deepEqual(p.bullets, ["Auto-stop is gentle", "Second #182 mention"]);

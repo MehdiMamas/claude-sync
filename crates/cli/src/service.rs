@@ -270,7 +270,7 @@ mod tests {
             Ok("0 * * * * x\n".into())
         );
         assert_eq!(
-            crontab_decide(false, "", "no crontab for mehdi\n"),
+            crontab_decide(false, "", "no crontab for alice\n"),
             Ok(String::new())
         );
         let e = crontab_decide(

@@ -165,8 +165,8 @@ A darwin request first looks for `claude-sync_<version>_darwin_<arch>.app.tar.gz
 
 GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token:
 
-- **Resource owner:** `MehdiMamas`. **Expiration:** up to a year; note the date, the relay returns 502 once it expires.
-- **Repository access:** Only select repositories → `MehdiMamas/claude-sync`, the attachments repo (`MehdiMamas/claude-sync-feedback`, private), and `FEEDBACK_REPO` if it is another repo. The relay does not need access to any group repo.
+- **Resource owner:** `<owner>`. **Expiration:** up to a year; note the date, the relay returns 502 once it expires.
+- **Repository access:** Only select repositories → `MehdiMamas/claude-sync`, the attachments repo (`<owner>/<attachments-repo>`, private), and `FEEDBACK_REPO` if it is another repo. The relay does not need access to any group repo.
 - **Repository permissions:**
   - **Contents: Read and write.** Read: latest release, release assets. Write, on the attachments repo: commit the screenshot and logs (`POST /git/blobs`, `/git/trees`, `/git/commits`, `PATCH /git/refs/heads/<default>`).
   - **Issues: Read and write.** List milestones, and set labels, milestone and (when the attachments could not be stored) the body on the issue the user opened. The relay token never creates an issue.

@@ -281,12 +281,12 @@ mod tests {
     #[test]
     fn parses_the_documented_example() {
         let g = GroupFile::parse(
-            br#"{"schema":1,"name":"Mehdi & friends","members":["MehdiMamas","friend-login"],
+            br#"{"schema":1,"name":"Alice & friends","members":["Alice","friend-login"],
                "sync":{"settings":true,"claudeMd":true,"skills":true,"agents":true,"commands":true,"outputStyles":false}}"#,
         )
         .unwrap();
-        assert_eq!(g.name, "Mehdi & friends");
-        assert_eq!(g.members, ["MehdiMamas", "friend-login"]);
+        assert_eq!(g.name, "Alice & friends");
+        assert_eq!(g.members, ["Alice", "friend-login"]);
         assert!(!g.sync.output_styles);
         assert!(g.sync.claude_md);
     }

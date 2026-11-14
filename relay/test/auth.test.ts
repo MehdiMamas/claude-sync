@@ -56,7 +56,7 @@ describe("auth", () => {
   });
 
   it("401 when GitHub rejects the token", async () => {
-    mockUser(fm, "MehdiMamas");
+    mockUser(fm, "alice");
     const res = await whoami(req("/x", { token: "gho_bad" }));
     assert.equal(res.status, 401);
     assert.deepEqual(await res.json(), { error: "invalid GitHub token" });

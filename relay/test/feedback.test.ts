@@ -6,8 +6,8 @@ import { FEEDBACK_LIMIT, FEEDBACK_WINDOW_MS, resetRateLimits } from "../lib/rate
 import { type Call, type FetchMock, mockFetch, mockUser, RELAY_TOKEN, req, setEnv, USER_TOKEN } from "./helpers.ts";
 
 const REPO = "/repos/MehdiMamas/claude-sync";
-// The private attachments repo: `<FEEDBACK_REPO>-feedback` by default.
-const ATT = "/repos/MehdiMamas/claude-sync-feedback";
+// The private attachments repo, set through FEEDBACK_ATTACHMENTS_REPO.
+const ATT = "/repos/owner/attachments-repo";
 const MILESTONES = `${REPO}/milestones?state=open&per_page=100`;
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("fake png body")]);
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from("fake jpeg body")]);
@@ -105,12 +105,12 @@ function assertOnlyTheCallerTried(): void {
 }
 
 beforeEach(() => {
-  setEnv();
+  setEnv({ FEEDBACK_ATTACHMENTS_REPO: "owner/attachments-repo" });
   resetAuthCache();
   resetRateLimits();
   mock.timers.enable({ apis: ["Date"], now: NOW });
   fm = mockFetch();
-  mockUser(fm, "MehdiMamas");
+  mockUser(fm, "alice");
   fm.on("GET", MILESTONES, [
     { number: 1, title: "Sprint 1", state: "open", due_on: "2026-10-06T07:00:00Z" },
     { number: 2, title: "Sprint 2", state: "open", due_on: "2026-10-20T07:00:00Z" },
@@ -240,7 +240,7 @@ describe("POST /api/feedback", () => {
         "GitHub did not let your account open an issue on MehdiMamas/claude-sync: your account is blocked from the repository, or your sign-in lacks the repo scope (GitHub said: Resource not accessible by integration).",
     });
     assertOnlyTheCallerTried();
-    assert.ok(logs.some((l) => l.includes("refused the issue from MehdiMamas with 403")), logs.join("\n"));
+    assert.ok(logs.some((l) => l.includes("refused the issue from alice with 403")), logs.join("\n"));
   });
 
   it("answers 403 for 401, 404 and 410, and 422 for 422, each with its own reason", async () => {
@@ -481,7 +481,7 @@ describe("POST /api/feedback", () => {
 
     // The window slides.
     resetAuthCache();
-    mockUser(fm, "MehdiMamas");
+    mockUser(fm, "alice");
     mock.timers.tick(FEEDBACK_WINDOW_MS + 1);
     assert.equal((await feedback(post(valid()))).status, 201);
   });
@@ -512,12 +512,12 @@ describe("POST /api/feedback", () => {
   });
 
   it("files into FEEDBACK_REPO and stores into FEEDBACK_ATTACHMENTS_REPO when set", async () => {
-    setEnv({ FEEDBACK_REPO: "MehdiMamas/other", FEEDBACK_ATTACHMENTS_REPO: "MehdiMamas/other-private" });
-    const other = "/repos/MehdiMamas/other";
-    const priv = "/repos/MehdiMamas/other-private";
+    setEnv({ FEEDBACK_REPO: "owner/other", FEEDBACK_ATTACHMENTS_REPO: "owner/other-private" });
+    const other = "/repos/owner/other";
+    const priv = "/repos/owner/other-private";
     fm.on("GET", `${other}/milestones?state=open&per_page=100`, []);
     fm.on("POST", `${other}/issues`, () =>
-      Response.json({ number: 1, html_url: "https://github.com/MehdiMamas/other/issues/1" }, { status: 201 }),
+      Response.json({ number: 1, html_url: "https://github.com/owner/other/issues/1" }, { status: 201 }),
     );
     fm.on("PATCH", `${other}/issues/1`, {});
     fm.on("GET", priv, { default_branch: "trunk" });
@@ -528,7 +528,7 @@ describe("POST /api/feedback", () => {
     fm.on("POST", `${priv}/git/commits`, Response.json({ sha: "c" }, { status: 201 }));
     fm.on("PATCH", `${priv}/git/refs/heads/trunk`, {});
     const res = await feedback(post(valid()));
-    assert.deepEqual(await res.json(), { number: 1, url: "https://github.com/MehdiMamas/other/issues/1" });
+    assert.deepEqual(await res.json(), { number: 1, url: "https://github.com/owner/other/issues/1" });
     const tree = fm.calls.find((c) => c.url.endsWith(`${priv}/git/trees`));
     assert.deepEqual(
       (tree?.body as { tree: TreeEntry[] }).tree.map((e) => e.path),

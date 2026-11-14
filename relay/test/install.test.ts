@@ -168,7 +168,7 @@ describe("/install", () => {
   it("treats a tampered cookie as signed out", async () => {
     const good = signSession("friend", SECRET);
     const [payload, mac] = good.split(".");
-    const forged = Buffer.from(JSON.stringify({ l: "MehdiMamas", e: Date.now() + 1e9 })).toString("base64url");
+    const forged = Buffer.from(JSON.stringify({ l: "alice", e: Date.now() + 1e9 })).toString("base64url");
     for (const value of [`${forged}.${mac}`, `${payload}.${mac?.slice(0, -2)}${mac?.endsWith("AA") ? "BB" : "AA"}`, signSession("friend", "other-secret")]) {
       const html = await (await page(get("/install", `${SESSION_COOKIE}=${value}`))).text();
       assert.match(html, /Sign in with GitHub/, value);

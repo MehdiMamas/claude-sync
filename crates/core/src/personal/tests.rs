@@ -18,12 +18,12 @@ const MAC_ENC: &str = "-Users-ana";
 #[test]
 fn encode_matches_claude_code_folder_names() {
     assert_eq!(
-        keys::encode(r"C:\Users\Mehdi\Projects\klawly"),
-        "C--Users-Mehdi-Projects-klawly"
+        keys::encode(r"C:\Users\Ana\Projects\webapp"),
+        "C--Users-Ana-Projects-webapp"
     );
     assert_eq!(
-        keys::encode("/Users/mehdi/Projects/klawly"),
-        "-Users-mehdi-Projects-klawly"
+        keys::encode("/Users/ana/Projects/webapp"),
+        "-Users-ana-Projects-webapp"
     );
     assert_eq!(keys::encode("/Users/a/my_app.v2"), "-Users-a-my-app-v2");
     // One `-` per UTF-16 unit: `é` is one, an emoji is two.
@@ -34,20 +34,20 @@ fn encode_matches_claude_code_folder_names() {
 
 #[test]
 fn keys_are_relative_to_home_on_both_systems() {
-    let win = keys::key_for("C--Users-Ana-Projects-klawly", WIN_ENC);
-    let mac = keys::key_for("-Users-ana-Projects-klawly", MAC_ENC);
-    assert_eq!(win.as_deref(), Some("home-Projects-klawly"));
+    let win = keys::key_for("C--Users-Ana-Projects-webapp", WIN_ENC);
+    let mac = keys::key_for("-Users-ana-Projects-webapp", MAC_ENC);
+    assert_eq!(win.as_deref(), Some("home-Projects-webapp"));
     assert_eq!(win, mac);
     assert_eq!(keys::key_for(WIN_ENC, WIN_ENC).as_deref(), Some("home"));
     assert_eq!(keys::key_for(MAC_ENC, MAC_ENC).as_deref(), Some("home"));
     // Back to each system's own folder.
     assert_eq!(
-        keys::folder_for("home-Projects-klawly", WIN_ENC).as_deref(),
-        Some("C--Users-Ana-Projects-klawly")
+        keys::folder_for("home-Projects-webapp", WIN_ENC).as_deref(),
+        Some("C--Users-Ana-Projects-webapp")
     );
     assert_eq!(
-        keys::folder_for("home-Projects-klawly", MAC_ENC).as_deref(),
-        Some("-Users-ana-Projects-klawly")
+        keys::folder_for("home-Projects-webapp", MAC_ENC).as_deref(),
+        Some("-Users-ana-Projects-webapp")
     );
     assert_eq!(keys::folder_for("home", MAC_ENC).as_deref(), Some(MAC_ENC));
 }
@@ -55,12 +55,12 @@ fn keys_are_relative_to_home_on_both_systems() {
 #[test]
 fn keys_ignore_the_case_of_the_drive_letter() {
     assert_eq!(
-        keys::key_for("c--Users-Ana-Projects-klawly", WIN_ENC).as_deref(),
-        Some("home-Projects-klawly")
+        keys::key_for("c--Users-Ana-Projects-webapp", WIN_ENC).as_deref(),
+        Some("home-Projects-webapp")
     );
     assert_eq!(
-        keys::key_for("c--users-ana-Projects-klawly", WIN_ENC).as_deref(),
-        Some("home-Projects-klawly")
+        keys::key_for("c--users-ana-Projects-webapp", WIN_ENC).as_deref(),
+        Some("home-Projects-webapp")
     );
 }
 
@@ -108,7 +108,7 @@ fn keys_from_a_repo_are_checked() {
         assert_eq!(keys::folder_for(bad, WIN_ENC), None, "{bad}");
     }
     assert!(keys::is_key("home"));
-    assert!(keys::is_key("home-Projects-klawly"));
+    assert!(keys::is_key("home-Projects-webapp"));
     assert!(!keys::is_key(&format!("home-{}", "a".repeat(300))));
 }
 
@@ -419,9 +419,9 @@ fn personal_repo(world: &FakeGitHub, login: &str) -> FakeRepo {
         .expect("personal repo exists")
 }
 
-const KLAWLY_WIN: &str = "C--Users-Ana-Projects-klawly";
-const KLAWLY_MAC: &str = "-Users-ana-Projects-klawly";
-const KLAWLY_KEY: &str = "memory/home-Projects-klawly";
+const WEBAPP_WIN: &str = "C--Users-Ana-Projects-webapp";
+const WEBAPP_MAC: &str = "-Users-ana-Projects-webapp";
+const WEBAPP_KEY: &str = "memory/home-Projects-webapp";
 
 /// Every file under `backups/personal/<stamp>/`, keyed `<stamp-less path>`, with its text.
 fn personal_backups(d: &Dev) -> Vec<(String, String)> {
@@ -442,31 +442,31 @@ fn personal_backups(d: &Dev) -> Vec<(String, String)> {
 async fn memory_deleted_or_overwritten_by_a_sync_is_backed_up() {
     let world = FakeGitHub::new();
     let pc = dev(&world, "ana", "pc", WIN_HOME);
-    pc.set_mem(KLAWLY_WIN, "a.md", "apples\n");
-    pc.set_mem(KLAWLY_WIN, "b.md", "bananas\n");
+    pc.set_mem(WEBAPP_WIN, "a.md", "apples\n");
+    pc.set_mem(WEBAPP_WIN, "b.md", "bananas\n");
     pc.personal_enable().await.unwrap();
     let mac = dev(&world, "ana", "mac", MAC_HOME);
     mac.personal_enable().await.unwrap();
-    assert_eq!(mac.mem(KLAWLY_MAC, "a.md").as_deref(), Some("apples\n"));
+    assert_eq!(mac.mem(WEBAPP_MAC, "a.md").as_deref(), Some("apples\n"));
     assert!(personal_backups(&pc).is_empty());
 
     // The mac deletes one memory and changes the other.
-    std::fs::remove_file(mac.mem_path(KLAWLY_MAC, "a.md")).unwrap();
-    mac.set_mem(KLAWLY_MAC, "b.md", "blueberries\n");
+    std::fs::remove_file(mac.mem_path(WEBAPP_MAC, "a.md")).unwrap();
+    mac.set_mem(WEBAPP_MAC, "b.md", "blueberries\n");
     mac.sync().await;
     pc.sync().await;
 
-    assert_eq!(pc.mem(KLAWLY_WIN, "a.md"), None);
-    assert_eq!(pc.mem(KLAWLY_WIN, "b.md").as_deref(), Some("blueberries\n"));
+    assert_eq!(pc.mem(WEBAPP_WIN, "a.md"), None);
+    assert_eq!(pc.mem(WEBAPP_WIN, "b.md").as_deref(), Some("blueberries\n"));
     assert_eq!(
         personal_backups(&pc),
         [
             (
-                "memory/home-Projects-klawly/a.md".to_string(),
+                "memory/home-Projects-webapp/a.md".to_string(),
                 "apples\n".to_string()
             ),
             (
-                "memory/home-Projects-klawly/b.md".to_string(),
+                "memory/home-Projects-webapp/b.md".to_string(),
                 "bananas\n".to_string()
             ),
         ]
@@ -479,8 +479,8 @@ async fn enable_creates_a_private_repo_without_the_group_topic() {
     let pc = dev(&world, "ana", "pc", WIN_HOME);
     assert!(!pc.personal_status().enabled);
     pc.set_claude_md(&with_block(&[IMPORT], "I like apples.\n", "\n"));
-    pc.set_mem(KLAWLY_WIN, "MEMORY.md", "- [A](a.md) — a\n");
-    pc.set_mem(KLAWLY_WIN, "a.md", "apples\n");
+    pc.set_mem(WEBAPP_WIN, "MEMORY.md", "- [A](a.md) — a\n");
+    pc.set_mem(WEBAPP_WIN, "a.md", "apples\n");
 
     let status = pc.personal_enable().await.unwrap();
     assert!(status.enabled && status.decided);
@@ -501,11 +501,11 @@ async fn enable_creates_a_private_repo_without_the_group_topic() {
     assert_eq!((pf.format, pf.new_devices_join), (1, true));
     assert_eq!(repo.file(CLAUDE_MD).as_deref(), Some("I like apples.\n"));
     assert_eq!(
-        repo.file(&format!("{KLAWLY_KEY}/MEMORY.md")).as_deref(),
+        repo.file(&format!("{WEBAPP_KEY}/MEMORY.md")).as_deref(),
         Some("- [A](a.md) — a\n")
     );
     assert_eq!(
-        repo.file(&format!("{KLAWLY_KEY}/a.md")).as_deref(),
+        repo.file(&format!("{WEBAPP_KEY}/a.md")).as_deref(),
         Some("apples\n")
     );
     assert!(repo.file(README).is_some());
@@ -525,11 +525,11 @@ async fn enable_creates_a_private_repo_without_the_group_topic() {
 
     // Made public later: nothing more is pushed.
     repo.set_private(false);
-    pc.set_mem(KLAWLY_WIN, "b.md", "bananas\n");
+    pc.set_mem(WEBAPP_WIN, "b.md", "bananas\n");
     let r = pc.personal_sync(false).await.unwrap().unwrap();
     assert!(r.error.is_some_and(|e| e.contains("public")));
     assert!(!r.pushed);
-    assert!(repo.file(&format!("{KLAWLY_KEY}/b.md")).is_none());
+    assert!(repo.file(&format!("{WEBAPP_KEY}/b.md")).is_none());
     assert!(pc.personal_status().last_error.is_some());
 }
 
@@ -588,8 +588,8 @@ async fn two_devices_share_memory_across_windows_and_macos() {
     let world = FakeGitHub::new();
     let pc = dev(&world, "ana", "pc", WIN_HOME);
     pc.set_claude_md(&with_block(&[IMPORT], "I like apples.\n", "\r\n"));
-    pc.set_mem(KLAWLY_WIN, "MEMORY.md", "- [A](a.md) — a\n");
-    pc.set_mem(KLAWLY_WIN, "a.md", "apples\n");
+    pc.set_mem(WEBAPP_WIN, "MEMORY.md", "- [A](a.md) — a\n");
+    pc.set_mem(WEBAPP_WIN, "a.md", "apples\n");
     pc.set_mem(WIN_ENC, "MEMORY.md", "- [H](h.md) — home\n");
     pc.set_mem(WIN_ENC, "h.md", "home\n");
     pc.personal_enable().await.unwrap();
@@ -611,36 +611,36 @@ async fn two_devices_share_memory_across_windows_and_macos() {
         mac.claude_md().unwrap(),
         with_block(&[mac_import], "I like apples.\n", "\n")
     );
-    assert_eq!(mac.mem(KLAWLY_MAC, "a.md").as_deref(), Some("apples\n"));
+    assert_eq!(mac.mem(WEBAPP_MAC, "a.md").as_deref(), Some("apples\n"));
     assert_eq!(mac.mem(MAC_ENC, "h.md").as_deref(), Some("home\n"));
 
     // Both add a memory at the same time.
     mac.set_mem(
-        KLAWLY_MAC,
+        WEBAPP_MAC,
         "MEMORY.md",
         "- [A](a.md) — a\n- [M](m.md) — mac\n",
     );
-    mac.set_mem(KLAWLY_MAC, "m.md", "from the mac\n");
+    mac.set_mem(WEBAPP_MAC, "m.md", "from the mac\n");
     pc.set_mem(
-        KLAWLY_WIN,
+        WEBAPP_WIN,
         "MEMORY.md",
         "- [A](a.md) — a\n- [P](p.md) — pc\n",
     );
-    pc.set_mem(KLAWLY_WIN, "p.md", "from the pc\n");
+    pc.set_mem(WEBAPP_WIN, "p.md", "from the pc\n");
     let r = mac.sync().await;
     assert!(r.pushed);
     let r = pc.sync().await;
     assert!(r.pulled && r.pushed && r.conflicts.is_empty());
     mac.sync().await;
     let both = "- [A](a.md) — a\n- [P](p.md) — pc\n- [M](m.md) — mac\n";
-    assert_eq!(pc.mem(KLAWLY_WIN, "MEMORY.md").as_deref(), Some(both));
-    assert_eq!(mac.mem(KLAWLY_MAC, "MEMORY.md").as_deref(), Some(both));
+    assert_eq!(pc.mem(WEBAPP_WIN, "MEMORY.md").as_deref(), Some(both));
+    assert_eq!(mac.mem(WEBAPP_MAC, "MEMORY.md").as_deref(), Some(both));
     assert_eq!(
-        pc.mem(KLAWLY_WIN, "m.md").as_deref(),
+        pc.mem(WEBAPP_WIN, "m.md").as_deref(),
         Some("from the mac\n")
     );
     assert_eq!(
-        mac.mem(KLAWLY_MAC, "p.md").as_deref(),
+        mac.mem(WEBAPP_MAC, "p.md").as_deref(),
         Some("from the pc\n")
     );
 
@@ -658,16 +658,16 @@ async fn two_devices_share_memory_across_windows_and_macos() {
     );
 
     // A deletion is synced, and the empty folder goes too.
-    pc.set_mem(KLAWLY_WIN, "notes/x.md", "x\n");
+    pc.set_mem(WEBAPP_WIN, "notes/x.md", "x\n");
     pc.sync().await;
     mac.sync().await;
-    assert_eq!(mac.mem(KLAWLY_MAC, "notes/x.md").as_deref(), Some("x\n"));
-    std::fs::remove_file(pc.mem_path(KLAWLY_WIN, "notes/x.md")).unwrap();
+    assert_eq!(mac.mem(WEBAPP_MAC, "notes/x.md").as_deref(), Some("x\n"));
+    std::fs::remove_file(pc.mem_path(WEBAPP_WIN, "notes/x.md")).unwrap();
     pc.sync().await;
     mac.sync().await;
-    assert!(!mac.mem_path(KLAWLY_MAC, "notes").exists());
+    assert!(!mac.mem_path(WEBAPP_MAC, "notes").exists());
     assert!(personal_repo(&world, "ana")
-        .file(&format!("{KLAWLY_KEY}/notes/x.md"))
+        .file(&format!("{WEBAPP_KEY}/notes/x.md"))
         .is_none());
 
     // Quiet when nothing changed (the first check has no ETag yet).
@@ -676,7 +676,7 @@ async fn two_devices_share_memory_across_windows_and_macos() {
     assert!(pc.personal_sync(true).await.unwrap().is_none());
     assert!(mac.personal_sync(true).await.unwrap().is_none());
     // A local edit wakes it even when the repo did not change.
-    pc.set_mem(KLAWLY_WIN, "a.md", "apples!\n");
+    pc.set_mem(WEBAPP_WIN, "a.md", "apples!\n");
     let r = pc.personal_sync(true).await.unwrap().expect("ran");
     assert!(r.pushed);
 }
@@ -686,22 +686,22 @@ async fn a_new_device_merges_and_never_overwrites_local_memory() {
     let world = FakeGitHub::new();
     let pc = dev(&world, "ana", "pc", WIN_HOME);
     pc.set_mem(
-        KLAWLY_WIN,
+        WEBAPP_WIN,
         "MEMORY.md",
         "- [A](a.md) — a\n- [F](feedback.md) — f\n",
     );
-    pc.set_mem(KLAWLY_WIN, "feedback.md", "from the pc\n");
+    pc.set_mem(WEBAPP_WIN, "feedback.md", "from the pc\n");
     pc.set_claude_md("pc text\n");
     pc.personal_enable().await.unwrap();
 
     let mac = dev(&world, "ana", "mac", MAC_HOME);
     mac.set_mem(
-        KLAWLY_MAC,
+        WEBAPP_MAC,
         "MEMORY.md",
         "- [F](feedback.md) — f\n- [O](own.md) — own\n",
     );
-    mac.set_mem(KLAWLY_MAC, "feedback.md", "from the mac\n");
-    mac.set_mem(KLAWLY_MAC, "own.md", "only on the mac\n");
+    mac.set_mem(WEBAPP_MAC, "feedback.md", "from the mac\n");
+    mac.set_mem(WEBAPP_MAC, "own.md", "only on the mac\n");
     mac.set_claude_md("mac text\n");
     assert_eq!(
         mac.personal_check_new_device().await.unwrap(),
@@ -710,20 +710,20 @@ async fn a_new_device_merges_and_never_overwrites_local_memory() {
 
     // The index is the union.
     assert_eq!(
-        mac.mem(KLAWLY_MAC, "MEMORY.md").as_deref(),
+        mac.mem(WEBAPP_MAC, "MEMORY.md").as_deref(),
         Some("- [A](a.md) — a\n- [F](feedback.md) — f\n- [O](own.md) — own\n")
     );
     // A file both have with different content is a conflict: the repo's copy wins here
     // and the local copy is saved.
     assert_eq!(
-        mac.mem(KLAWLY_MAC, "feedback.md").as_deref(),
+        mac.mem(WEBAPP_MAC, "feedback.md").as_deref(),
         Some("from the pc\n")
     );
     assert_eq!(mac.claude_md().as_deref(), Some("pc text\n"));
     let st = mac.personal_status();
     let mut paths: Vec<&str> = st.conflicts.iter().map(|c| c.path.as_str()).collect();
     paths.sort();
-    assert_eq!(paths, [CLAUDE_MD, &format!("{KLAWLY_KEY}/feedback.md")]);
+    assert_eq!(paths, [CLAUDE_MD, &format!("{WEBAPP_KEY}/feedback.md")]);
     for c in &st.conflicts {
         let saved = std::fs::read_to_string(&c.saved_to).unwrap();
         assert!(
@@ -735,16 +735,16 @@ async fn a_new_device_merges_and_never_overwrites_local_memory() {
     // What only the Mac had reaches the repo and the PC.
     let repo = personal_repo(&world, "ana");
     assert_eq!(
-        repo.file(&format!("{KLAWLY_KEY}/own.md")).as_deref(),
+        repo.file(&format!("{WEBAPP_KEY}/own.md")).as_deref(),
         Some("only on the mac\n")
     );
     pc.sync().await;
     assert_eq!(
-        pc.mem(KLAWLY_WIN, "own.md").as_deref(),
+        pc.mem(WEBAPP_WIN, "own.md").as_deref(),
         Some("only on the mac\n")
     );
     assert_eq!(
-        pc.mem(KLAWLY_WIN, "MEMORY.md").as_deref(),
+        pc.mem(WEBAPP_WIN, "MEMORY.md").as_deref(),
         Some("- [A](a.md) — a\n- [F](feedback.md) — f\n- [O](own.md) — own\n")
     );
 }
@@ -753,14 +753,14 @@ async fn a_new_device_merges_and_never_overwrites_local_memory() {
 async fn an_existing_lowercase_drive_folder_is_reused() {
     let world = FakeGitHub::new();
     let pc = dev(&world, "ana", "pc", WIN_HOME);
-    let lower = "c--Users-Ana-Projects-klawly";
+    let lower = "c--Users-Ana-Projects-webapp";
     pc.set_mem(lower, "a.md", "one\n");
     // A project with sessions but no memory yet.
     std::fs::create_dir_all(pc.home().join("projects").join("c--Users-Ana-Projects-y")).unwrap();
     pc.personal_enable().await.unwrap();
     let repo = personal_repo(&world, "ana");
-    assert!(repo.file(&format!("{KLAWLY_KEY}/a.md")).is_some());
-    repo.set_file(&format!("{KLAWLY_KEY}/b.md"), "two\n");
+    assert!(repo.file(&format!("{WEBAPP_KEY}/a.md")).is_some());
+    repo.set_file(&format!("{WEBAPP_KEY}/b.md"), "two\n");
     repo.set_file("memory/home-Projects-y/c.md", "three\n");
     repo.set_file("memory/home-Projects-z/d.md", "four\n");
     pc.sync().await;
@@ -773,7 +773,7 @@ async fn an_existing_lowercase_drive_folder_is_reused() {
         names,
         [
             "C--Users-Ana-Projects-z",
-            "c--Users-Ana-Projects-klawly",
+            "c--Users-Ana-Projects-webapp",
             "c--Users-Ana-Projects-y"
         ]
     );
@@ -803,7 +803,7 @@ async fn new_devices_can_be_offered_instead_of_joining() {
         PersonalFile::parse(personal_repo(&world, "ana").file(FILE).unwrap().as_bytes()).unwrap();
     assert!(!pf.new_devices_join);
 
-    mac.set_mem(KLAWLY_MAC, "a.md", "mac\n");
+    mac.set_mem(WEBAPP_MAC, "a.md", "mac\n");
     assert_eq!(
         mac.personal_check_new_device().await.unwrap(),
         NewDevice::Offer
@@ -812,7 +812,7 @@ async fn new_devices_can_be_offered_instead_of_joining() {
     assert!(!st.enabled);
     assert!(st.offer, "the offer stays until the user answers");
     assert!(personal_repo(&world, "ana")
-        .file(&format!("{KLAWLY_KEY}/a.md"))
+        .file(&format!("{WEBAPP_KEY}/a.md"))
         .is_none());
     mac.personal_dismiss_offer().await.unwrap();
     assert!(!mac.personal_status().offer);
@@ -823,7 +823,7 @@ async fn new_devices_can_be_offered_instead_of_joining() {
     // The user can still turn it on.
     assert!(mac.personal_enable().await.unwrap().enabled);
     assert!(personal_repo(&world, "ana")
-        .file(&format!("{KLAWLY_KEY}/a.md"))
+        .file(&format!("{WEBAPP_KEY}/a.md"))
         .is_some());
 
     // Another account never sees ana's repo.
@@ -845,14 +845,14 @@ async fn new_devices_can_be_offered_instead_of_joining() {
 async fn a_device_that_turned_it_off_is_not_turned_back_on() {
     let world = FakeGitHub::new();
     let pc = dev(&world, "ana", "pc", WIN_HOME);
-    pc.set_mem(KLAWLY_WIN, "a.md", "one\n");
+    pc.set_mem(WEBAPP_WIN, "a.md", "one\n");
     pc.personal_enable().await.unwrap();
     let repo = personal_repo(&world, "ana");
     let head = repo.current_head();
 
     let st = pc.personal_disable().await.unwrap();
     assert!(!st.enabled && st.decided);
-    pc.set_mem(KLAWLY_WIN, "a.md", "two\n");
+    pc.set_mem(WEBAPP_WIN, "a.md", "two\n");
     assert!(pc.personal_sync(false).await.unwrap().is_none());
     assert!(pc.personal_sync(true).await.unwrap().is_none());
     assert_eq!(
@@ -861,22 +861,22 @@ async fn a_device_that_turned_it_off_is_not_turned_back_on() {
     );
     // Local files stay as they are; the repo only learns that it is off (for every device).
     assert_ne!(repo.current_head(), head);
-    assert!(repo.file(&format!("{KLAWLY_KEY}/a.md")).as_deref() == Some("one\n"));
-    assert_eq!(pc.mem(KLAWLY_WIN, "a.md").as_deref(), Some("two\n"));
+    assert!(repo.file(&format!("{WEBAPP_KEY}/a.md")).as_deref() == Some("one\n"));
+    assert_eq!(pc.mem(WEBAPP_WIN, "a.md").as_deref(), Some("two\n"));
 
     // On again: what changed meanwhile is merged, not lost.
-    repo.set_file(&format!("{KLAWLY_KEY}/b.md"), "remote\n");
+    repo.set_file(&format!("{WEBAPP_KEY}/b.md"), "remote\n");
     pc.personal_enable().await.unwrap();
-    assert_eq!(pc.mem(KLAWLY_WIN, "b.md").as_deref(), Some("remote\n"));
+    assert_eq!(pc.mem(WEBAPP_WIN, "b.md").as_deref(), Some("remote\n"));
     assert_eq!(pc.personal_status().conflicts.len(), 1);
-    assert_eq!(pc.mem(KLAWLY_WIN, "a.md").as_deref(), Some("one\n"));
+    assert_eq!(pc.mem(WEBAPP_WIN, "a.md").as_deref(), Some("one\n"));
 }
 
 #[tokio::test]
 async fn turning_it_on_clears_an_old_error() {
     let world = FakeGitHub::new();
     let pc = dev(&world, "ana", "pc", WIN_HOME);
-    pc.set_mem(KLAWLY_WIN, "a.md", "one\n");
+    pc.set_mem(WEBAPP_WIN, "a.md", "one\n");
     pc.personal_enable().await.unwrap();
     let repo = personal_repo(&world, "ana");
 
@@ -898,7 +898,7 @@ async fn kinds_choose_what_syncs() {
     let world = FakeGitHub::new();
     let pc = dev(&world, "ana", "pc", WIN_HOME);
     pc.set_claude_md("text\n");
-    pc.set_mem(KLAWLY_WIN, "a.md", "one\n");
+    pc.set_mem(WEBAPP_WIN, "a.md", "one\n");
     pc.personal_enable().await.unwrap();
     let repo = personal_repo(&world, "ana");
 
@@ -910,18 +910,18 @@ async fn kinds_choose_what_syncs() {
     })
     .await
     .unwrap();
-    pc.set_mem(KLAWLY_WIN, "a.md", "two\n");
+    pc.set_mem(WEBAPP_WIN, "a.md", "two\n");
     pc.set_claude_md("text 2\n");
     pc.sync().await;
     assert_eq!(
-        repo.file(&format!("{KLAWLY_KEY}/a.md")).as_deref(),
+        repo.file(&format!("{WEBAPP_KEY}/a.md")).as_deref(),
         Some("one\n")
     );
     assert_eq!(repo.file(CLAUDE_MD).as_deref(), Some("text 2\n"));
     // Remote memory changes are not written either.
-    repo.set_file(&format!("{KLAWLY_KEY}/b.md"), "remote\n");
+    repo.set_file(&format!("{WEBAPP_KEY}/b.md"), "remote\n");
     pc.sync().await;
-    assert_eq!(pc.mem(KLAWLY_WIN, "b.md"), None);
+    assert_eq!(pc.mem(WEBAPP_WIN, "b.md"), None);
 
     pc.personal_set_kinds(Kinds {
         claude_md: false,
@@ -936,10 +936,10 @@ async fn kinds_choose_what_syncs() {
     assert_eq!(repo.file(CLAUDE_MD).as_deref(), Some("text 2\n"));
     // Memory back on: the edit made while it was off is pushed, the remote file pulled.
     assert_eq!(
-        repo.file(&format!("{KLAWLY_KEY}/a.md")).as_deref(),
+        repo.file(&format!("{WEBAPP_KEY}/a.md")).as_deref(),
         Some("two\n")
     );
-    assert_eq!(pc.mem(KLAWLY_WIN, "b.md").as_deref(), Some("remote\n"));
+    assert_eq!(pc.mem(WEBAPP_WIN, "b.md").as_deref(), Some("remote\n"));
     assert!(pc.personal_status().conflicts.is_empty());
 }
 
@@ -1008,14 +1008,14 @@ async fn temp_folders_links_large_files_and_secrets_stay_local() {
     pc.set_mem("C--Users-Ana-AppData-Local-Temp-x", "a.md", "temp\n");
     pc.set_mem("C--Users-Ana--claude-jobs-1234", "a.md", "job\n");
     pc.set_mem("D--elsewhere", "a.md", "outside home\n");
-    pc.set_mem(KLAWLY_WIN, "big.md", &"x".repeat(MAX_FILE + 1));
-    pc.set_mem(KLAWLY_WIN, "token.md", "ghp_abc\n");
-    pc.set_mem(KLAWLY_WIN, ".hidden", "dot\n");
-    pc.set_mem(KLAWLY_WIN, "ok.md", "fine\n");
+    pc.set_mem(WEBAPP_WIN, "big.md", &"x".repeat(MAX_FILE + 1));
+    pc.set_mem(WEBAPP_WIN, "token.md", "ghp_abc\n");
+    pc.set_mem(WEBAPP_WIN, ".hidden", "dot\n");
+    pc.set_mem(WEBAPP_WIN, "ok.md", "fine\n");
     write_atomic(
         &pc.home()
             .join("projects")
-            .join(KLAWLY_WIN)
+            .join(WEBAPP_WIN)
             .join("not-memory.md"),
         b"outside memory/\n",
     )
@@ -1028,18 +1028,18 @@ async fn temp_folders_links_large_files_and_secrets_stay_local() {
         .into_keys()
         .filter(|p| p.starts_with("memory/"))
         .collect();
-    assert_eq!(memory, [format!("{KLAWLY_KEY}/ok.md")]);
+    assert_eq!(memory, [format!("{WEBAPP_KEY}/ok.md")]);
     let skipped = pc.personal_status().skipped;
     assert!(skipped.iter().any(|s| s.contains("big.md")), "{skipped:?}");
     assert!(skipped
         .iter()
         .any(|s| s.contains("token.md") && s.contains("secret")));
     // Held files are left alone even when the repo changes them.
-    repo.set_file(&format!("{KLAWLY_KEY}/token.md"), "clean\n");
+    repo.set_file(&format!("{WEBAPP_KEY}/token.md"), "clean\n");
     pc.sync().await;
-    assert_eq!(pc.mem(KLAWLY_WIN, "token.md").as_deref(), Some("ghp_abc\n"));
+    assert_eq!(pc.mem(WEBAPP_WIN, "token.md").as_deref(), Some("ghp_abc\n"));
     assert_eq!(
-        repo.file(&format!("{KLAWLY_KEY}/token.md")).as_deref(),
+        repo.file(&format!("{WEBAPP_KEY}/token.md")).as_deref(),
         Some("clean\n")
     );
 }
@@ -1051,13 +1051,13 @@ async fn linked_memory_folders_are_not_followed() {
     let pc = dev(&world, "ana", "pc", MAC_HOME);
     let outside = tempfile::tempdir().unwrap();
     std::fs::write(outside.path().join("secret.md"), "outside\n").unwrap();
-    let folder = pc.home().join("projects").join(KLAWLY_MAC);
+    let folder = pc.home().join("projects").join(WEBAPP_MAC);
     std::fs::create_dir_all(&folder).unwrap();
     std::os::unix::fs::symlink(outside.path(), folder.join("memory")).unwrap();
     pc.personal_enable().await.unwrap();
     let repo = personal_repo(&world, "ana");
     assert!(repo.files().keys().all(|p| !p.starts_with("memory/")));
-    repo.set_file(&format!("{KLAWLY_KEY}/new.md"), "remote\n");
+    repo.set_file(&format!("{WEBAPP_KEY}/new.md"), "remote\n");
     pc.sync().await;
     assert!(!outside.path().join("new.md").exists());
 }
@@ -1089,18 +1089,18 @@ async fn personal_memory_never_reaches_a_group_and_back() {
     let joined = pc.claude_md().unwrap();
     assert!(joined.contains(BLOCK_BEGIN));
     pc.set_claude_md(&format!("{joined}\nI like apples.\n"));
-    pc.set_mem(KLAWLY_WIN, "MEMORY.md", "- [A](a.md) — apples\n");
-    pc.set_mem(KLAWLY_WIN, "a.md", "apples\n");
+    pc.set_mem(WEBAPP_WIN, "MEMORY.md", "- [A](a.md) — apples\n");
+    pc.set_mem(WEBAPP_WIN, "a.md", "apples\n");
     pc.personal_enable().await.unwrap();
     pc.sync_all().await.unwrap();
 
     // Another device of bo adds a memory; pc pulls it.
     let mac = dev(&world, "bo", "mac", MAC_HOME);
     mac.personal_check_new_device().await.unwrap();
-    mac.set_mem(KLAWLY_MAC, "pears.md", "pears\n");
+    mac.set_mem(WEBAPP_MAC, "pears.md", "pears\n");
     mac.sync().await;
     pc.sync().await;
-    assert_eq!(pc.mem(KLAWLY_WIN, "pears.md").as_deref(), Some("pears\n"));
+    assert_eq!(pc.mem(WEBAPP_WIN, "pears.md").as_deref(), Some("pears\n"));
     pc.sync_all().await.unwrap();
 
     // The group repo has none of it.

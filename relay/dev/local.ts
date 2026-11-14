@@ -41,7 +41,7 @@ const userToken = `gho_local_${randomBytes(16).toString("hex")}`;
 Object.assign(process.env, {
   RELAY_GITHUB_TOKEN: relayToken,
   RELEASES_REPO: "MehdiMamas/claude-sync",
-  ALLOWED_GITHUB_USERS: "MehdiMamas",
+  ALLOWED_GITHUB_USERS: "alice",
   GROUP_REPOS: "",
 });
 delete process.env.RELAY_PUBLIC_URL;
@@ -49,7 +49,7 @@ resetAuthCache();
 
 const gh = await startStubGitHub({
   relayToken,
-  users: { [userToken]: "MehdiMamas" },
+  users: { [userToken]: "alice" },
   release: {
     repo: "MehdiMamas/claude-sync",
     tag: `v${version}`,

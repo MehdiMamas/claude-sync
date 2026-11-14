@@ -1134,7 +1134,7 @@ mod tests {
 
     #[test]
     fn logins() {
-        assert_eq!(valid_login(" @Mehdi-Mamas ").unwrap(), "Mehdi-Mamas");
+        assert_eq!(valid_login(" @Alice-Adams ").unwrap(), "Alice-Adams");
         assert!(valid_login("a/b").is_err());
         assert!(valid_login("-x").is_err());
         assert!(valid_login("").is_err());

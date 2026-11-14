@@ -25,17 +25,17 @@ import { type Call, type FetchMock, mockFetch } from "./helpers.ts";
 const REPO = "MehdiMamas/claude-sync";
 const API = "/repos/MehdiMamas/claude-sync";
 const TOKEN = "ghs_" + "w".repeat(36);
-const OWNER = new Set(["mehdimamas"]);
+const OWNER = new Set(["alice"]);
 
 describe("triage lib", () => {
   it("trusts only a feedback label added by a trusted login", () => {
     const labelled = (login: string, name = "feedback") => [{ event: "labeled", actor: { login }, label: { name } }];
-    assert.equal(labelledByTrusted(labelled("MehdiMamas"), OWNER), true);
+    assert.equal(labelledByTrusted(labelled("Alice"), OWNER), true);
     assert.equal(labelledByTrusted(labelled("stranger"), OWNER), false);
-    assert.equal(labelledByTrusted(labelled("MehdiMamas", "type:bug"), OWNER), false);
-    assert.equal(labelledByTrusted([{ event: "unlabeled", actor: { login: "MehdiMamas" }, label: { name: "feedback" } }], OWNER), false);
+    assert.equal(labelledByTrusted(labelled("Alice", "type:bug"), OWNER), false);
+    assert.equal(labelledByTrusted([{ event: "unlabeled", actor: { login: "Alice" }, label: { name: "feedback" } }], OWNER), false);
     assert.equal(labelledByTrusted([], OWNER), false);
-    assert.deepEqual([...trustedLogins("MehdiMamas", " Helper , ,bot2")], ["mehdimamas", "helper", "bot2"]);
+    assert.deepEqual([...trustedLogins("Alice", " Helper , ,bot2")], ["alice", "helper", "bot2"]);
   });
 
   it("reads the verdict and refuses an answer without one", () => {
@@ -55,11 +55,11 @@ describe("triage lib", () => {
       `token ghp_${"a".repeat(36)} and ghr_${"b".repeat(36)}`,
       `oauth sk-ant-oat01-${"c".repeat(40)}`,
       `jwt eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJydW5uZXIifQ.c2lnbmF0dXJlLXZhbHVl`,
-      `C:\\Users\\Mehdi\\.claude\\settings.json and /Users/alice/.claude and /home/bob/x`,
+      `C:\\Users\\carol\\.claude\\settings.json and /Users/alice/.claude and /home/bob/x`,
       `mail me at someone.else@example.co.uk`,
     ].join("\n");
     const out = scrub(text);
-    for (const leak of ["a".repeat(36), "b".repeat(36), "c".repeat(40), "eyJzdWIiOiJydW5uZXIifQ", "Mehdi", "alice", "bob", "someone.else"]) {
+    for (const leak of ["a".repeat(36), "b".repeat(36), "c".repeat(40), "eyJzdWIiOiJydW5uZXIifQ", "carol", "alice", "bob", "someone.else"]) {
       assert.ok(!out.includes(leak), `${leak} left in: ${out}`);
     }
     assert.ok(out.includes("C:\\Users\\[user]\\.claude\\settings.json"));
@@ -68,7 +68,7 @@ describe("triage lib", () => {
   });
 
   it("breaks mentions and closing keywords", () => {
-    const out = neutralize("cc @MehdiMamas and @org/team; this fixes #12, Closes: #3, resolved MehdiMamas/claude-sync#4; mail a@b");
+    const out = neutralize("cc @Alice and @org/team; this fixes #12, Closes: #3, resolved MehdiMamas/claude-sync#4; mail a@b");
     assert.ok(!/(^|\s)@[A-Za-z]/.test(out), out);
     assert.ok(!/\bfixes #12/.test(out) && !/Closes: #3/.test(out) && !/resolved MehdiMamas/.test(out), out);
     // Related issues still link.
@@ -170,7 +170,7 @@ describe("triage run", () => {
     return { number, title: `Report ${number}`, body: `Body of ${number}`, state, user: { login: "friend" }, labels: labels.map((name) => ({ name })) };
   }
 
-  function routes(number: number, labels: string[], actor = "MehdiMamas", comments: unknown[] = []): void {
+  function routes(number: number, labels: string[], actor = "Alice", comments: unknown[] = []): void {
     fm.on("GET", `${API}/issues/${number}`, issue(number, labels));
     fm.on("GET", `${API}/issues/${number}/comments?per_page=100&page=1`, comments);
     fm.on("GET", `${API}/issues/${number}/events?per_page=100&page=1`, [
@@ -211,7 +211,7 @@ describe("triage run", () => {
     routes(8, ["feedback"], "stranger");
     routes(9, ["feedback", "triaged"]);
     const out = join(dir, "out");
-    const queue = await prepare({ repo: REPO, token: TOKEN, log, owner: "MehdiMamas", issue: "all", force: false, out, attachments: clone });
+    const queue = await prepare({ repo: REPO, token: TOKEN, log, owner: "Alice", issue: "all", force: false, out, attachments: clone });
 
     assert.deepEqual(queue.issues.map((q) => q.number), [7]);
     const q = queue.issues[0];
@@ -230,11 +230,11 @@ describe("triage run", () => {
 
   it("prepare takes one issue, and --force re-triages it", async () => {
     routes(9, ["feedback", "triaged"]);
-    let queue = await prepare({ repo: REPO, token: TOKEN, log, owner: "MehdiMamas", issue: "9", force: false, out: dir });
+    let queue = await prepare({ repo: REPO, token: TOKEN, log, owner: "Alice", issue: "9", force: false, out: dir });
     assert.equal(queue.issues.length, 0);
-    queue = await prepare({ repo: REPO, token: TOKEN, log, owner: "MehdiMamas", issue: "9", force: true, out: dir });
+    queue = await prepare({ repo: REPO, token: TOKEN, log, owner: "Alice", issue: "9", force: true, out: dir });
     assert.deepEqual(queue.issues.map((q) => [q.number, q.attachmentsDir]), [[9, null]]);
-    await assert.rejects(prepare({ repo: REPO, token: TOKEN, log, owner: "MehdiMamas", issue: "x", force: false, out: dir }), /--issue/);
+    await assert.rejects(prepare({ repo: REPO, token: TOKEN, log, owner: "Alice", issue: "x", force: false, out: dir }), /--issue/);
   });
 
   function queueOf(numbers: number[], force = false): Queue {
@@ -279,7 +279,7 @@ describe("triage run", () => {
       runs++;
       return req.addDirs.map((d) => `=== ISSUE ${basename(d)} ===\nVERDICT: ok\nREASON: r\n\nwrite-up`).join("\n");
     };
-    const base = { repo: REPO, token: TOKEN, log, owner: "MehdiMamas", issue: "all", force: false, out: dir, sha: "abcdef1234" };
+    const base = { repo: REPO, token: TOKEN, log, owner: "Alice", issue: "all", force: false, out: dir, sha: "abcdef1234" };
     const opts = { model: "sonnet", cwd: dir };
     const waiting = await runTriage(base, runner, opts);
     assert.equal(waiting.status, "waiting");
@@ -305,7 +305,7 @@ describe("triage run", () => {
 
   it("post comments the sanitized write-up and labels it triaged", async () => {
     queueOf([7]);
-    writeFileSync(join(dir, "7", "result.json"), JSON.stringify({ verdict: "ok", reason: "x", body: "### Claude's read\nHi @someone, see C:\\Users\\Mehdi\\x" }));
+    writeFileSync(join(dir, "7", "result.json"), JSON.stringify({ verdict: "ok", reason: "x", body: "### Claude's read\nHi @someone, see C:\\Users\\carol\\x" }));
     routes(7, ["feedback"]);
     fm.on("POST", `${API}/issues/7/comments`, Response.json({}, { status: 201 }));
     fm.on("POST", `${API}/issues/7/labels`, []);
@@ -344,7 +344,7 @@ describe("triage run", () => {
     writeFileSync(join(dir, "7", "result.json"), JSON.stringify({ verdict: "ok", reason: "x", body: "b" }));
     writeFileSync(join(dir, "8", "result.json"), JSON.stringify({ error: "boom" }));
     writeFileSync(join(dir, "9", "result.json"), JSON.stringify({ verdict: "ok", reason: "x", body: "b" }));
-    routes(7, ["feedback"], "MehdiMamas", [{ body: `${MARKER} sha=1 -->` }]);
+    routes(7, ["feedback"], "Alice", [{ body: `${MARKER} sha=1 -->` }]);
     routes(9, ["feedback"]);
     fm.on("POST", `${API}/issues/9/comments`, 403);
     assert.equal(await post({ repo: REPO, token: TOKEN, log, out: dir, sha: "abc" }), 2);
