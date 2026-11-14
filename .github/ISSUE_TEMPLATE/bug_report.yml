@@ -17,7 +17,7 @@ body:
     id: version
     attributes:
       label: claude-sync version
-      description: Run `claude-sync-cli version` (headless) or open the app and check the About section in Settings.
+      description: Run `claude-sync-cli version` (headless) or open Settings in the app (it says "You have version ..." ).
     validations:
       required: true
   - type: dropdown
