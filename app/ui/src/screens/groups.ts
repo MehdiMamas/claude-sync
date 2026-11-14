@@ -80,7 +80,7 @@ function discoveredRow(id: GroupId, reload: () => void): HTMLElement {
 }
 
 function createForm(onDone: () => void): HTMLElement {
-  const name = h("input", { id: "g-name", required: true, placeholder: "Mehdi & friends", autocomplete: "off" });
+  const name = h("input", { id: "g-name", required: true, placeholder: "Alice & friends", autocomplete: "off" });
   const repo = h("input", { id: "g-repo", value: "claude-sync-data", autocomplete: "off", spellcheck: "false" });
   const submit = h("button", { class: "primary", type: "submit" }, "Create group");
   const claudeMd = claudeMdEditor("g-md", true);
