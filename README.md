@@ -1,4 +1,25 @@
-# claude-sync
+<p align="center">
+  <img src="docs/images/icon.png" width="96" height="96" alt="claude-sync logo">
+</p>
+
+<h1 align="center">claude-sync</h1>
+
+<p align="center">
+  Share a Claude Code setup with a group of friends, through one private GitHub repo.<br>
+  Settings, <code>CLAUDE.md</code>, skills, agents, commands and plugin marketplaces stay in step on every machine.
+</p>
+
+<p align="center">
+  <a href="https://github.com/MehdiMamas/claude-sync/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/MehdiMamas/claude-sync/ci.yml?branch=main&label=CI" alt="CI"></a>
+  <a href="https://github.com/MehdiMamas/claude-sync/releases/latest"><img src="https://img.shields.io/github/v/release/MehdiMamas/claude-sync" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/MehdiMamas/claude-sync" alt="License: MIT"></a>
+  <a href="https://github.com/MehdiMamas/claude-sync/releases"><img src="https://img.shields.io/github/downloads/MehdiMamas/claude-sync/total" alt="Downloads"></a>
+  <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux%20(beta)-blue" alt="Platforms: Windows, macOS, Linux (beta)">
+</p>
+
+<p align="center">
+  <img src="docs/images/demo.gif" width="620" alt="The claude-sync window: the list of groups, a group with two CLAUDE.md changes to review, accepting them, then Settings">
+</p>
 
 claude-sync is a small desktop app that shares a Claude Code setup with a group of friends. The group shares settings, `CLAUDE.md` instructions, skills, subagents, slash commands, output styles and plugin marketplaces. Everything lives in a private GitHub repo that one member of the group owns.
 
@@ -8,7 +29,36 @@ It runs on Windows and macOS. Linux (x86_64, `.deb` and `.AppImage`) is in beta:
 
 ## Screenshots
 
-No screenshots yet.
+<p align="center">
+  <img src="docs/images/groups-light.png" width="460" alt="Groups screen in light mode: invitations, your groups and groups you can join">
+  <img src="docs/images/groups-dark.png" width="460" alt="The same screen in dark mode">
+</p>
+
+<p align="center">
+  <img src="docs/images/group-light.png" width="460" alt="A group's page in light mode, with two CLAUDE.md changes from other members waiting to be accepted or declined">
+  <img src="docs/images/group-dark.png" width="460" alt="The same page in dark mode">
+</p>
+
+<p align="center">
+  <img src="docs/images/settings-light.png" width="460" alt="Settings in light mode: sync interval, start at login and personal memory">
+  <img src="docs/images/settings-dark.png" width="460" alt="Settings in dark mode">
+</p>
+
+(The screenshots use made-up people and groups.)
+
+## What you get
+
+- One private GitHub repo holds the group's setup; a change reaches every member's machine within about a minute.
+- You choose what lands on your machine: changes to the shared `CLAUDE.md` wait for your Accept or Decline.
+- Your own `CLAUDE.md` and Claude's memories can follow you between your computers, in a private repo on your account.
+- Runs in the tray, starts at login; a headless `claude-sync-cli` covers servers and WSL.
+- Sign-in uses GitHub's device flow; the token stays in the operating system's keychain.
+
+## How it works
+
+1. The host creates a group: a private repo on their GitHub account with the shared files.
+2. Members join by invitation. Only the host can change the group; members propose changes as pull requests.
+3. The app on each machine compares the repo with your `~/.claude` folder and applies the differences, asking before it shares or replaces anything of yours. Details are in [docs/architecture.md](docs/architecture.md).
 
 ## Install
 
