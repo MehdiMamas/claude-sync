@@ -51,10 +51,26 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> crate::Result<()> {
     std::fs::rename(&tmp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })?;
-    // Make the rename itself durable. A folder cannot be opened this way on Windows.
-    #[cfg(unix)]
-    std::fs::File::open(dir)?.sync_all()?;
+    // Make the rename itself durable. The data is already in place, so a failed folder sync
+    // is logged and the write still counts.
+    if let Err(e) = sync_dir(dir) {
+        tracing::warn!(error = %e, dir = %dir.display(), "could not sync the folder after a write");
+    }
     Ok(())
+}
+
+/// Flush a folder's entries (a rename, a new file). A folder cannot be opened this way on
+/// Windows, so there it does nothing.
+pub(crate) fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(dir)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
 }
 
 pub fn write_json<T: Serialize>(path: &Path, value: &T) -> crate::Result<()> {

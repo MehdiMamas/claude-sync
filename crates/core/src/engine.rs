@@ -2254,59 +2254,131 @@ fn remove_file_if_exists(file: &Path) -> crate::Result<()> {
 
 /// `<dir>/head.json` and `<dir>/files/<path>`.
 ///
-/// A snapshot that cannot be read (a write cut by a restart leaves empty files) is not an
-/// error: `base.old` is tried next, then the folder is kept as `base.broken` and the base is
-/// empty, so the next sync fetches the group again.
+/// A snapshot that cannot be parsed (a write cut by a restart leaves empty files) is not an
+/// error: when `base.old` is good it is restored to `base` (the corrupt folder is kept aside),
+/// else the corrupt folder is kept as `base.broken*` and the base is empty, so the next sync
+/// fetches the group again. A plain I/O error (a locked file, no permission) is not
+/// corruption: it is returned and nothing is moved.
 pub(crate) fn load_base_dir(dir: &Path) -> crate::Result<Base> {
     // `base.old` only survives a crash in the middle of `save_base`.
-    let mut last = None;
-    for d in [dir.to_path_buf(), dir.with_extension("old")] {
-        if !d.join("head.json").is_file() {
-            continue;
+    let old = dir.with_extension("old");
+    let main = read_base_if_present(dir);
+    let main = match main {
+        Some(Ok(base)) => return Ok(base),
+        Some(Err(e)) if !is_corrupt(&e) => return Err(e),
+        m => m,
+    };
+    let prev = match read_base_if_present(&old) {
+        Some(Err(e)) if !is_corrupt(&e) => return Err(e),
+        p => p,
+    };
+    let main_bad = main.as_ref().is_some_and(|r| r.is_err());
+    if let Some(Ok(base)) = prev {
+        // Put the good copy back first: the next save deletes `base.old`.
+        if main_bad {
+            tracing::warn!("the base snapshot is unreadable; restoring base.old and keeping the bad folder aside");
+            if quarantine(dir) {
+                let _ = std::fs::rename(&old, dir);
+            }
+        } else if !dir.exists() {
+            let _ = std::fs::rename(&old, dir);
         }
-        match read_base_dir(&d) {
-            Ok(base) => return Ok(base),
-            Err(e) => last = Some(e),
-        }
+        return Ok(base);
     }
-    if let Some(e) = last {
-        tracing::warn!(error = %e, "the base snapshot is unreadable; keeping it as base.broken and fetching the group again");
-        let broken = dir.with_extension("broken");
-        // A failed rename must not keep the sync stuck: the empty base is returned anyway.
-        if remove_dir_if_exists(&broken).is_ok() {
-            let _ = std::fs::rename(dir, &broken);
+    if main_bad {
+        if let Some(Err(e)) = &main {
+            tracing::warn!(error = %e, "the base snapshot is unreadable; keeping it aside and fetching the group again");
         }
+        quarantine(dir);
+    }
+    if matches!(prev, Some(Err(_))) && !dir.exists() {
+        quarantine(&old);
     }
     Ok(Base::default())
 }
 
+/// `None`: no snapshot in that folder.
+fn read_base_if_present(dir: &Path) -> Option<crate::Result<Base>> {
+    dir.join("head.json").is_file().then(|| read_base_dir(dir))
+}
+
+/// Bad content, as opposed to a read that failed for another reason.
+fn is_corrupt(e: &Error) -> bool {
+    matches!(e, Error::Json(_) | Error::Invalid(_))
+}
+
+/// Move a bad snapshot to a name that is free (`base.broken`, `base.broken.1`, ...), so an
+/// earlier one is never overwritten. A failed rename is ignored (the sync must not get stuck);
+/// returns whether the folder was moved.
+fn quarantine(dir: &Path) -> bool {
+    let name = dir.file_name().unwrap_or_default().to_string_lossy();
+    let stem = name.rsplit_once('.').map_or(&*name, |(s, _)| s).to_string();
+    for n in 0..100 {
+        let suffix = if n == 0 {
+            "broken".to_string()
+        } else {
+            format!("broken.{n}")
+        };
+        let target = dir.with_file_name(format!("{stem}.{suffix}"));
+        if target.exists() {
+            continue;
+        }
+        return std::fs::rename(dir, &target).is_ok();
+    }
+    false
+}
+
 fn read_base_dir(dir: &Path) -> crate::Result<Base> {
     let head: Head = serde_json::from_slice(&std::fs::read(dir.join("head.json"))?)?;
-    let files = match read_tree(&dir.join("files")) {
+    let files_dir = dir.join("files");
+    if files_dir.exists() && !files_dir.is_dir() {
+        return Err(Error::Invalid(format!(
+            "{} is not a folder",
+            files_dir.display()
+        )));
+    }
+    let files = match read_tree(&files_dir) {
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => FileSet::new(),
         r => r?,
     };
     Ok(Base { head, files })
 }
 
-/// Written next to the old snapshot, then swapped in.
+/// Written next to the old snapshot, then swapped in. Every file, every folder and the parent
+/// folder are synced, so a restart cannot leave the swapped-in snapshot empty. (This costs one
+/// fsync per file written, per save.)
 pub(crate) fn save_base_dir(dir: &Path, base: &Base) -> crate::Result<()> {
     let new = dir.with_extension("new");
     let old = dir.with_extension("old");
     remove_dir_if_exists(&new)?;
+    let mut dirs = std::collections::BTreeSet::new();
     for (path, bytes) in &base.files {
         let file = join_rel(&new.join("files"), path);
-        std::fs::create_dir_all(file.parent().expect("has a parent"))?;
-        let mut f = std::fs::File::create(file)?;
+        let parent = file.parent().expect("has a parent");
+        std::fs::create_dir_all(parent)?;
+        let mut f = std::fs::File::create(&file)?;
         std::io::Write::write_all(&mut f, bytes)?;
         f.sync_all()?;
+        let mut p = Some(parent);
+        while let Some(d) = p.filter(|d| d.starts_with(&new)) {
+            dirs.insert(d.to_path_buf());
+            p = d.parent();
+        }
     }
     write_json(&new.join("head.json"), &base.head)?;
+    dirs.insert(new.clone());
+    // Deepest first, then the new folder itself (its entry in the parent is synced below).
+    for d in dirs.iter().rev() {
+        crate::state::sync_dir(d)?;
+    }
     remove_dir_if_exists(&old)?;
     if dir.exists() {
         std::fs::rename(dir, &old)?;
     }
     std::fs::rename(&new, dir)?;
+    if let Some(parent) = dir.parent() {
+        crate::state::sync_dir(parent)?;
+    }
     remove_dir_if_exists(&old)
 }
 
@@ -2314,9 +2386,15 @@ pub(crate) fn save_base_dir(dir: &Path, base: &Base) -> crate::Result<()> {
 /// how the app reads repo-only files such as `schedules.json`. `None`: the group has none.
 pub fn read_base_file(paths: &Paths, id: &GroupId, path: &str) -> crate::Result<Option<Vec<u8>>> {
     let dir = paths.base_dir(id);
+    // Same choice as `load_base_dir`, without moving anything: a folder whose `head.json`
+    // cannot be parsed is skipped for `base.old`.
+    let usable = |d: &PathBuf| match read_head(d) {
+        Some(ok) => ok,
+        None => d.join("files").is_dir(),
+    };
     let Some(dir) = [dir.clone(), dir.with_extension("old")]
         .into_iter()
-        .find(|d| d.join("head.json").is_file() || d.join("files").is_dir())
+        .find(usable)
     else {
         return Ok(None);
     };
@@ -2325,6 +2403,16 @@ pub fn read_base_file(paths: &Paths, id: &GroupId, path: &str) -> crate::Result<
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
     }
+}
+
+/// `None`: no `head.json`; else whether it parses.
+fn read_head(dir: &Path) -> Option<bool> {
+    let p = dir.join("head.json");
+    p.is_file().then(|| {
+        std::fs::read(p)
+            .ok()
+            .is_some_and(|b| serde_json::from_slice::<Head>(&b).is_ok())
+    })
 }
 
 /// The group file of a snapshot, and `SchemaTooNew` when it is from a newer app: then the
@@ -4932,14 +5020,93 @@ Use tabs.
     }
 
     #[test]
-    fn a_failed_rename_to_broken_still_gives_an_empty_base() {
+    fn a_bad_base_never_overwrites_an_earlier_broken_one() {
         let t = tempfile::tempdir().unwrap();
         let dir = cut_base(&t);
-        // `base.broken` is a file, so it cannot be replaced by the folder.
-        std::fs::write(dir.with_extension("broken"), b"x").unwrap();
-        let got = load_base_dir(&dir).unwrap();
-        assert!(got.files.is_empty());
+        std::fs::create_dir(dir.with_extension("broken")).unwrap();
+        std::fs::write(dir.with_extension("broken").join("keep"), b"x").unwrap();
+        assert!(load_base_dir(&dir).unwrap().files.is_empty());
+        assert!(dir.with_extension("broken").join("keep").is_file());
+        assert!(dir.with_extension("broken.1").join("head.json").is_file());
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn a_stuck_rename_still_gives_an_empty_base() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = cut_base(&t);
+        // Every free name is taken, so the folder cannot be moved aside.
+        for n in 0..100 {
+            let name = if n == 0 {
+                "base.broken".to_string()
+            } else {
+                format!("base.broken.{n}")
+            };
+            std::fs::create_dir(t.path().join(name)).unwrap();
+        }
+        assert!(load_base_dir(&dir).unwrap().files.is_empty());
         assert!(dir.is_dir(), "left where it was");
+    }
+
+    #[test]
+    fn a_good_old_base_is_restored_over_a_bad_one() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = cut_base(&t);
+        let other = t.path().join("other");
+        save_base_dir(&other, &sample_base("c0")).unwrap();
+        std::fs::rename(&other, dir.with_extension("old")).unwrap();
+        assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c0");
+        // The good copy is back in place, so a save cannot delete the only one.
+        assert!(!dir.with_extension("old").exists());
+        assert!(dir.with_extension("broken").join("head.json").is_file());
+        assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c0");
+    }
+
+    #[test]
+    fn a_missing_base_with_an_old_one_restores_it() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("base");
+        save_base_dir(&dir, &sample_base("c0")).unwrap();
+        std::fs::rename(&dir, dir.with_extension("old")).unwrap();
+        assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c0");
+        assert!(dir.join("head.json").is_file());
+        assert!(!dir.with_extension("old").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_io_error_is_not_corruption() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("base");
+        save_base_dir(&dir, &sample_base("c1")).unwrap();
+        let file = dir.join("files").join("agents").join("a.md");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&file).is_ok() {
+            return; // running as root: permissions do not apply
+        }
+        assert!(load_base_dir(&dir).is_err());
+        assert!(dir.join("head.json").is_file(), "not moved");
+        assert!(!dir.with_extension("broken").exists());
+    }
+
+    #[test]
+    fn read_base_file_falls_back_to_the_old_base_on_an_empty_head() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            claude_home: t.path().join("claude"),
+            state_dir: t.path().join("state"),
+        };
+        let id = GroupId::new("ana", group::DEFAULT_REPO);
+        let dir = paths.base_dir(&id);
+        save_base_dir(&dir, &sample_base("c1")).unwrap();
+        std::fs::write(dir.join("head.json"), b"").unwrap();
+        let other = t.path().join("other");
+        save_base_dir(&other, &sample_base("c0")).unwrap();
+        std::fs::rename(&other, dir.with_extension("old")).unwrap();
+        let got = read_base_file(&paths, &id, "agents/a.md").unwrap();
+        assert_eq!(got.as_deref(), Some(&b"base\n"[..]));
+        assert!(dir.is_dir(), "read only: nothing moved");
     }
 
     #[test]
