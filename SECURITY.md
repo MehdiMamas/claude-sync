@@ -4,7 +4,7 @@ Please do not report security problems in a public issue, and do not use the app
 
 Report them privately instead:
 
-- On GitHub: open this repo's **Security** tab and click **Report a vulnerability**.
+- On GitHub: open this repo's **Security** tab and click **Report a vulnerability** (a private advisory only the maintainer can read).
 - Or by email: mehdimamasxd@gmail.com.
 
 Say what the problem is, how to reproduce it, and which version and operating system you used. You will get an answer as soon as possible. Fixes ship in a new release, and the app updates itself.

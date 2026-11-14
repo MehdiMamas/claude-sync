@@ -1,6 +1,11 @@
 # Contributing
 
-Issues and pull requests are welcome. For a big change, open an issue first so we can agree on the approach.
+Thanks for helping. Issues and pull requests are welcome. For a big change, open an issue first so we can agree on the approach.
+
+- Questions and ideas: [Discussions](https://github.com/MehdiMamas/claude-sync/discussions).
+- Bugs and concrete requests: [Issues](https://github.com/MehdiMamas/claude-sync/issues). The ones labelled [good first issue](https://github.com/MehdiMamas/claude-sync/labels/good%20first%20issue) are small and self-contained; [help wanted](https://github.com/MehdiMamas/claude-sync/labels/help%20wanted) ones need more time or a platform you have.
+- Security problems: privately, see [SECURITY.md](SECURITY.md). Never in a public issue.
+- Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Set up
 
@@ -32,5 +37,7 @@ pnpm -C app/ui build
 - Keep one change per pull request.
 - In the description, paste the commands you ran with their exit codes and test counts, and name the operating system.
 - Never commit tokens or keys. The app's secret scan patterns are in `crates/core/src/secrets.rs`.
+
+To be listed as a contributor, comment `@all-contributors please add @<your-login> for <contribution type>` on your issue or pull request (types: `code`, `doc`, `test`, `bug`, `ideas`, `platform`, `translation`).
 
 By contributing you agree that your work is licensed under the [MIT License](LICENSE).
