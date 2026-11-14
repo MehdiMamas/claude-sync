@@ -5128,6 +5128,8 @@ Use tabs.
         assert!(!dir.with_extension("old").exists());
     }
 
+    // A folder cannot be opened to set its time on Windows.
+    #[cfg(unix)]
     #[test]
     fn only_the_newest_broken_copies_are_kept() {
         let t = tempfile::tempdir().unwrap();
