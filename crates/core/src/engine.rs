@@ -2357,7 +2357,7 @@ fn prune_broken(dir: &Path, stem: &str) {
         })
         .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
         .collect();
-    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.sort_by_key(|f| std::cmp::Reverse(f.0));
     for (_, p) in found.into_iter().skip(KEEP_BROKEN) {
         let _ = remove_dir_if_exists(&p);
     }
