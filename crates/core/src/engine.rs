@@ -2266,6 +2266,7 @@ pub(crate) fn load_base_dir(dir: &Path) -> crate::Result<Base> {
 type Rename<'a> = &'a dyn Fn(&Path, &Path) -> std::io::Result<()>;
 
 fn load_base_dir_with(dir: &Path, rename: Rename) -> crate::Result<Base> {
+    let _io = BASE_IO.lock().unwrap_or_else(|e| e.into_inner());
     // `base.old` only survives a crash in the middle of `save_base`.
     let old = dir.with_extension("old");
     let main = read_base_if_present(dir);
@@ -2315,50 +2316,62 @@ fn is_corrupt(e: &Error) -> bool {
     matches!(e, Error::Json(_) | Error::Invalid(_))
 }
 
-/// Move a bad snapshot to a name that is free (`base.broken`, `base.broken.1`, ...), so an
-/// earlier one is never overwritten, and only the newest `KEEP_BROKEN` are kept. A failed rename
-/// is ignored (the sync must not get stuck); returns whether the folder was moved.
+/// Move a bad snapshot to `<stem>.broken.<n>`, where `n` is higher than every copy already
+/// there (the time in milliseconds, or one more than the highest number when the clock went
+/// back), so the name orders the copies and an earlier one is never overwritten. Only the
+/// newest `KEEP_BROKEN` are kept; the one just moved is always among them. A failed rename is
+/// ignored (the sync must not get stuck); returns whether the folder was moved.
 fn quarantine(dir: &Path, rename: Rename) -> bool {
     let name = dir.file_name().unwrap_or_default().to_string_lossy();
     let stem = name.rsplit_once('.').map_or(&*name, |(s, _)| s).to_string();
-    for n in 0..100 {
-        let suffix = if n == 0 {
-            "broken".to_string()
-        } else {
-            format!("broken.{n}")
-        };
-        let target = dir.with_file_name(format!("{stem}.{suffix}"));
-        if target.exists() {
-            continue;
-        }
-        let moved = rename(dir, &target).is_ok();
-        if moved {
-            prune_broken(dir, &stem);
-        }
-        return moved;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    let n = broken_copies(dir, &stem)
+        .last()
+        .map_or(now, |(top, _)| now.max(top + 1));
+    let target = dir.with_file_name(format!("{stem}.broken.{n}"));
+    let moved = rename(dir, &target).is_ok();
+    if moved {
+        prune_broken(dir, &stem);
     }
-    false
+    moved
 }
 
 const KEEP_BROKEN: usize = 3;
 
-/// Delete all but the newest `KEEP_BROKEN` `<stem>.broken*` folders next to `dir`.
-fn prune_broken(dir: &Path, stem: &str) {
-    let Some(parent) = dir.parent() else { return };
+/// The `<stem>.broken*` folders next to `dir`, oldest first. `base.broken` (an earlier
+/// naming) counts as 0, `base.broken.<n>` as `n`.
+fn broken_copies(dir: &Path, stem: &str) -> Vec<(u64, PathBuf)> {
+    let Some(parent) = dir.parent() else {
+        return Vec::new();
+    };
     let Ok(entries) = std::fs::read_dir(parent) else {
-        return;
+        return Vec::new();
     };
     let prefix = format!("{stem}.broken");
     let mut found: Vec<_> = entries
         .flatten()
-        .filter(|e| {
+        .filter_map(|e| {
             let n = e.file_name().to_string_lossy().into_owned();
-            n == prefix || n.starts_with(&format!("{prefix}."))
+            let rest = n.strip_prefix(&prefix)?;
+            let num = match rest.strip_prefix('.') {
+                None if rest.is_empty() => 0,
+                Some(d) => d.parse().ok()?,
+                None => return None,
+            };
+            Some((num, e.path()))
         })
-        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
         .collect();
-    found.sort_by_key(|f| std::cmp::Reverse(f.0));
-    for (_, p) in found.into_iter().skip(KEEP_BROKEN) {
+    found.sort();
+    found
+}
+
+/// Delete all but the newest `KEEP_BROKEN` `<stem>.broken*` folders next to `dir`.
+fn prune_broken(dir: &Path, stem: &str) {
+    let found = broken_copies(dir, stem);
+    let drop = found.len().saturating_sub(KEEP_BROKEN);
+    for (_, p) in found.into_iter().take(drop) {
         let _ = remove_dir_if_exists(&p);
     }
 }
@@ -2376,8 +2389,30 @@ fn read_base_dir(dir: &Path) -> crate::Result<Base> {
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => FileSet::new(),
         r => r?,
     };
+    // A write cut by a restart leaves 0-byte files under a valid `head.json`. Only the files
+    // the save itself wrote empty (`empty.json`) may be empty.
+    let empty: std::collections::BTreeSet<String> = match std::fs::read(dir.join(EMPTY_FILES)) {
+        Ok(b) => serde_json::from_slice(&b)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(e) => return Err(e.into()),
+    };
+    if let Some((path, _)) = files
+        .iter()
+        .find(|(p, b)| b.is_empty() && !empty.contains(*p))
+    {
+        return Err(Error::Invalid(format!(
+            "{path} in the base snapshot is empty"
+        )));
+    }
     Ok(Base { head, files })
 }
+
+/// Next to `head.json`: the paths of files that are empty in the group itself.
+const EMPTY_FILES: &str = "empty.json";
+
+/// One thread at a time reads or swaps a base folder: a read of the status (the window) must
+/// not move a folder aside while a save swaps it in.
+static BASE_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Written next to the old snapshot, then swapped in. Every file, every folder and the parent
 /// folder are synced, so a restart cannot leave the swapped-in snapshot empty. (This costs one
@@ -2389,6 +2424,7 @@ pub(crate) fn save_base_dir(dir: &Path, base: &Base) -> crate::Result<()> {
 type SyncDir<'a> = &'a dyn Fn(&Path) -> std::io::Result<()>;
 
 fn save_base_dir_with(dir: &Path, base: &Base, sync: SyncDir) -> crate::Result<()> {
+    let _io = BASE_IO.lock().unwrap_or_else(|e| e.into_inner());
     let new = dir.with_extension("new");
     let old = dir.with_extension("old");
     remove_dir_if_exists(&new)?;
@@ -2405,6 +2441,16 @@ fn save_base_dir_with(dir: &Path, base: &Base, sync: SyncDir) -> crate::Result<(
             dirs.insert(d.to_path_buf());
             p = d.parent();
         }
+    }
+    std::fs::create_dir_all(&new)?;
+    let empty: Vec<&String> = base
+        .files
+        .iter()
+        .filter(|(_, b)| b.is_empty())
+        .map(|(p, _)| p)
+        .collect();
+    if !empty.is_empty() {
+        write_json(&new.join(EMPTY_FILES), &empty)?;
     }
     write_json(&new.join("head.json"), &base.head)?;
     dirs.insert(new.clone());
@@ -5025,7 +5071,7 @@ Use tabs.
         let got = load_base_dir(&dir).unwrap();
         assert!(got.files.is_empty() && got.head.commit.is_empty());
         assert!(!dir.exists());
-        assert!(dir.with_extension("broken").join("head.json").is_file());
+        assert!(broken(&dir).last().unwrap().join("head.json").is_file());
         // Saving afterwards works and loads back.
         save_base_dir(&dir, &sample_base("c2")).unwrap();
         assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c2");
@@ -5037,7 +5083,7 @@ Use tabs.
         let dir = cut_base(&t);
         std::fs::write(dir.join("head.json"), b"{\"commit\": \"c1\", ").unwrap();
         assert!(load_base_dir(&dir).unwrap().files.is_empty());
-        assert!(dir.with_extension("broken").is_dir());
+        assert!(!broken(&dir).is_empty());
     }
 
     #[test]
@@ -5049,7 +5095,7 @@ Use tabs.
         std::fs::remove_dir_all(dir.join("files")).unwrap();
         std::fs::write(dir.join("files"), b"x").unwrap();
         assert!(load_base_dir(&dir).unwrap().files.is_empty());
-        assert!(dir.with_extension("broken").is_dir());
+        assert!(!broken(&dir).is_empty());
     }
 
     #[test]
@@ -5060,7 +5106,7 @@ Use tabs.
         let got = load_base_dir(&dir).unwrap();
         assert_eq!(got.head.commit, "c1");
         assert_eq!(got.files.len(), 1);
-        assert!(!dir.with_extension("broken").exists());
+        assert!(broken(&dir).is_empty());
     }
 
     #[test]
@@ -5073,7 +5119,7 @@ Use tabs.
         std::fs::create_dir_all(new.join("files")).unwrap();
         std::fs::write(new.join("files").join("x.md"), b"half").unwrap();
         assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c1");
-        assert!(!dir.with_extension("broken").exists());
+        assert!(broken(&dir).is_empty());
     }
 
     #[test]
@@ -5084,7 +5130,9 @@ Use tabs.
         std::fs::write(dir.with_extension("broken").join("keep"), b"x").unwrap();
         assert!(load_base_dir(&dir).unwrap().files.is_empty());
         assert!(dir.with_extension("broken").join("keep").is_file());
-        assert!(dir.with_extension("broken.1").join("head.json").is_file());
+        let copies = broken(&dir);
+        assert_eq!(copies.len(), 2);
+        assert!(copies[1].join("head.json").is_file());
         assert!(!dir.exists());
     }
 
@@ -5134,41 +5182,99 @@ Use tabs.
         assert!(!dir.with_extension("old").exists());
     }
 
-    // A folder cannot be opened to set its time on Windows.
-    #[cfg(unix)]
+    /// The `base.broken*` copies next to `dir`, oldest first.
+    fn broken(dir: &Path) -> Vec<PathBuf> {
+        let stem = dir.file_name().unwrap().to_string_lossy().into_owned();
+        broken_copies(dir, &stem).into_iter().map(|c| c.1).collect()
+    }
+
+    /// Break the base with `mark` as its `head.json` and load it, so it is moved aside.
+    fn break_and_load(dir: &Path, mark: &str) {
+        save_base_dir(dir, &sample_base("c1")).unwrap();
+        std::fs::write(dir.join("head.json"), mark).unwrap();
+        load_base_dir(dir).unwrap();
+    }
+
+    fn marks(dir: &Path) -> Vec<String> {
+        broken(dir)
+            .iter()
+            .map(|c| std::fs::read_to_string(c.join("head.json")).unwrap())
+            .collect()
+    }
+
     #[test]
     fn only_the_newest_broken_copies_are_kept() {
         let t = tempfile::tempdir().unwrap();
         let dir = t.path().join("base");
-        let now = std::time::SystemTime::now();
-        for n in 0..5u64 {
-            let name = if n == 0 {
-                "base.broken".to_string()
-            } else {
-                format!("base.broken.{n}")
-            };
-            let p = t.path().join(name);
-            std::fs::create_dir(&p).unwrap();
-            std::fs::File::open(&p)
-                .unwrap()
-                .set_modified(now - std::time::Duration::from_secs(1000 - n * 10))
-                .unwrap();
+        for n in 0..6 {
+            break_and_load(&dir, &format!("bad{n}"));
         }
-        save_base_dir(&dir, &sample_base("c1")).unwrap();
-        std::fs::write(dir.join("head.json"), b"").unwrap();
-        load_base_dir(&dir).unwrap();
-        let mut left: Vec<_> = std::fs::read_dir(t.path())
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .filter(|n| n.starts_with("base.broken"))
-            .collect();
-        left.sort();
+        // No times are set: the order comes from the names, so the copy just moved aside
+        // is always kept.
+        assert_eq!(marks(&dir), ["bad3", "bad4", "bad5"]);
+    }
+
+    #[test]
+    fn the_copy_just_moved_aside_survives_a_clock_gone_back() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("base");
+        for n in [10u64, 20, 30, 99_999_999_999_999] {
+            std::fs::create_dir(t.path().join(format!("base.broken.{n}"))).unwrap();
+        }
+        std::fs::create_dir(t.path().join("base.broken")).unwrap();
+        break_and_load(&dir, "newest");
+        let left = marks_or_empty(&dir);
         assert_eq!(left.len(), KEEP_BROKEN);
-        assert!(
-            left.contains(&"base.broken.5".to_string()),
-            "the new one is kept: {left:?}"
-        );
-        assert!(!left.contains(&"base.broken".to_string()));
+        assert_eq!(left.last().unwrap(), "newest");
+    }
+
+    /// Like `marks`, but a copy without a `head.json` reads as empty.
+    fn marks_or_empty(dir: &Path) -> Vec<String> {
+        broken(dir)
+            .iter()
+            .map(|c| std::fs::read_to_string(c.join("head.json")).unwrap_or_default())
+            .collect()
+    }
+
+    #[test]
+    fn an_empty_file_under_a_valid_head_is_a_bad_base() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("base");
+        save_base_dir(&dir, &sample_base("c1")).unwrap();
+        std::fs::write(dir.join("files").join("agents").join("a.md"), b"").unwrap();
+        // The head still parses; the file does not hold what the save wrote.
+        assert!(read_head(&dir) == Some(true));
+        let got = load_base_dir(&dir).unwrap();
+        assert!(got.files.is_empty() && got.head.commit.is_empty());
+        assert!(!dir.exists());
+        assert_eq!(broken(&dir).len(), 1);
+    }
+
+    #[test]
+    fn an_empty_file_under_a_valid_head_loads_the_old_base() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("base");
+        save_base_dir(&dir, &sample_base("c1")).unwrap();
+        std::fs::write(dir.join("files").join("agents").join("a.md"), b"").unwrap();
+        let other = t.path().join("other");
+        save_base_dir(&other, &sample_base("c0")).unwrap();
+        std::fs::rename(&other, dir.with_extension("old")).unwrap();
+        let got = load_base_dir(&dir).unwrap();
+        assert_eq!(got.head.commit, "c0");
+        assert_eq!(got.files["agents/a.md"], b"base\n");
+        assert!(dir.join("head.json").is_file());
+        assert_eq!(broken(&dir).len(), 1);
+    }
+
+    #[test]
+    fn a_file_that_is_empty_in_the_group_is_a_good_base() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("base");
+        let mut base = sample_base("c1");
+        base.files.insert("skills/.keep".into(), Vec::new());
+        save_base_dir(&dir, &base).unwrap();
+        assert_eq!(load_base_dir(&dir).unwrap(), base);
+        assert!(broken(&dir).is_empty());
     }
 
     /// Run `f` and return what it logged at WARN or above, one line per event.
@@ -5229,9 +5335,11 @@ Use tabs.
         assert!(logged[0].contains("the base snapshot is unreadable"));
         assert!(got.files.is_empty() && got.head.commit.is_empty());
         assert!(!dir.exists() && !old.exists());
-        assert!(dir.with_extension("broken").join("head.json").is_file());
-        // base.old goes aside too, under the next free name.
-        assert!(dir.with_extension("broken.1").join("head.json").is_file());
+        assert!(broken(&dir).last().unwrap().join("head.json").is_file());
+        // base.old goes aside too, as a newer copy.
+        let copies = broken(&dir);
+        assert_eq!(copies.len(), 2);
+        assert!(copies.iter().all(|c| c.join("head.json").is_file()));
     }
 
     #[test]
@@ -5244,7 +5352,7 @@ Use tabs.
         assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c0");
         // The good copy is back in place, so a save cannot delete the only one.
         assert!(!dir.with_extension("old").exists());
-        assert!(dir.with_extension("broken").join("head.json").is_file());
+        assert!(broken(&dir).last().unwrap().join("head.json").is_file());
         assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c0");
     }
 
@@ -5273,7 +5381,7 @@ Use tabs.
         }
         assert!(load_base_dir(&dir).is_err());
         assert!(dir.join("head.json").is_file(), "not moved");
-        assert!(!dir.with_extension("broken").exists());
+        assert!(broken(&dir).is_empty());
     }
 
     #[test]
@@ -5321,7 +5429,25 @@ Use tabs.
             }
         }
         bo.engine.sync_all().await.unwrap();
-        assert!(base.with_extension("broken").is_dir());
+        assert!(!broken(&base).is_empty());
+        assert_eq!(bo.engine.load_base(&id).unwrap().head, repo.current_head());
+    }
+
+    #[tokio::test]
+    async fn sync_recovers_from_empty_files_under_a_valid_head() {
+        let (_, id, repo, bo) = joined_host().await;
+        let base = bo.engine.paths.base_dir(&id);
+        let mut zeroed = 0;
+        for entry in std::fs::read_dir(base.join("files")).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_file() {
+                std::fs::write(p, b"").unwrap();
+                zeroed += 1;
+            }
+        }
+        assert!(zeroed > 0 && read_head(&base) == Some(true));
+        bo.engine.sync_all().await.unwrap();
+        assert!(!broken(&base).is_empty());
         assert_eq!(bo.engine.load_base(&id).unwrap().head, repo.current_head());
     }
 
@@ -5334,7 +5460,7 @@ Use tabs.
         let base = bo.engine.paths.base_dir(&id);
         std::fs::write(base.join("head.json"), b"").unwrap();
         bo.engine.sync_all().await.unwrap();
-        assert!(base.with_extension("broken").is_dir());
+        assert!(!broken(&base).is_empty());
         assert_eq!(commit_count(&repo), before, "nothing pushed");
         // The edit is kept; the delete stays a local edit (held, not pushed, not undone).
         assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "mine\n");
