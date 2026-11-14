@@ -2513,7 +2513,22 @@ fn sync_dir_logged(dir: &Path, sync: SyncDir) {
 /// how the app reads repo-only files such as `schedules.json`. `None`: the group has none.
 pub fn read_base_file(paths: &Paths, id: &GroupId, path: &str) -> crate::Result<Option<Vec<u8>>> {
     // Same choice as `load_base_dir` (including the empty-file check), without moving anything.
-    Ok(peek_base_dir(&paths.base_dir(id))?.files.remove(path))
+    let dir = paths.base_dir(id);
+    // A folder with files but no `head.json` (written by hand or by a test) is read as it is.
+    let headless = |d: &Path| !d.join("head.json").is_file() && d.join("files").is_dir();
+    if let Some(d) = [dir.clone(), dir.with_extension("old")]
+        .into_iter()
+        .find(|d| headless(d))
+        .filter(|_| !dir.join("head.json").is_file())
+    {
+        let _io = BASE_IO.lock().unwrap_or_else(|e| e.into_inner());
+        return match std::fs::read(join_rel(&d.join("files"), path)) {
+            Ok(b) => Ok(Some(b)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        };
+    }
+    Ok(peek_base_dir(&dir)?.files.remove(path))
 }
 
 /// `None`: no `head.json`; else whether it parses.
