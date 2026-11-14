@@ -15,14 +15,13 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/MehdiMamas/claude-sync" alt="License: MIT"></a>
   <a href="https://github.com/MehdiMamas/claude-sync/releases"><img src="https://img.shields.io/github/downloads/MehdiMamas/claude-sync/total" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux%20(beta)-blue" alt="Platforms: Windows, macOS, Linux (beta)">
+  <a href="https://scorecard.dev/viewer/?uri=github.com/MehdiMamas/claude-sync"><img src="https://api.scorecard.dev/projects/github.com/MehdiMamas/claude-sync/badge" alt="OpenSSF Scorecard"></a>
+  <a href="https://github.com/MehdiMamas/claude-sync/actions/workflows/reuse.yml"><img src="https://github.com/MehdiMamas/claude-sync/actions/workflows/reuse.yml/badge.svg" alt="REUSE"></a>
 </p>
 
 <p align="center">
   <img src="docs/images/demo.gif" width="620" alt="The claude-sync window: the list of groups, a group with two CLAUDE.md changes to review, accepting them, then Settings">
 </p>
-
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/MehdiMamas/claude-sync/badge)](https://scorecard.dev/viewer/?uri=github.com/MehdiMamas/claude-sync)
-[![REUSE](https://github.com/MehdiMamas/claude-sync/actions/workflows/reuse.yml/badge.svg)](https://github.com/MehdiMamas/claude-sync/actions/workflows/reuse.yml)
 
 claude-sync is a small desktop app that shares a Claude Code setup with a group of friends. The group shares settings, `CLAUDE.md` instructions, skills, subagents, slash commands, output styles and plugin marketplaces. Everything lives in a private GitHub repo that one member of the group owns.
 
