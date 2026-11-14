@@ -15,6 +15,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/MehdiMamas/claude-sync" alt="License: MIT"></a>
   <a href="https://github.com/MehdiMamas/claude-sync/releases"><img src="https://img.shields.io/github/downloads/MehdiMamas/claude-sync/total" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux%20(beta)-blue" alt="Platforms: Windows, macOS, Linux (beta)">
+  <a href="https://scorecard.dev/viewer/?uri=github.com/MehdiMamas/claude-sync"><img src="https://api.scorecard.dev/projects/github.com/MehdiMamas/claude-sync/badge" alt="OpenSSF Scorecard"></a>
+  <a href="https://github.com/MehdiMamas/claude-sync/actions/workflows/reuse.yml"><img src="https://github.com/MehdiMamas/claude-sync/actions/workflows/reuse.yml/badge.svg" alt="REUSE"></a>
 </p>
 
 <p align="center">
