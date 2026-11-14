@@ -40,7 +40,7 @@ GitHub Actions run on GitHub-hosted runners only (free for a public repo): `ci.y
 
 ## 4. Group repo
 
-A private repo on the host's account, created by the app. Default name `claude-sync-data` (Mehdi's group is `MehdiMamas/claude-sync-data`). It gets the repo topic `claude-sync-group`, which is how the app recognises group repos.
+A private repo on the host's account, created by the app. Default name `claude-sync-data` (for example `<owner>/claude-sync-data`). It gets the repo topic `claude-sync-group`, which is how the app recognises group repos.
 
 The data repo is separate from this code repo. `MehdiMamas/claude-sync` is the app's public code repo; members are invited only to their group's data repo. The app reaches this repo only through the relay (updates, feedback).
 
@@ -62,8 +62,8 @@ schedules.json          scheduled Claude Code jobs (§17); repo only, never plac
 ```json
 {
   "schema": 1,
-  "name": "Mehdi & friends",
-  "members": ["MehdiMamas", "friend-login"],
+  "name": "Alice & friends",
+  "members": ["alice", "friend-login"],
   "sync": { "settings": true, "claudeMd": true, "skills": true, "agents": true, "commands": true, "outputStyles": true, "plugins": true },
   "autoAcceptClaudeMd": true
 }
@@ -169,7 +169,7 @@ The engine talks to GitHub's REST API only. It never needs `git` on the machine.
 
 **Pushing local changes.** Create blobs, a tree with `base_tree` = the remote head's tree, a commit whose parent is the remote head, then `PATCH` the ref with `force: false`. A non-fast-forward (`422`) means someone else pushed: fetch, merge, try again (at most 3 times). Never force. Before any commit, the secret scan (§9) runs on every added or changed file. A hit blocks the commit, names the file, line and pattern, and never prints the value.
 
-**Commit messages:** `<login>@<device>: <summary>` (for example `MehdiMamas@laptop-win: update skills/review`).
+**Commit messages:** `<login>@<device>: <summary>` (for example `alice@alice-desktop: update skills/review`).
 
 **Reverting a commit (host only, §5a).** `Engine::revert_commit(group, sha)` undoes one commit from the activity feed with a NEW commit on the default branch (history is never rewritten). Everything goes through the REST `RemoteRepo`: `commit_files` lists the files the commit touched (`GET /commits/{sha}`; merge commits and commits of 300+ files are refused), then each allowlisted file is put back to its content at the commit's parent (a file the commit added is deleted, one it deleted is restored). The message is `<login>@<device>: revert <sha7> (<original summary>)`, so it shows in the feed like any change. It runs the secret scan (§9) and the push path above (retry on a race, never force), then syncs so this device applies it. **Safer rather than smarter:** if any file changed again after the commit, the whole revert is refused and nothing is committed; the error names each file, the later commit and its author (`<path> changed again after this commit, in <sha7> by <login>; revert that first.`). There is no 3-way merge. `revert_preview` returns the same plan (files, action, blocked reason) without writing, for the confirm step. A member gets `Error::HostOnly`.
 
@@ -185,7 +185,7 @@ Moves the merged group state into `~/.claude` without touching anything it does 
 - **CLAUDE.md.** Each device keeps its own copy of the group's `CLAUDE.md` at `~/.claude-sync/groups/<owner>__<repo>/CLAUDE.md`. Changes other members make reach it only when the user accepts them (§7a). `~/.claude/CLAUDE.md` gets one managed block at the top, with one import line per group:
   ```
   <!-- claude-sync:begin (managed, do not edit inside) -->
-  @~/.claude-sync/groups/MehdiMamas__claude-sync-data/CLAUDE.md
+  @~/.claude-sync/groups/<owner>__claude-sync-data/CLAUDE.md
   <!-- claude-sync:end -->
   ```
   Everything outside the block is the user's. Lines that say the same thing as, or the opposite of, a line in another group or the user's own text are listed on the group page (§7b).
