@@ -2383,6 +2383,12 @@ fn read_base_dir(dir: &Path) -> crate::Result<Base> {
 /// folder are synced, so a restart cannot leave the swapped-in snapshot empty. (This costs one
 /// fsync per file written, per save.)
 pub(crate) fn save_base_dir(dir: &Path, base: &Base) -> crate::Result<()> {
+    save_base_dir_with(dir, base, &crate::state::sync_dir)
+}
+
+type SyncDir<'a> = &'a dyn Fn(&Path) -> std::io::Result<()>;
+
+fn save_base_dir_with(dir: &Path, base: &Base, sync: SyncDir) -> crate::Result<()> {
     let new = dir.with_extension("new");
     let old = dir.with_extension("old");
     remove_dir_if_exists(&new)?;
@@ -2405,7 +2411,7 @@ pub(crate) fn save_base_dir(dir: &Path, base: &Base) -> crate::Result<()> {
     // Deepest first, then the new folder itself (its entry in the parent is synced below).
     // A folder that cannot be synced (some network filesystems) is logged, not an error.
     for d in dirs.iter().rev() {
-        sync_dir_logged(d);
+        sync_dir_logged(d, sync);
     }
     // A good `base.old` next to a bad `base` is the only good copy: keep it until the swap is
     // done, and drop the bad folder instead of moving it over.
@@ -2422,13 +2428,13 @@ pub(crate) fn save_base_dir(dir: &Path, base: &Base) -> crate::Result<()> {
     }
     std::fs::rename(&new, dir)?;
     if let Some(parent) = dir.parent() {
-        sync_dir_logged(parent);
+        sync_dir_logged(parent, sync);
     }
     remove_dir_if_exists(&old)
 }
 
-fn sync_dir_logged(dir: &Path) {
-    if let Err(e) = crate::state::sync_dir(dir) {
+fn sync_dir_logged(dir: &Path, sync: SyncDir) {
+    if let Err(e) = sync(dir) {
         tracing::warn!(error = %e, dir = %dir.display(), "could not sync the folder");
     }
 }
@@ -5163,6 +5169,33 @@ Use tabs.
             "the new one is kept: {left:?}"
         );
         assert!(!left.contains(&"base.broken".to_string()));
+    }
+
+    #[test]
+    fn a_failed_folder_sync_does_not_fail_the_save() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("base");
+        save_base_dir(&dir, &sample_base("c1")).unwrap();
+        let fail = |_: &Path| Err(std::io::Error::other("EINVAL"));
+        save_base_dir_with(&dir, &sample_base("c2"), &fail).unwrap();
+        assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c2");
+        assert!(!dir.with_extension("old").exists(), "cleanup ran");
+        assert!(!dir.with_extension("new").exists());
+    }
+
+    #[test]
+    fn both_bases_bad_are_moved_aside_and_the_base_is_empty() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = cut_base(&t);
+        let old = dir.with_extension("old");
+        std::fs::create_dir(&old).unwrap();
+        std::fs::write(old.join("head.json"), b"").unwrap();
+        let got = load_base_dir(&dir).unwrap();
+        assert!(got.files.is_empty() && got.head.commit.is_empty());
+        assert!(!dir.exists() && !old.exists());
+        assert!(dir.with_extension("broken").join("head.json").is_file());
+        // base.old goes aside too, under the next free name.
+        assert!(dir.with_extension("broken.1").join("head.json").is_file());
     }
 
     #[test]
