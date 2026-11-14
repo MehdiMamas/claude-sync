@@ -1,0 +1,12 @@
+{
+  "projectName": "claude-sync",
+  "projectOwner": "MehdiMamas",
+  "repoType": "github",
+  "repoHost": "https://github.com",
+  "files": ["README.md"],
+  "imageSize": 64,
+  "commit": false,
+  "commitConvention": "none",
+  "contributorsPerLine": 7,
+  "contributors": []
+}

@@ -108,6 +108,13 @@ Sign-in needs a GitHub OAuth app with device flow turned on: set `CLAUDE_SYNC_GI
 
 The design is in [docs/architecture.md](docs/architecture.md) and releases are described in [docs/releasing.md](docs/releasing.md). To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md). To report a security problem, see [SECURITY.md](SECURITY.md).
 
+## Contributors
+
+Thanks to everyone who helps, in code, docs, testing and ideas ([emoji key](https://allcontributors.org/docs/en/emoji-key)). New here? Start with the [good first issues](https://github.com/MehdiMamas/claude-sync/labels/good%20first%20issue) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
