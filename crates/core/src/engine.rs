@@ -4865,8 +4865,9 @@ Use tabs.
         let t = tempfile::tempdir().unwrap();
         let dir = cut_base(&t);
         // The state a crash between the two renames of a save leaves.
-        let old = dir.with_extension("old");
-        save_base_dir(&old, &sample_base("c0")).unwrap();
+        let other = t.path().join("other");
+        save_base_dir(&other, &sample_base("c0")).unwrap();
+        std::fs::rename(&other, dir.with_extension("old")).unwrap();
         let got = load_base_dir(&dir).unwrap();
         assert_eq!(got.head.commit, "c0");
         assert_eq!(got.files["agents/a.md"], b"base\n");
@@ -4982,10 +4983,10 @@ Use tabs.
         bo.engine.sync_all().await.unwrap();
         assert!(base.with_extension("broken").is_dir());
         assert_eq!(commit_count(&repo), before, "nothing pushed");
-        println!(
-            "edit={:?} delete={:?}",
-            bo.apply.file(&id, "agents/a.md"),
-            bo.apply.file(&id, group::SHARED_SETTINGS)
-        );
+        // The edit is kept; the delete stays a local edit (held, not pushed, not undone).
+        assert_eq!(bo.apply.file(&id, "agents/a.md").unwrap(), "mine\n");
+        assert_eq!(bo.apply.file(&id, group::SHARED_SETTINGS), None);
+        assert_eq!(repo.file("agents/a.md").unwrap(), "base\n");
+        assert!(repo.file(group::SHARED_SETTINGS).is_some());
     }
 }
