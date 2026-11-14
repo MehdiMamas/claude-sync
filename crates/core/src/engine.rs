@@ -2260,6 +2260,12 @@ fn remove_file_if_exists(file: &Path) -> crate::Result<()> {
 /// fetches the group again. A plain I/O error (a locked file, no permission) is not
 /// corruption: it is returned and nothing is moved.
 pub(crate) fn load_base_dir(dir: &Path) -> crate::Result<Base> {
+    load_base_dir_with(dir, &|a, b| std::fs::rename(a, b))
+}
+
+type Rename<'a> = &'a dyn Fn(&Path, &Path) -> std::io::Result<()>;
+
+fn load_base_dir_with(dir: &Path, rename: Rename) -> crate::Result<Base> {
     // `base.old` only survives a crash in the middle of `save_base`.
     let old = dir.with_extension("old");
     let main = read_base_if_present(dir);
@@ -2277,11 +2283,13 @@ pub(crate) fn load_base_dir(dir: &Path) -> crate::Result<Base> {
         // Put the good copy back first: the next save deletes `base.old`.
         if main_bad {
             tracing::warn!("the base snapshot is unreadable; restoring base.old and keeping the bad folder aside");
-            if quarantine(dir) {
-                let _ = std::fs::rename(&old, dir);
+            // When the bad folder cannot be moved, delete it: the good copy must take its
+            // place, or the next save would delete the only good one.
+            if quarantine(dir, rename) || remove_dir_if_exists(dir).is_ok() {
+                let _ = rename(&old, dir);
             }
         } else if !dir.exists() {
-            let _ = std::fs::rename(&old, dir);
+            let _ = rename(&old, dir);
         }
         return Ok(base);
     }
@@ -2289,10 +2297,10 @@ pub(crate) fn load_base_dir(dir: &Path) -> crate::Result<Base> {
         if let Some(Err(e)) = &main {
             tracing::warn!(error = %e, "the base snapshot is unreadable; keeping it aside and fetching the group again");
         }
-        quarantine(dir);
+        quarantine(dir, rename);
     }
     if matches!(prev, Some(Err(_))) && !dir.exists() {
-        quarantine(&old);
+        quarantine(&old, rename);
     }
     Ok(Base::default())
 }
@@ -2308,9 +2316,9 @@ fn is_corrupt(e: &Error) -> bool {
 }
 
 /// Move a bad snapshot to a name that is free (`base.broken`, `base.broken.1`, ...), so an
-/// earlier one is never overwritten. A failed rename is ignored (the sync must not get stuck);
-/// returns whether the folder was moved.
-fn quarantine(dir: &Path) -> bool {
+/// earlier one is never overwritten, and only the newest `KEEP_BROKEN` are kept. A failed rename
+/// is ignored (the sync must not get stuck); returns whether the folder was moved.
+fn quarantine(dir: &Path, rename: Rename) -> bool {
     let name = dir.file_name().unwrap_or_default().to_string_lossy();
     let stem = name.rsplit_once('.').map_or(&*name, |(s, _)| s).to_string();
     for n in 0..100 {
@@ -2323,9 +2331,36 @@ fn quarantine(dir: &Path) -> bool {
         if target.exists() {
             continue;
         }
-        return std::fs::rename(dir, &target).is_ok();
+        let moved = rename(dir, &target).is_ok();
+        if moved {
+            prune_broken(dir, &stem);
+        }
+        return moved;
     }
     false
+}
+
+const KEEP_BROKEN: usize = 3;
+
+/// Delete all but the newest `KEEP_BROKEN` `<stem>.broken*` folders next to `dir`.
+fn prune_broken(dir: &Path, stem: &str) {
+    let Some(parent) = dir.parent() else { return };
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    let prefix = format!("{stem}.broken");
+    let mut found: Vec<_> = entries
+        .flatten()
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n == prefix || n.starts_with(&format!("{prefix}."))
+        })
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, p) in found.into_iter().skip(KEEP_BROKEN) {
+        let _ = remove_dir_if_exists(&p);
+    }
 }
 
 fn read_base_dir(dir: &Path) -> crate::Result<Base> {
@@ -2368,18 +2403,34 @@ pub(crate) fn save_base_dir(dir: &Path, base: &Base) -> crate::Result<()> {
     write_json(&new.join("head.json"), &base.head)?;
     dirs.insert(new.clone());
     // Deepest first, then the new folder itself (its entry in the parent is synced below).
+    // A folder that cannot be synced (some network filesystems) is logged, not an error.
     for d in dirs.iter().rev() {
-        crate::state::sync_dir(d)?;
+        sync_dir_logged(d);
     }
-    remove_dir_if_exists(&old)?;
+    // A good `base.old` next to a bad `base` is the only good copy: keep it until the swap is
+    // done, and drop the bad folder instead of moving it over.
+    let keep_old = old.exists() && read_head(&old) == Some(true) && read_head(dir) != Some(true);
+    if !keep_old {
+        remove_dir_if_exists(&old)?;
+    }
     if dir.exists() {
-        std::fs::rename(dir, &old)?;
+        if keep_old {
+            remove_dir_if_exists(dir)?;
+        } else {
+            std::fs::rename(dir, &old)?;
+        }
     }
     std::fs::rename(&new, dir)?;
     if let Some(parent) = dir.parent() {
-        crate::state::sync_dir(parent)?;
+        sync_dir_logged(parent);
     }
     remove_dir_if_exists(&old)
+}
+
+fn sync_dir_logged(dir: &Path) {
+    if let Err(e) = crate::state::sync_dir(dir) {
+        tracing::warn!(error = %e, dir = %dir.display(), "could not sync the folder");
+    }
 }
 
 /// One file of a group's base snapshot (`base.old` after a crash in the middle of a save):
@@ -5031,21 +5082,85 @@ Use tabs.
         assert!(!dir.exists());
     }
 
+    /// A rename that fails for anything moved into a `.broken` name.
+    fn no_broken(a: &Path, b: &Path) -> std::io::Result<()> {
+        if b.to_string_lossy().contains(".broken") {
+            return Err(std::io::Error::other("stuck"));
+        }
+        std::fs::rename(a, b)
+    }
+
     #[test]
     fn a_stuck_rename_still_gives_an_empty_base() {
         let t = tempfile::tempdir().unwrap();
         let dir = cut_base(&t);
-        // Every free name is taken, so the folder cannot be moved aside.
-        for n in 0..100 {
+        assert!(load_base_dir_with(&dir, &no_broken)
+            .unwrap()
+            .files
+            .is_empty());
+        assert!(dir.is_dir(), "left where it was");
+    }
+
+    #[test]
+    fn a_stuck_rename_still_restores_the_good_old_base() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = cut_base(&t);
+        let other = t.path().join("other");
+        save_base_dir(&other, &sample_base("c0")).unwrap();
+        std::fs::rename(&other, dir.with_extension("old")).unwrap();
+        assert_eq!(
+            load_base_dir_with(&dir, &no_broken).unwrap().head.commit,
+            "c0"
+        );
+        assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c0");
+        assert!(!dir.with_extension("old").exists());
+    }
+
+    #[test]
+    fn a_save_keeps_a_good_old_base_over_a_bad_one() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = cut_base(&t);
+        let other = t.path().join("other");
+        save_base_dir(&other, &sample_base("c0")).unwrap();
+        std::fs::rename(&other, dir.with_extension("old")).unwrap();
+        save_base_dir(&dir, &sample_base("c2")).unwrap();
+        assert_eq!(load_base_dir(&dir).unwrap().head.commit, "c2");
+        assert!(!dir.with_extension("old").exists());
+    }
+
+    #[test]
+    fn only_the_newest_broken_copies_are_kept() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("base");
+        let now = std::time::SystemTime::now();
+        for n in 0..5u64 {
             let name = if n == 0 {
                 "base.broken".to_string()
             } else {
                 format!("base.broken.{n}")
             };
-            std::fs::create_dir(t.path().join(name)).unwrap();
+            let p = t.path().join(name);
+            std::fs::create_dir(&p).unwrap();
+            std::fs::File::open(&p)
+                .unwrap()
+                .set_modified(now - std::time::Duration::from_secs(1000 - n * 10))
+                .unwrap();
         }
-        assert!(load_base_dir(&dir).unwrap().files.is_empty());
-        assert!(dir.is_dir(), "left where it was");
+        save_base_dir(&dir, &sample_base("c1")).unwrap();
+        std::fs::write(dir.join("head.json"), b"").unwrap();
+        load_base_dir(&dir).unwrap();
+        let mut left: Vec<_> = std::fs::read_dir(t.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("base.broken"))
+            .collect();
+        left.sort();
+        assert_eq!(left.len(), KEEP_BROKEN);
+        assert!(
+            left.contains(&"base.broken.5".to_string()),
+            "the new one is kept: {left:?}"
+        );
+        assert!(!left.contains(&"base.broken".to_string()));
     }
 
     #[test]
