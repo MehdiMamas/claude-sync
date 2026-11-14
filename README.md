@@ -21,6 +21,9 @@
   <img src="docs/images/demo.gif" width="620" alt="The claude-sync window: the list of groups, a group with two CLAUDE.md changes to review, accepting them, then Settings">
 </p>
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/MehdiMamas/claude-sync/badge)](https://scorecard.dev/viewer/?uri=github.com/MehdiMamas/claude-sync)
+[![REUSE](https://github.com/MehdiMamas/claude-sync/actions/workflows/reuse.yml/badge.svg)](https://github.com/MehdiMamas/claude-sync/actions/workflows/reuse.yml)
+
 claude-sync is a small desktop app that shares a Claude Code setup with a group of friends. The group shares settings, `CLAUDE.md` instructions, skills, subagents, slash commands, output styles and plugin marketplaces. Everything lives in a private GitHub repo that one member of the group owns.
 
 The app sits in the tray and starts when you log in. When someone in the group changes a shared file, the change reaches everyone's machines within about a minute. When you edit a shared file yourself, the app asks whether to share the change with the group or keep it on your machine.
