@@ -13,6 +13,7 @@ mod jobs;
 #[cfg(target_os = "macos")]
 mod mac_notify;
 mod notify;
+mod packs;
 mod personal;
 mod tray;
 mod updates;
@@ -219,6 +220,11 @@ fn main() {
             commands::retry_plugins,
             commands::helper_status,
             commands::helper_explain,
+            packs::list_packs,
+            packs::start_pack_setup,
+            packs::check_pack,
+            packs::turn_on_pack,
+            packs::turn_off_pack,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -243,6 +249,7 @@ fn main() {
             background::refresh_status(&handle);
             background::start(&handle);
             jobs::reconcile_soon(&handle, true);
+            packs::recheck_soon(&handle, true);
             if !background_start || ctx.auth().is_none() {
                 window::open(&handle, None);
             } else {

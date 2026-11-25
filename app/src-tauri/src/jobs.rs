@@ -27,7 +27,7 @@ fn home() -> Result<PathBuf, Error> {
 
 /// Run `f` with the jobs of this device. Debug builds use their own task folder
 /// (`\claude-sync-dev\`), so a dev run never touches the installed app's tasks.
-fn with_jobs<T>(
+pub(crate) fn with_jobs<T>(
     paths: &Paths,
     what: &str,
     f: impl FnOnce(&Jobs) -> claude_sync_core::Result<T>,
@@ -266,6 +266,8 @@ pub fn after_sync(app: &AppHandle) {
     };
     reconcile_soon(app, false);
     ensure_plugins_soon(app, groups, false);
+    // Packs that are on and changed upstream are checked again (§23).
+    crate::packs::recheck_soon(app, false);
 }
 
 // ---- commands ----
@@ -274,7 +276,7 @@ fn overview(paths: &Paths, group: &GroupId) -> Result<JobsOverview, Error> {
     with_jobs(paths, "jobs", |j| j.overview(group))
 }
 
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, Error> + Send + 'static,
 ) -> Result<T, Error> {
     tauri::async_runtime::spawn_blocking(f)

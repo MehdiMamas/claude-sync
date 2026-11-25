@@ -190,6 +190,7 @@ async function boot(): Promise<void> {
       api.groups().then(countReview, () => {});
     }),
     on("plugins-changed", () => store.set({ pluginsChanged: true })),
+    on("packs-changed", () => store.bump()),
     on("notifications-changed", ({ unread }) => store.set({ unread })),
     on("navigate", (route) => go(route)),
     on("personal", (personal) => {
