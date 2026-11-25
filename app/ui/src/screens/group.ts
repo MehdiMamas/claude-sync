@@ -14,7 +14,6 @@ import {
   type JobsOverview,
   type JobView,
   type MarketplaceInfo,
-  type PermissionMode,
   type Proposal,
   type ReviewItem,
 } from "../api";
@@ -26,6 +25,8 @@ import { conflictsCard, copyCard } from "./conflicts";
 import { syncError } from "../limit";
 import { historyCard } from "./history";
 import { explainButton } from "./helper";
+import { permission } from "./job-text";
+import { packsCard } from "./packs";
 
 function membersCard(g: GroupStatus, reload: () => void): HTMLElement {
   const you = store.auth?.login?.toLowerCase();
@@ -132,6 +133,24 @@ function transferCard(g: GroupStatus, reload: () => void): HTMLElement | false {
     h("h2", { id: "transfer-h" }, "Hand over the group"),
     h("div", { class: "inline-form" }, h("label", { for: "t-member", class: "sr-only" }, "Member to transfer to"), pick, next),
     confirm,
+  );
+}
+
+/** GitHub could not be reached at the last sync: the screen shows the group as it was. */
+function offlineNotice(g: GroupStatus, reload: () => void): HTMLElement | false {
+  if (g.rateLimitedUntil != null || !(g.lastError ?? "").startsWith("network error")) return false;
+  const retry = h("button", { type: "button" }, "Retry");
+  retry.addEventListener("click", () =>
+    busy(retry, "Retrying…", async () => {
+      await api.syncNow();
+      reload();
+    }),
+  );
+  return h(
+    "div",
+    { class: "notice", role: "status" },
+    h("div", { class: "notice-text" }, `Couldn't reach GitHub. You're offline; this is the group as of ${relTime(g.lastSyncUnix)}.`),
+    retry,
   );
 }
 
@@ -313,20 +332,6 @@ function pluginNotice(id: GroupId): HTMLElement {
   };
   api.pluginWarnings(id).then(show, () => {});
   return box;
-}
-
-const MODES: Record<PermissionMode, string> = {
-  default: "Claude Code asks before edits and commands. Nobody is there to answer, so it skips them.",
-  acceptEdits: "Claude Code edits files without asking; it skips other commands that need asking.",
-  plan: "Claude Code only reads and plans; it changes nothing.",
-  bypassPermissions: "Claude Code runs any command and edits any file without asking.",
-};
-
-function permission(mode: PermissionMode): HTMLElement {
-  const text = [h("strong", null, mode), ": ", MODES[mode] ?? ""];
-  return mode === "bypassPermissions"
-    ? h("div", { class: "notice perm" }, h("div", { class: "notice-text" }, ...text))
-    : h("p", { class: "small" }, ...text);
 }
 
 function lastRunText(j: JobView): (string | HTMLElement)[] {
@@ -876,12 +881,13 @@ export function groupScreen(view: HTMLElement, id: GroupId): void {
       const contents = api.groupContents(g.id);
       replace(
         body,
-        syncError(g) && h("div", { class: "error", role: "alert" }, syncError(g)),
+        offlineNotice(g, load) || (syncError(g) && h("div", { class: "error", role: "alert" }, syncError(g))),
         hostNotice(g),
         reviewCard(g.id, g.isHost),
         (g.isHost || g.proposalMode) && proposalsCard(g),
         pluginNotice(g.id),
         contentsCard(contents),
+        packsCard(g),
         jobsCard(g.id),
         problemsCard(g),
         conflictsCard(g.id),

@@ -10,9 +10,10 @@ use claude_sync_core::Paths;
 pub const REFRESH_ARG: &str = "--refresh";
 
 /// Subcommands this module handles.
-pub const COMMANDS: [&str; 4] = ["status", "personal", "ssh", "activity"];
+pub const COMMANDS: [&str; 5] = ["status", "personal", "ssh", "activity", "packs"];
 
-const USAGE: &str = "usage: claude-sync status [--json]\n       claude-sync personal enable|disable|status [--json]\n       claude-sync ssh enable|disable|status|alias <name> [--json]\n       claude-sync activity enable|disable|status [--json]";
+const USAGE: &str = "usage: claude-sync status [--json]\n       claude-sync personal enable|disable|status [--json]\n       claude-sync ssh enable|disable|status|alias <name> [--json]\n       claude-sync activity enable|disable|status [--json]
+       claude-sync packs [list|setup <id>|check <id>|on <id>|off <id>] [--group owner/repo] [--json]";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Cmd {
@@ -66,6 +67,10 @@ pub fn parse(args: &[String]) -> Result<(Cmd, bool), &'static str> {
 
 /// Run a command. Exit code: 0 done, 1 failed, 2 wrong usage.
 pub fn run(paths: &Paths, args: &[String]) -> i32 {
+    // `packs` has its own words, options and exit codes (core::packs::cli).
+    if args.first().map(String::as_str) == Some("packs") {
+        return crate::packs::cli_main(paths, &args[1..]);
+    }
     let (cmd, json) = match parse(args) {
         Ok(v) => v,
         Err(usage) => {

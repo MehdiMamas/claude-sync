@@ -9,7 +9,10 @@
 // `?noConflicts` shows no rules clashing between groups; `?noPush` makes "Copy to another
 // group" find the other group read-only.
 // The first group has one job waiting for consent, one accepted job and a plugin warning.
+// It also has nine optional packs (see mock-packs.ts for `?packsFail`, `?packsHost`, `?packsMac`, ...).
 import { groupKey, type Backend, Clash, ClashSide, ClashSource, ClaudeMdReview, ClaudeMdShare, CommitInfo, CopyPreview, CopyRequest, Events, GroupContents, GroupId, GroupStatus, JobsOverview, JobView, Kinds, Notification, PersonalStatus, Proposal, ReviewItem } from "./api";
+
+import { packHandlers } from "./mock-packs";
 
 const q = new URLSearchParams(location.search);
 const now = Math.floor(Date.now() / 1000);
@@ -375,7 +378,12 @@ let proposals: Proposal[] = [
   },
 ];
 
+if (q.has("packsOffline") && groups[0]) {
+  Object.assign(groups[0], { lastSyncUnix: now - 3 * 3600, lastError: "network error: could not reach api.github.com" });
+}
+
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
+  ...packHandlers(),
   claude_md_review: (a) => {
     if ((a.group as GroupId).owner === "acme") throw "acme/claude-team has no CLAUDE.md on this device to review";
     return syncReview();

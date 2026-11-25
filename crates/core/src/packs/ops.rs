@@ -79,6 +79,8 @@ pub struct PackView {
     /// Unix milliseconds.
     pub since: Option<u64>,
     pub last_check: Option<CheckResult>,
+    /// The check's timeout in seconds, for "at most N s".
+    pub check_timeout: u32,
     pub plugins: Vec<String>,
     pub jobs: Vec<PackJob>,
     /// The first line of the pack's rules and how many lines there are.
@@ -175,6 +177,7 @@ pub fn list(paths: &Paths, group: &GroupId, env: &Env) -> crate::Result<PacksOve
                 by: rec.map(|r| r.by),
                 since: rec.map(|r| r.since),
                 last_check: rec.and_then(|r| r.last_check.clone()),
+                check_timeout: k.check.timeout_seconds,
                 plugins: k.plugins.clone(),
                 jobs: jobs
                     .iter()
