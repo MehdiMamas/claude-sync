@@ -25,7 +25,7 @@ Every setting lives in exactly one scope: group, personal or project. There are 
 
 ## Headless command line (`claude-sync-cli`)
 `crates/cli` is a separate binary with no GUI and no WebKit; it depends on core with `--no-default-features` (no Linux keyring). Build and test it alone: `cargo test -p claude-sync-core --no-default-features -p claude-sync-cli`. Exit code: 0 done, 1 failed, 2 wrong usage; `--json` for machine output.
-- Commands: `login` (device flow), `logout`, `groups`, `join <owner/repo>`, `leave`, `sync`, `status`, `personal status|enable|disable`, `ssh status|enable|disable|alias <name>`, `activity status|enable|disable`, `review list|accept|undo <id>`, `daemon`, `service install|remove|status`, `update [--check]`, `version`. `run-job` is hidden: the OS tasks of group jobs call it.
+- Commands: `login` (device flow), `logout`, `groups`, `join <owner/repo>`, `leave`, `sync`, `status`, `personal status|enable|disable`, `ssh status|enable|disable|alias <name>`, `activity status|enable|disable`, `packs [list|setup|check|on|off <id>] [--group owner/repo]` (opt-in packs, architecture §23), `review list|accept|undo <id>`, `daemon`, `service install|remove|status`, `update [--check]`, `version`. `run-job` is hidden: the OS tasks of group jobs call it.
 - The token is the file `~/.claude-sync/token` (mode 0600), not the keyring. The daemon reloads it each pass.
 - `service install` writes a systemd user unit when systemd runs, else an `@reboot` crontab line plus a 5-minute check. `daemon.lock` keeps one daemon alive.
 - Syncs from the app and the CLI share `<state>/sync.lock` (`core::lock`), so they never run at once.

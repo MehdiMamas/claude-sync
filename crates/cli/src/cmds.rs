@@ -77,7 +77,9 @@ pub async fn execute(paths: &Paths, cmd: Cmd) -> Result<Out, String> {
             json!({ "version": config::VERSION }),
         )),
         // Handled before the runtime starts: see main.
-        Cmd::Daemon | Cmd::RunJob(_) => Err("this command is not run through here".into()),
+        Cmd::Daemon | Cmd::RunJob(_) | Cmd::Packs(_) => {
+            Err("this command is not run through here".into())
+        }
     }
 }
 

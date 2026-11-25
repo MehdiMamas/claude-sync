@@ -48,6 +48,8 @@ pub fn skip_set(paths: &Paths) -> crate::Result<Skip> {
             }
         }
     }
+    // The plugin of a pack that is on here is this machine's own (§23).
+    skip.plain.extend(crate::packs::pinned_pointers(paths));
     Ok(skip)
 }
 

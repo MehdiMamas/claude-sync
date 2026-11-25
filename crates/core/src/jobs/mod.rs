@@ -446,6 +446,8 @@ pub struct JobView {
     pub running: bool,
     pub has_log: bool,
     pub has_report: bool,
+    /// The pack this job belongs to (§23); the job only exists here while that pack is on.
+    pub pack: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -557,6 +559,8 @@ impl Jobs<'_> {
         let views = jobs
             .iter()
             .filter(|j| &j.group == group)
+            // A pack's job shows only where the pack is on; before that the pack card shows it.
+            .filter(|j| crate::packs::job_gate(self.paths, &j.group, &j.id) != Some(false))
             .map(|job| {
                 let rec = state.of(job);
                 let accepted = choices.job_accepted(job);
@@ -584,6 +588,7 @@ impl Jobs<'_> {
                         .and_then(|r| r.log.as_ref())
                         .is_some_and(|l| l.is_file()),
                     has_report: job.report_path.as_ref().is_some_and(|p| p.is_file()),
+                    pack: crate::packs::pack_of_job(self.paths, &job.group, &job.id),
                     last_run,
                 }
             })
@@ -705,7 +710,10 @@ impl Jobs<'_> {
         // Groups whose jobs run without asking: accept their new and changed versions. A job
         // the member turned off stays off.
         for job in &jobs {
-            if !choices.group(&job.group).auto_run_jobs || choices.job_accepted(job) {
+            if !choices.group(&job.group).auto_run_jobs
+                || choices.job_accepted(job)
+                || crate::packs::job_gate(self.paths, &job.group, &job.id) == Some(false)
+            {
                 continue;
             }
             let changed = choices
@@ -738,7 +746,9 @@ impl Jobs<'_> {
             let Some(rec) = state.jobs.get_mut(&job.id).filter(|r| r.group == job.group) else {
                 continue;
             };
-            let on = !choices.group(&job.group).off_jobs.contains(&job.id);
+            // A job of a pack registers only where the pack is on (§23).
+            let pack_on = crate::packs::job_gate(self.paths, &job.group, &job.id).unwrap_or(true);
+            let on = !choices.group(&job.group).off_jobs.contains(&job.id) && pack_on;
             if !(accepted && on) {
                 unregister(&job.id, rec, &mut report);
                 continue;

@@ -8,6 +8,7 @@ mod cmds;
 mod config;
 mod daemon;
 mod jobs;
+mod packs;
 mod review;
 mod service;
 mod store;
@@ -43,6 +44,9 @@ fn run(argv: &[String]) -> i32 {
         .flatten();
     if let Cmd::RunJob(rest) = &cmd {
         return jobs::run_job_main(&paths, rest);
+    }
+    if let Cmd::Packs(rest) = &cmd {
+        return packs::main(&paths, rest);
     }
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

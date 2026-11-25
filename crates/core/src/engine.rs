@@ -26,6 +26,7 @@ use std::sync::Arc;
 mod claude_md;
 mod conflicts;
 mod copy;
+mod pack_ops;
 mod revert;
 pub use claude_md::{ClaudeMdShare, ClaudeMdShared};
 pub use copy::{Copied, CopyFile, CopyPreview, CopyRequest, CopySetting, CopySyncs};
@@ -917,6 +918,26 @@ impl Engine {
         }
     }
 
+    /// Apply the last synced version of the group (its base snapshot) again, without a network
+    /// call. Packs are read from the same snapshot (§23).
+    pub(crate) fn apply_base(&self, id: &GroupId, order: &[GroupId]) -> crate::Result<ApplyReport> {
+        let base = self.load_base(id)?;
+        let mut files = FileSet::new();
+        if base.files.contains_key(group::FILE) {
+            let (gf, _) = read_group_file(id, &base.files)?;
+            files = only(&base.files, |p| {
+                group::is_allowlisted(p) && gf.syncs(p) && !group::is_repo_only(p)
+            });
+            if let Some(copy) =
+                read_file_if_exists(&self.paths.group_dir(id).join(group::CLAUDE_MD))?
+            {
+                files.insert(group::CLAUDE_MD.into(), copy);
+            }
+        }
+        self.pack_prepare(id, &base.files, None);
+        self.apply.apply_group(&self.paths, id, order, &files, None)
+    }
+
     /// Put the group off (`off`) or on in effect on this machine.
     async fn apply_group_off(&self, id: &GroupId, off: bool) -> crate::Result<ApplyReport> {
         let enabled = !off;
@@ -932,22 +953,7 @@ impl Engine {
         }
         // The first pass applies what was last synced and treats it as the local side, so
         // the files that were taken away do not read as local deletions.
-        let base = self.load_base(id)?;
-        let mut files = FileSet::new();
-        if base.files.contains_key(group::FILE) {
-            let (gf, _) = read_group_file(id, &base.files)?;
-            files = only(&base.files, |p| {
-                group::is_allowlisted(p) && gf.syncs(p) && !group::is_repo_only(p)
-            });
-            if let Some(copy) =
-                read_file_if_exists(&self.paths.group_dir(id).join(group::CLAUDE_MD))?
-            {
-                files.insert(group::CLAUDE_MD.into(), copy);
-            }
-        }
-        let applied = self
-            .apply
-            .apply_group(&self.paths, id, &state.groups, &files, None)?;
+        let applied = self.apply_base(id, &state.groups)?;
         state.disabled.remove(id);
         state.save(&self.paths)?;
         self.sync_group(id, None).await;
@@ -1639,6 +1645,9 @@ impl Engine {
             if let Some(text) = md.as_ref().and_then(|m| m.apply.clone()) {
                 to_apply.insert(group::CLAUDE_MD.into(), text);
             }
+            // Packs (§23): read the catalog and, on the host's machine, decide what is in use
+            // now, before the apply merges the group's new settings.
+            self.pack_prepare(id, &remote_files, Some(is_host));
             report.apply =
                 self.apply
                     .apply_group(&self.paths, id, &order, &to_apply, Some(&head))?;
@@ -1923,6 +1932,9 @@ impl Engine {
 
     /// Remove managed content, the group's state and its entry in `state.json`.
     fn forget(&self, id: &GroupId) -> crate::Result<ApplyReport> {
+        if let Err(e) = crate::packs::forget(&self.paths, id) {
+            tracing::warn!(group = %id, error = %e, "could not forget the group's packs");
+        }
         let applied = self.apply.remove_group(&self.paths, id)?;
         let mut state = AppState::load(&self.paths)?;
         state.groups.retain(|g| g != id);

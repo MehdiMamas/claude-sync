@@ -186,10 +186,12 @@ pub fn apply_group_at(
     let my_rank = rank(group);
     let placed = marketplaces::plan(&m, group, order, files, &mut report);
 
-    // 1. Managed tree files, and the files of the marketplaces placed here.
+    // 1. Managed tree files, and the files of the marketplaces placed here. The files of a
+    // pack that is not on here are not placed (they are taken away again below if unchanged).
+    let pack_off = crate::packs::skipped_files(paths, group);
     let mut desired = BTreeSet::new();
     for (rel, bytes) in files {
-        if rel == CLAUDE_MD || rel == SHARED_SETTINGS {
+        if rel == CLAUDE_MD || rel == SHARED_SETTINGS || crate::packs::is_skipped(&pack_off, rel) {
             continue;
         }
         let plugin = group::marketplace_of(rel);
@@ -538,8 +540,10 @@ fn apply_settings(
     }
     skipped.extend(merged.skipped);
     // A mods-canary trial stays a local-only override: the group's value does not replace it.
-    if !settings::canary_pointers(&local).is_empty() {
-        merged.changed = settings::keep_canaries(&local, &mut merged.settings);
+    // So does the plugin of a pack that is on here (§23).
+    let pinned = crate::packs::pinned_pointers(paths);
+    if !settings::canary_pointers(&local).is_empty() || !pinned.is_empty() {
+        merged.changed = settings::keep_overrides(&local, &mut merged.settings, &pinned);
     }
     if merged.changed {
         if let Some(old) = &existing {
@@ -558,6 +562,30 @@ fn apply_settings(
     }
     report.settings_skipped.extend(skipped);
     Ok(())
+}
+
+/// Set (`Some`) or remove (`None`) one plugin's value in this machine's `settings.json`, with a
+/// backup first. This is how a pack's plugin turns on and off here (§23). `true` when the file
+/// changed.
+pub fn set_local_plugin(paths: &Paths, plugin: &str, value: Option<bool>) -> crate::Result<bool> {
+    let file = paths.claude_home.join("settings.json");
+    let (mut local, existing) = read_settings_file(&file).map_err(crate::Error::Invalid)?;
+    let ptr = crate::packs::plugin_pointer(plugin);
+    let now = local.pointer(&ptr).and_then(Value::as_bool);
+    if now == value {
+        return Ok(false);
+    }
+    match value {
+        Some(v) => {
+            settings::set_at(&mut local, &ptr, Value::Bool(v));
+        }
+        None => settings::remove_at(&mut local, &ptr),
+    }
+    if let Some(old) = &existing {
+        Backups::new(paths).save("settings.json", old)?;
+    }
+    write_atomic(&file, &settings::to_bytes(&local))?;
+    Ok(true)
 }
 
 /// `~/.claude/settings.json` as `(object, raw bytes)`; a missing file is `{}`.
@@ -629,7 +657,12 @@ pub fn local_files(paths: &Paths, group: &GroupId) -> crate::Result<FileSet> {
                 .ok()
                 .map(|(v, _)| v);
             let rebuilt = match (settings::parse_object(&raw), local) {
-                (Some(copy), Some(local)) => settings::reconstruct(&copy, &local, &owned),
+                (Some(copy), Some(local)) => settings::reconstruct_with(
+                    &copy,
+                    &local,
+                    &owned,
+                    &crate::packs::pinned_pointers(paths),
+                ),
                 _ => None,
             };
             out.insert(
@@ -985,16 +1018,23 @@ fn update_claude_md_block(
             }
         }
     }
+    let home = home_dir();
+    // One line per group with a CLAUDE.md copy, then one per pack that is on here (§23).
     let lines: Vec<String> = groups
         .iter()
         .filter(|g| !m.groups.get(&g.to_string()).is_some_and(|e| e.disabled))
-        .filter(|g| {
-            m.groups
+        .flat_map(|g| {
+            let has_md = m
+                .groups
                 .get(&g.to_string())
                 .is_some_and(|e| e.claude_md.is_some())
+                && exists_any(&paths.group_dir(g).join(CLAUDE_MD));
+            let own = has_md.then(|| paths.group_dir(g).join(CLAUDE_MD));
+            own.into_iter()
+                .chain(crate::packs::import_files(paths, g))
+                .map(|f| import_line(&f, home.as_deref()))
+                .collect::<Vec<_>>()
         })
-        .filter(|g| exists_any(&paths.group_dir(g).join(CLAUDE_MD)))
-        .map(|g| import_line(&paths.group_dir(g).join(CLAUDE_MD), home_dir().as_deref()))
         .collect();
     let file = paths.claude_home.join(CLAUDE_MD);
     let existing = read_file(&file)?;
