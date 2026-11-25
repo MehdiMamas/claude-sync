@@ -19,6 +19,7 @@ pub mod members;
 pub mod merge;
 pub mod migrate;
 pub mod notifications;
+pub mod packs;
 pub mod paths;
 pub mod personal;
 pub mod plugin_install;

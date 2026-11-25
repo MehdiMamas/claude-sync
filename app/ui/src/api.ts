@@ -414,6 +414,8 @@ export interface JobView {
   running: boolean;
   hasLog: boolean;
   hasReport: boolean;
+  /** The pack this job belongs to; it only exists on this device while that pack is on. */
+  pack?: string | null;
 }
 /** A job of schedules.json that was skipped (bad id, cron, path, ...). */
 export interface JobProblem {
@@ -429,6 +431,87 @@ export interface JobsOverview {
   /** "Run this group's jobs without asking" is on (your choice, on every device). */
   autoAccept: boolean;
 }
+/** What the Optional packs card shows for one pack (crates/core/src/packs/ops.rs). */
+export type PackStateName = "available" | "tried" | "ready" | "on" | "failing" | "off" | "unavailable";
+export interface PackNeed {
+  name: string;
+  url?: string;
+}
+export interface PackCheckResult {
+  /** Unix milliseconds. */
+  at: number;
+  exit: number;
+  /** The last stderr line of the check, redacted. */
+  tail: string;
+  hash: string;
+}
+/** A job of a pack, as shown before the pack is turned on. */
+export interface PackJob {
+  id: string;
+  title: string;
+  schedule: string;
+  prompt: string;
+  cwd: string;
+  permissionMode: PermissionMode;
+  timeoutMinutes: number;
+  args: string[];
+  report: string | null;
+  /** What Turn on sends back: the consent hash of the version shown. */
+  hash: string;
+}
+export interface PackView {
+  id: string;
+  title: string;
+  summary: string;
+  needs: PackNeed[];
+  /** `windows`, `macos`, `linux`. */
+  os: string[];
+  state: PackStateName;
+  by: "setup" | "carry-over" | "host-auto" | null;
+  /** Unix milliseconds. */
+  since: number | null;
+  lastCheck: PackCheckResult | null;
+  checkTimeout: number;
+  plugins: string[];
+  jobs: PackJob[];
+  /** The first line of the pack's rules, and how many lines it adds. */
+  rulePreview: string | null;
+  ruleLines: number;
+  hasFiles: boolean;
+  /** The setup terminal is open. */
+  settingUp: boolean;
+  /** The setup terminal closed; the check is due. */
+  claudeClosed: boolean;
+  /** The pack changed since this device accepted it. */
+  changed: boolean;
+  /** The group still turns the plugin on for everyone. */
+  groupEnabled: boolean;
+}
+export interface PackProblem {
+  id: string | null;
+  message: string;
+}
+export interface PacksOverview {
+  packs: PackView[];
+  problems: PackProblem[];
+  /** This device is signed in as the group's host: packs in use stayed on. */
+  host: boolean;
+  /** `windows`, `macos` or `linux`. */
+  os: string;
+}
+export interface PackCheckReport {
+  passed: boolean;
+  exit: number;
+  tail: string;
+  state: PackStateName;
+}
+export interface SetupLaunch {
+  started: boolean;
+  /** `Claude Code isn't installed or signed in`, or `No terminal found`. */
+  problem: string | null;
+  /** What to run by hand when no terminal opened. */
+  command: string | null;
+}
 export interface AppInfo {
   version: string;
   os: string;
@@ -443,6 +526,8 @@ export interface Events {
   status: Status;
   "sync-report": SyncReport;
   "plugins-changed": null;
+  /** A pack's check ran by itself (a pack that is on changed upstream). */
+  "packs-changed": null;
   "local-edits": LocalEdit[];
   invitations: Invitation[];
   "update-available": UpdateInfo;
@@ -572,6 +657,11 @@ export const api = {
   openJobFile: (group: GroupId, id: string, kind: "log" | "report") => call<void>("open_job_file", { group, id, kind }),
   pluginWarnings: (group: GroupId) => call<string[]>("plugin_warnings", { group }),
   retryPlugins: (group: GroupId) => call<string[]>("retry_plugins", { group }),
+  packs: (group: GroupId) => call<PacksOverview>("list_packs", { group }),
+  startPackSetup: (group: GroupId, id: string) => call<SetupLaunch>("start_pack_setup", { group, id }),
+  checkPack: (group: GroupId, id: string) => call<PackCheckReport>("check_pack", { group, id }),
+  turnOnPack: (group: GroupId, id: string, hashes: Record<string, string>) => call<PacksOverview>("turn_on_pack", { group, id, hashes }),
+  turnOffPack: (group: GroupId, id: string) => call<PacksOverview>("turn_off_pack", { group, id }),
 };
 
 export const groupKey = (g: GroupId) => `${g.owner}/${g.repo}`;

@@ -20,6 +20,8 @@ usage: claude-sync-cli <command> [--json]
   review undo <id>              decline or undo one
   daemon                        sync in a loop (run it with `service install`)
   service install|remove|status run the daemon in the background at start
+  packs [list|setup <id>|check <id>|on <id>|off <id>] [--group owner/repo]
+                                optional packs of a group: set one up with Claude, then turn it on here
   update [--check]              install the newest release
   version";
 
@@ -80,12 +82,17 @@ pub enum Cmd {
     Version,
     /// `run-job <owner/repo> <id> [--now]`: started by the OS scheduler, not typed.
     RunJob(Vec<String>),
+    /// `packs ...`: the words after `packs`, parsed by `claude_sync_core::packs::cli`.
+    Packs(Vec<String>),
 }
 
 /// The command and `--json`, or the usage text.
 pub fn parse(args: &[String]) -> Result<(Cmd, bool), String> {
     if args.first().map(String::as_str) == Some(claude_sync_core::jobs::RUN_JOB_ARG) {
         return Ok((Cmd::RunJob(args[1..].to_vec()), false));
+    }
+    if args.first().map(String::as_str) == Some("packs") {
+        return Ok((Cmd::Packs(args[1..].to_vec()), false));
     }
     let json = args.iter().any(|a| a == "--json");
     let check = args.iter().any(|a| a == "--check");
@@ -199,6 +206,15 @@ mod tests {
             parse(&v(&["run-job", "a/b", "nightly", "--now"])),
             Ok((Cmd::RunJob(v(&["a/b", "nightly", "--now"])), false))
         );
+    }
+
+    #[test]
+    fn packs_passes_its_words_through() {
+        assert_eq!(
+            parse(&v(&["packs", "setup", "keytray", "--json"])),
+            Ok((Cmd::Packs(v(&["setup", "keytray", "--json"])), false))
+        );
+        assert_eq!(parse(&v(&["packs"])), Ok((Cmd::Packs(vec![]), false)));
     }
 
     #[test]

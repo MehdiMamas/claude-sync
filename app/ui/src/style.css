@@ -1147,3 +1147,30 @@ dialog.consent {
 dialog.consent::backdrop {
   background: rgba(0, 0, 0, 0.5);
 }
+
+/* Optional packs (docs/architecture.md §23) */
+.packs .packs-list > li.pack {
+  padding: 0.6rem 0;
+}
+.packs .packs-list > li.pack .notice {
+  margin: 0.4rem 0 0;
+}
+.packs li.pack-ready {
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.packs li.pack-ready > p,
+.packs li.pack-ready .job {
+  margin: 0.3rem 0;
+}
+.packs .ready-lines {
+  margin: 0.3rem 0 0.5rem;
+  padding-left: 1.1rem;
+}
+.packs li.pack-ready .actions {
+  margin-top: 0.5rem;
+}
+.packs li.pack-ready .job.pending {
+  padding: 0.4rem 0;
+}

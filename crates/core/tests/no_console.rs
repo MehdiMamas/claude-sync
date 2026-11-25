@@ -8,13 +8,21 @@ use std::path::{Path, PathBuf};
 const WINDOW: usize = 12;
 
 /// Spawns that never run on Windows: (file, program text on the spawn line; `None` = any).
-const UNIX_ONLY: [(&str, Option<&str>); 3] = [
+const UNIX_ONLY: [(&str, Option<&str>); 5] = [
     // systemd and crontab.
     ("crates/cli/src/service.rs", None),
     // `open`, macOS.
     (
         "app/src-tauri/src/commands.rs",
         Some("Command::new(\"open\")"),
+    ),
+    // The setup chat of `claude-sync packs setup` runs `claude` in the caller's own console
+    // (inherited, interactive), so no window can open.
+    ("crates/core/src/packs/cli.rs", Some("Command::new(claude)")),
+    // A unit test that runs the generated setup script with `sh`.
+    (
+        "crates/core/src/packs/launch.rs",
+        Some("Command::new(\"sh\")"),
     ),
     // `ps`, unix (the Windows branch uses `tasklist` with `creation_flags`).
     ("app/src-tauri/src/cli.rs", Some("Command::new(\"ps\")")),

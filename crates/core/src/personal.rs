@@ -17,7 +17,7 @@
 pub(crate) mod claude_md;
 pub mod keys;
 mod lines;
-mod settings_file;
+pub(crate) mod settings_file;
 mod state;
 #[cfg(test)]
 mod tests;

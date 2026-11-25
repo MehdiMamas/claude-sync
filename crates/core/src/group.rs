@@ -16,6 +16,9 @@ pub const SHARED_SETTINGS: &str = "settings.shared.json";
 pub const SCHEDULES: &str = "schedules.json";
 /// Plugin marketplaces bundled in the group repo: `plugins/<marketplace>/...`.
 pub const PLUGINS: &str = "plugins";
+/// Opt-in packs (§23): `packs/<id>/pack.json` and the files next to it. Repo only: read from the
+/// base snapshot, never applied to `~/.claude`.
+pub const PACKS: &str = "packs";
 /// The largest plugin file that syncs. Bigger files are reported and skipped.
 pub const MAX_PLUGIN_FILE: usize = 1 << 20;
 /// The relay's install page, linked from the group README.
@@ -148,7 +151,7 @@ impl GroupFile {
     pub fn syncs(&self, path: &str) -> bool {
         let s = &self.sync;
         match path.split('/').next().unwrap_or_default() {
-            FILE | SCHEDULES => true,
+            FILE | SCHEDULES | PACKS => true,
             CLAUDE_MD => s.claude_md,
             SHARED_SETTINGS => s.settings,
             "skills" => s.skills,
@@ -190,6 +193,7 @@ pub fn is_allowlisted(path: &str) -> bool {
     match parts.as_slice() {
         [FILE | CLAUDE_MD | SHARED_SETTINGS | SCHEDULES] => true,
         ["skills", _name, _rest @ ..] => parts.len() >= 3,
+        [PACKS, id, _rest @ ..] => parts.len() >= 3 && crate::packs::valid_id(id),
         ["agents" | "commands" | "output-styles", file] => file.ends_with(".md") && file.len() > 3,
         _ => false,
     }
@@ -232,7 +236,13 @@ pub fn too_large_note(path: &str) -> String {
 /// Files that exist only in the repo, never in `~/.claude`. The engine supplies their local
 /// side itself instead of reading it back from the apply layer.
 pub fn is_repo_only(path: &str) -> bool {
-    path == FILE || path == README || path == SCHEDULES
+    path == FILE || path == README || path == SCHEDULES || is_pack_file(path)
+}
+
+/// A file inside a pack folder: `packs/<id>/...` (§23).
+pub fn is_pack_file(path: &str) -> bool {
+    path.strip_prefix("packs/")
+        .is_some_and(|rest| rest.contains('/'))
 }
 
 /// The README written into a new group repo.
@@ -343,6 +353,9 @@ mod tests {
             "CLAUDE.md",
             "settings.shared.json",
             "schedules.json",
+            "packs/passbridge/pack.json",
+            "packs/passbridge/setup.md",
+            "packs/tidy/bin/check.mjs",
             "skills/review/SKILL.md",
             "skills/review/scripts/run.sh",
             "agents/x.md",
@@ -397,6 +410,12 @@ mod tests {
             "plugins/a//x",
             "plugins/a/x:y",
             "plugins/a\\x",
+            "packs",
+            "packs/passbridge",
+            "packs/Passbridge/pack.json",
+            "packs/-x/pack.json",
+            "packs/a/../b/pack.json",
+            "packs/a/.hidden",
         ] {
             assert!(!is_allowlisted(bad), "{bad}");
         }

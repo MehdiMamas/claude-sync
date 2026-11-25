@@ -67,11 +67,13 @@ pub fn local_edits(paths: &Paths) -> crate::Result<Vec<LocalEdit>> {
             .ok()
             .and_then(|b| settings::parse_object(&b));
         if let Some(local) = local {
+            // The plugin of a pack that is on here is a local-only override, not an edit (§23).
+            let pinned = crate::packs::pinned_pointers(paths);
             for (key, o) in &owned {
                 let Some(group) = GroupId::parse(key) else {
                     continue;
                 };
-                for (ptr, deleted) in settings::edited_pointers(&local, o) {
+                for (ptr, deleted) in settings::edited_pointers_with(&local, o, &pinned) {
                     out.push(edit(
                         &group,
                         &format!("{SETTINGS_POINTER_PREFIX}{ptr}"),

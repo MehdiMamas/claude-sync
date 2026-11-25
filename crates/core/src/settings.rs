@@ -116,11 +116,23 @@ pub fn without(shared: &Value, ptrs: &[(String, String)]) -> (Value, Vec<String>
 /// changed. New local array items are not included: they may be personal.
 /// `None` when nothing differs (the caller then returns the copy's exact bytes).
 pub fn reconstruct(shared_copy: &Value, local: &Value, owned: &Owned) -> Option<Value> {
+    reconstruct_with(shared_copy, local, owned, &BTreeSet::new())
+}
+
+/// [`reconstruct`] that also leaves `pinned` pointers alone: the plugins of packs that are on
+/// here are local-only overrides, like a canary.
+pub fn reconstruct_with(
+    shared_copy: &Value,
+    local: &Value,
+    owned: &Owned,
+    pinned: &BTreeSet<String>,
+) -> Option<Value> {
     if !shared_copy.is_object() || !local.is_object() {
         return None;
     }
     let mut r = shared_copy.clone();
-    let canary = canary_pointers(local);
+    let mut canary = canary_pointers(local);
+    canary.extend(pinned.iter().cloned());
     for (ptr, v) in owned.values.iter().filter(|(p, _)| !canary.contains(*p)) {
         match local.pointer(ptr) {
             Some(lv) if lv == v => {}
@@ -186,7 +198,15 @@ pub fn canary_pointers(local: &Value) -> BTreeSet<String> {
 /// local-only override and the group's value must not replace it. Returns true if the
 /// merged settings still differ from `local`.
 pub fn keep_canaries(local: &Value, merged: &mut Value) -> bool {
-    for ptr in canary_pointers(local) {
+    keep_overrides(local, merged, &BTreeSet::new())
+}
+
+/// [`keep_canaries`] that also puts the local value back at every `pinned` pointer (the
+/// plugins of packs that are on here).
+pub fn keep_overrides(local: &Value, merged: &mut Value, pinned: &BTreeSet<String>) -> bool {
+    let mut keep = canary_pointers(local);
+    keep.extend(pinned.iter().cloned());
+    for ptr in keep {
         if let Some(v) = local.pointer(&ptr) {
             set_at(merged, &ptr, v.clone());
         }
@@ -198,7 +218,18 @@ pub fn keep_canaries(local: &Value, merged: &mut Value) -> bool {
 /// `(pointer, deleted)`. An array is listed once when any owned item is missing.
 /// Canary overrides (see [`canary_mods`]) are not edits.
 pub fn edited_pointers(local: &Value, owned: &Owned) -> Vec<(String, bool)> {
-    let canary = canary_pointers(local);
+    edited_pointers_with(local, owned, &BTreeSet::new())
+}
+
+/// [`edited_pointers`] where `pinned` pointers (plugins of packs that are on here) are not
+/// edits either.
+pub fn edited_pointers_with(
+    local: &Value,
+    owned: &Owned,
+    pinned: &BTreeSet<String>,
+) -> Vec<(String, bool)> {
+    let mut canary = canary_pointers(local);
+    canary.extend(pinned.iter().cloned());
     let mut out = Vec::new();
     for (ptr, v) in owned.values.iter().filter(|(p, _)| !canary.contains(*p)) {
         match local.pointer(ptr) {
