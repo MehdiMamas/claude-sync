@@ -82,9 +82,18 @@ jobs:
       - name: cargo clippy
         if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: cargo test
+      # cargo-nextest retries a failed test once (--retries 1) and marks a test that only passed on the
+      # retry FLAKY in the log. nextest does not run doctests, so those run with cargo test --doc.
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         if: ${{ !cancelled() }}
-        run: cargo test --workspace
+        with:
+          tool: nextest
+      - name: cargo nextest
+        if: ${{ !cancelled() }}
+        run: cargo nextest run --workspace --retries 1
+      - name: cargo test --doc
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace --doc
 
       - name: pnpm -C relay install
         if: ${{ !cancelled() }}
