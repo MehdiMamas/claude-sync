@@ -24,6 +24,10 @@ impl Core {
             return Err(Error::new(msg::SESSION_EXPIRED));
         }
         self.personal_discover();
+        let repos: Vec<String> = self.db.groups()?.into_iter().map(|g| g.repo).collect();
+        for r in repos {
+            self.merge_approved(&r);
+        }
         self.syncing = true;
         self.show();
         let r = self.run_pass();

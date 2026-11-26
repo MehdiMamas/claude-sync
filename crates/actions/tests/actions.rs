@@ -534,17 +534,34 @@ impl T {
     }
     /// Make main serve `head` with these files (plus claude-sync.json).
     async fn serve(&self, head: &str, files: &[(&str, &str)]) {
-        self.server.reset().await;
-        self.mock("GET", "/user", 200, json!({"login": "ann", "id": 1}))
-            .await;
+        let gf =
+            json!({"schema": 1, "name": "Team", "members": ["ann"], "autoAcceptClaudeMd": false});
+        self.serve_repo("zed/team", head, files, gf, true).await;
+    }
+    /// `serve` for any repo and group file; `reset` clears every mock first (and brings
+    /// back `/user`), so a second repo is served with `reset: false`.
+    async fn serve_repo(
+        &self,
+        repo: &str,
+        head: &str,
+        files: &[(&str, &str)],
+        gf: serde_json::Value,
+        reset: bool,
+    ) {
+        if reset {
+            self.server.reset().await;
+            self.mock("GET", "/user", 200, json!({"login": "ann", "id": 1}))
+                .await;
+        }
+        let (o, n) = repo.split_once('/').unwrap();
         self.mock(
             "GET",
-            "/repos/zed/team",
+            &format!("/repos/{repo}"),
             200,
-            json!({"name": "team", "full_name": "zed/team", "private": true}),
+            json!({"name": n, "full_name": repo, "private": true, "owner": {"login": o}}),
         )
         .await;
-        let r = "/repos/zed/team";
+        let r = format!("/repos/{repo}");
         self.mock(
             "GET",
             &format!("{r}/commits/main"),
@@ -554,10 +571,7 @@ impl T {
         .await;
         let who = json!({"name": "Zed", "date": "2026-01-02T03:04:05Z"});
         self.mock("GET", &format!("{r}/commits"), 200, json!([{"sha": head, "commit": {"message": "edit\n\nmore", "author": who, "committer": who}, "author": {"login": "zed"}}])).await;
-        let gf = serde_json::to_string_pretty(
-            &json!({"schema": 1, "name": "Team", "members": ["ann"], "autoAcceptClaudeMd": false}),
-        )
-        .unwrap();
+        let gf = serde_json::to_string_pretty(&gf).unwrap();
         let mut tree = vec![
             json!({"path": "claude-sync.json", "mode": "100644", "type": "blob", "sha": "gf"}),
         ];
@@ -1021,6 +1035,7 @@ mod jobs {
                 s.lock().unwrap().push(a.to_vec());
                 Ok(())
             }),
+            minute: Duration::from_secs(60),
         };
         *t.jobs.lock().unwrap() = Some(env.clone());
         let h = t
@@ -1244,6 +1259,46 @@ mod jobs {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn leaving_a_group_unregisters_its_jobs() {
+        let (r, h) = rig().await;
+        h.send(acc("nightly")).await.unwrap();
+        assert!(r.plist().exists());
+        h.send(Command::Leave {
+            repo: "zed/team".into(),
+        })
+        .await
+        .unwrap();
+        assert!(!r.plist().exists(), "the OS task went with the group");
+        assert!(h.snapshot().jobs.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_job_that_hits_its_timeout_is_killed() {
+        use std::os::unix::fs::PermissionsExt;
+        let (mut r, h) = rig().await;
+        h.send(acc("nightly")).await.unwrap();
+        let claude = r.t.dir.path().join("bin/claude");
+        std::fs::write(&claude, "#!/bin/sh\nsleep 60\n").unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        r.env.minute = Duration::from_millis(100); // the 5 minute limit is half a second
+        let start = std::time::Instant::now();
+        assert_eq!(r.run(false).await.unwrap(), "timed out after 5 min");
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "the sleep was killed"
+        );
+        let log = std::fs::read_dir(r.logs())
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert!(std::fs::read_to_string(log)
+            .unwrap()
+            .contains("timed out after 5 min"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn remove_jobs_removes_the_tasks_keeps_the_acceptances_and_fails_loudly() {
         let (r, h) = rig().await;
         h.send(acc("nightly")).await.unwrap();
@@ -1294,6 +1349,7 @@ mod jobs {
             login_path: Arc::new(|| None),
             online: Arc::new(|| true),
             spawn: Arc::new(|_| Ok(())),
+            minute: Duration::from_secs(60),
         };
         assert_eq!(remove_jobs(dir.path(), &env).unwrap(), 1);
         assert!(fake
@@ -1720,5 +1776,982 @@ mod personal {
         assert!(!pc.on && pc.offer, "{pc:?}");
         c.h.send(Command::PersonalDismiss).await.unwrap();
         assert!(!c.personal().await.offer);
+    }
+}
+
+// ---- proposals, copy, revert, history (Parity 33-36, 83-85) ----
+
+mod proposals {
+    use super::*;
+
+    pub struct P {
+        pub n: u64,
+        pub by: &'static str,
+        pub head: &'static str,
+        pub up: &'static str,
+        pub mergeable: bool,
+        /// (reviewer, state, commit)
+        pub reviews: Vec<(&'static str, &'static str, &'static str)>,
+    }
+
+    pub fn p(n: u64, by: &'static str) -> P {
+        P {
+            n,
+            by,
+            head: "p1",
+            up: "u1",
+            mergeable: true,
+            reviews: vec![],
+        }
+    }
+
+    impl P {
+        fn json(&self, mergeable: bool) -> serde_json::Value {
+            let mut v = json!({"number": self.n, "title": format!("{}: share x", self.by),
+                "state": "open", "head": {"sha": self.head, "ref": format!("proposal/{}-1", self.by)},
+                "user": {"login": self.by}, "updated_at": self.up,
+                "html_url": format!("https://example.test/pull/{}", self.n)});
+            if mergeable {
+                v["mergeable"] = json!(self.mergeable);
+            }
+            v
+        }
+    }
+
+    impl T {
+        pub async fn push_tail(&self, repo: &str) {
+            let r = format!("/repos/{repo}");
+            self.mock("POST", &format!("{r}/git/blobs"), 201, json!({"sha": "b2"}))
+                .await;
+            self.mock("POST", &format!("{r}/git/trees"), 201, json!({"sha": "t1"}))
+                .await;
+            self.mock(
+                "POST",
+                &format!("{r}/git/commits"),
+                201,
+                json!({"sha": "c2"}),
+            )
+            .await;
+            self.mock("PATCH", &format!("{r}/git/refs/heads/main"), 200, json!({}))
+                .await;
+            self.mock("POST", &format!("{r}/git/refs"), 201, json!({}))
+                .await;
+            self.mock(
+                "POST",
+                &format!("{r}/pulls"),
+                201,
+                json!({"number": 7, "state": "open"}),
+            )
+            .await;
+        }
+        /// Serve, mock the push calls, join.
+        pub async fn join_served(
+            &self,
+            h: &Handle,
+            repo: &str,
+            head: &str,
+            files: &[(&str, &str)],
+            gf: serde_json::Value,
+            first: bool,
+        ) {
+            self.serve_repo(repo, head, files, gf, first).await;
+            self.push_tail(repo).await;
+            h.send(Command::Join { repo: repo.into() }).await.unwrap();
+        }
+        pub async fn pulls(&self, repo: &str, ps: &[P]) {
+            let r = format!("/repos/{repo}");
+            let list: Vec<_> = ps.iter().map(|x| x.json(false)).collect();
+            self.mock("GET", &format!("{r}/pulls"), 200, json!(list))
+                .await;
+            for x in ps {
+                let n = x.n;
+                self.mock("GET", &format!("{r}/pulls/{n}"), 200, x.json(true))
+                    .await;
+                self.mock(
+                    "GET",
+                    &format!("{r}/pulls/{n}/files"),
+                    200,
+                    json!([{"filename": "CLAUDE.md", "status": "modified", "patch": "@@ +x"}]),
+                )
+                .await;
+                let rev: Vec<_> = x
+                    .reviews
+                    .iter()
+                    .map(|(u, s, c)| json!({"user": {"login": u}, "state": s, "commit_id": c}))
+                    .collect();
+                self.mock("GET", &format!("{r}/pulls/{n}/reviews"), 200, json!(rev))
+                    .await;
+            }
+            self.mock("POST", &format!("{r}/pulls/1/reviews"), 200, json!({}))
+                .await;
+        }
+        pub async fn sent(&self, verb: &str, p: &str) -> Vec<serde_json::Value> {
+            self.server
+                .received_requests()
+                .await
+                .unwrap()
+                .into_iter()
+                .filter(|r| r.method.as_str() == verb && r.url.path() == p)
+                .map(|r| serde_json::from_slice(&r.body).unwrap_or(json!(null)))
+                .collect()
+        }
+    }
+
+    pub fn gf(members: &[&str], proposal: bool) -> serde_json::Value {
+        json!({"schema": 1, "name": "Team", "members": members, "autoAcceptClaudeMd": false, "proposalMode": proposal})
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn in_proposal_mode_a_share_goes_to_a_pull_request_and_stays_a_local_edit() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        t.join_served(
+            &h,
+            "zed/team",
+            "h1",
+            &[("skills/s/SKILL.md", "one\n")],
+            gf(&["ann"], true),
+            true,
+        )
+        .await;
+        h.send(Command::SyncNow).await.unwrap();
+        std::fs::write(t.file("skills/s/SKILL.md"), "mine\n").unwrap();
+        let e = h
+            .send(Command::ShareEdit {
+                repo: "zed/team".into(),
+                path: "skills/s/SKILL.md".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(e, Event::Proposed(7));
+        assert!(t
+            .sent("PATCH", "/repos/zed/team/git/refs/heads/main")
+            .await
+            .is_empty());
+        let r = t.sent("POST", "/repos/zed/team/git/refs").await;
+        assert_eq!(
+            r[0]["ref"], "refs/heads/proposal/ann-19700112134640",
+            "proposal/<login>-<stamp>"
+        );
+        let pr = t.sent("POST", "/repos/zed/team/pulls").await;
+        assert_eq!(pr[0]["head"], "proposal/ann-19700112134640");
+        assert_eq!(pr[0]["base"], "main");
+        assert_eq!(t.pushed_blobs().await, ["mine\n"]);
+        let Event::Edits(ed) = h
+            .send(Command::EditsList {
+                repo: "zed/team".into(),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(ed.len(), 1, "nothing is shared until it is merged");
+    }
+
+    async fn list(h: &Handle) -> Vec<ProposalView> {
+        let Event::Proposals(v) = h
+            .send(Command::Proposals {
+                repo: "zed/team".into(),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        v
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn approvals_never_count_the_author_or_an_old_head_and_never_your_own() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        t.join_served(
+            &h,
+            "zed/team",
+            "h1",
+            &[],
+            gf(&["ann", "zed", "bo"], true),
+            true,
+        )
+        .await;
+        let mut seven = p(7, "zed");
+        seven.reviews = vec![
+            ("zed", "APPROVED", "p1"),
+            ("bo", "APPROVED", "p1"),
+            ("cy", "APPROVED", "old"),
+            ("dee", "APPROVED", "p1"),
+            ("dee", "CHANGES_REQUESTED", "p1"),
+        ];
+        let mut ten = p(10, "zed");
+        ten.mergeable = false;
+        t.pulls("zed/team", &[seven, p(8, "ann"), ten]).await;
+        t.mock("POST", "/repos/zed/team/pulls/7/reviews", 200, json!({}))
+            .await;
+        let v = list(&h).await;
+        assert_eq!(v.len(), 3);
+        assert_eq!(v[0].approvals, ["bo"]);
+        assert!(v[1].mine && !v[0].mine);
+        assert!(v[2].needs_update && !v[0].needs_update);
+        assert_eq!(v[0].files[0].path, "CLAUDE.md");
+
+        let e = h
+            .send(Command::ProposalApprove {
+                repo: "zed/team".into(),
+                number: 8,
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            e.0,
+            "you cannot approve your own proposal; another member has to"
+        );
+        let e = h
+            .send(Command::ProposalApprove {
+                repo: "zed/team".into(),
+                number: 10,
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(e.0, "proposal #10 needs an update before it can be merged");
+        h.send(Command::ProposalApprove {
+            repo: "zed/team".into(),
+            number: 7,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            t.sent("POST", "/repos/zed/team/pulls/7/reviews").await[0]["event"],
+            "APPROVE"
+        );
+        assert!(
+            t.sent("PUT", "/repos/zed/team/pulls/7/merge")
+                .await
+                .is_empty(),
+            "a member only approves"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn decline_comments_then_closes_and_accept_all_and_decline_all_skip_what_they_must() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        t.join_served(&h, "zed/team", "h1", &[], gf(&["ann", "zed"], true), true)
+            .await;
+        let mut ten = p(10, "zed");
+        ten.mergeable = false;
+        let mut nine = p(9, "zed");
+        nine.reviews = vec![("ann", "APPROVED", "p1")];
+        t.pulls("zed/team", &[p(7, "zed"), p(8, "ann"), nine, ten])
+            .await;
+        for n in [7, 8, 9, 10] {
+            t.mock(
+                "POST",
+                &format!("/repos/zed/team/pulls/{n}/reviews"),
+                200,
+                json!({}),
+            )
+            .await;
+            t.mock(
+                "POST",
+                &format!("/repos/zed/team/issues/{n}/comments"),
+                201,
+                json!({}),
+            )
+            .await;
+            t.mock(
+                "PATCH",
+                &format!("/repos/zed/team/pulls/{n}"),
+                200,
+                json!({"number": n}),
+            )
+            .await;
+        }
+        t.mock(
+            "GET",
+            "/repos/zed/team/pulls/99",
+            404,
+            json!({"message": "Not Found"}),
+        )
+        .await;
+        let e = h
+            .send(Command::ProposalDecline {
+                repo: "zed/team".into(),
+                number: 99,
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(e.0, "proposal #99 is not open");
+
+        h.send(Command::ProposalsAcceptAll {
+            repo: "zed/team".into(),
+        })
+        .await
+        .unwrap();
+        // only #7: #8 is mine, #9 is approved by me already, #10 is behind main
+        for (n, k) in [(7, 1), (8, 0), (9, 0), (10, 0)] {
+            assert_eq!(
+                t.sent("POST", &format!("/repos/zed/team/pulls/{n}/reviews"))
+                    .await
+                    .len(),
+                k,
+                "#{n}"
+            );
+        }
+
+        h.send(Command::ProposalDecline {
+            repo: "zed/team".into(),
+            number: 7,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            t.sent("POST", "/repos/zed/team/issues/7/comments").await[0]["body"],
+            "Declined by ann in claude-sync."
+        );
+        assert_eq!(
+            t.sent("PATCH", "/repos/zed/team/pulls/7").await[0]["state"],
+            "closed"
+        );
+
+        h.send(Command::ProposalsDeclineAll {
+            repo: "zed/team".into(),
+        })
+        .await
+        .unwrap();
+        for n in [8, 9, 10] {
+            assert_eq!(
+                t.sent("PATCH", &format!("/repos/zed/team/pulls/{n}"))
+                    .await
+                    .len(),
+                1,
+                "#{n}"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pull_request_is_read_again_only_when_its_head_or_updated_at_moved() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        t.join_served(&h, "zed/team", "h1", &[], gf(&["ann", "zed"], true), true)
+            .await;
+        let r = "/repos/zed/team";
+        let list = |up: &str| json!([p(7, "zed").json_with(up)]);
+        Mock::given(method("GET"))
+            .and(path(format!("{r}/pulls")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(list("u1")))
+            .up_to_n_times(2)
+            .mount(&t.server)
+            .await;
+        t.mock("GET", &format!("{r}/pulls"), 200, list("u2")).await;
+        t.mock("GET", &format!("{r}/pulls/7"), 200, p(7, "zed").json(true))
+            .await;
+        t.mock("GET", &format!("{r}/pulls/7/files"), 200, json!([]))
+            .await;
+        t.mock("GET", &format!("{r}/pulls/7/reviews"), 200, json!([]))
+            .await;
+        list_it(&h).await;
+        list_it(&h).await;
+        assert_eq!(files_gets(&t).await, 1, "the second list changed nothing");
+        list_it(&h).await;
+        assert_eq!(files_gets(&t).await, 2, "updated_at moved");
+    }
+
+    async fn files_gets(t: &T) -> usize {
+        t.server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|q| q.url.path() == "/repos/zed/team/pulls/7/files")
+            .count()
+    }
+
+    async fn list_it(h: &Handle) {
+        list(h).await;
+    }
+
+    impl P {
+        fn json_with(&self, up: &str) -> serde_json::Value {
+            let mut v = self.json(false);
+            v["updated_at"] = json!(up);
+            v
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_host_merges_by_approving_and_on_sync_only_after_a_current_member_approved() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        let g = gf(&["ann", "bo"], true);
+        t.join_served(&h, "ann/team", "h1", &[], g, true).await;
+        let mut gone = p(8, "bo");
+        gone.reviews = vec![("zed", "APPROVED", "p1")]; // not a member any more
+        let mut behind = p(9, "bo");
+        behind.mergeable = false;
+        behind.reviews = vec![("bo2", "APPROVED", "p1")];
+        let mut ok = p(11, "bo");
+        ok.reviews = vec![("bo", "APPROVED", "p1")];
+        // a member other than the author approved #12; the author of #11 approved himself
+        let mut twelve = p(12, "cy");
+        twelve.reviews = vec![("bo", "APPROVED", "p1")];
+        t.pulls("ann/team", &[ok, twelve, gone, behind]).await;
+        for n in [8, 9, 11, 12] {
+            t.mock(
+                "PUT",
+                &format!("/repos/ann/team/pulls/{n}/merge"),
+                200,
+                json!({"sha": "m"}),
+            )
+            .await;
+        }
+        h.send(Command::SyncNow).await.unwrap(); // caches proposalMode, then merges
+        h.send(Command::SyncNow).await.unwrap();
+        let merged = |n: u64| {
+            let t = &t;
+            async move {
+                t.sent("PUT", &format!("/repos/ann/team/pulls/{n}/merge"))
+                    .await
+            }
+        };
+        assert!(
+            merged(11).await.is_empty(),
+            "the author's own approval is not one"
+        );
+        assert!(merged(8).await.is_empty(), "approved by someone who left");
+        assert!(merged(9).await.is_empty(), "behind main");
+        let m = merged(12).await;
+        assert!(!m.is_empty());
+        assert_eq!(m[0]["sha"], "p1", "pinned to the head that was read");
+
+        // the host's own approval merges at once
+        h.send(Command::ProposalApprove {
+            repo: "ann/team".into(),
+            number: 11,
+        })
+        .await
+        .unwrap();
+        assert_eq!(merged(11).await.len(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn proposal_mode_is_a_host_setting_in_the_group_file() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        t.join_served(&h, "ann/team", "h1", &[], gf(&["ann"], false), true)
+            .await;
+        h.send(Command::SetProposalMode {
+            repo: "ann/team".into(),
+            on: true,
+        })
+        .await
+        .unwrap();
+        let blob = t.sent("POST", "/repos/ann/team/git/blobs").await;
+        let text = String::from_utf8(
+            base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                blob[0]["content"].as_str().unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(text.contains("\"proposalMode\": true"), "{text}");
+        let t2 = T::new().await;
+        let h2 = t2.group_with("h1", &[]).await;
+        let e = h2
+            .send(Command::SetProposalMode {
+                repo: "zed/team".into(),
+                on: true,
+            })
+            .await
+            .unwrap_err();
+        assert!(e.0.starts_with("Only zed can change zed/team"), "{}", e.0);
+    }
+}
+
+mod copy_revert_history {
+    use super::proposals::gf;
+    use super::*;
+
+    const KEY: &str = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+
+    async fn two_groups(push: bool) -> (T, Handle) {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        let src = format!("# Team\n- use tabs\n- token {KEY}\n");
+        t.join_served(
+            &h,
+            "zed/team",
+            "h1",
+            &[
+                ("CLAUDE.md", &src),
+                ("skills/lint/SKILL.md", "lint\n"),
+                ("skills/same/SKILL.md", "same\n"),
+                ("agents/reviewer.md", "review\n"),
+            ],
+            gf(&["ann"], false),
+            true,
+        )
+        .await;
+        // the target: ann hosts it (the repo reply says whether she can push)
+        let perms = json!({"admin": push, "push": push, "pull": true});
+        t.mock(
+            "GET",
+            "/repos/ann/crew",
+            200,
+            json!({"name": "crew", "full_name": "ann/crew", "private": true, "permissions": perms}),
+        )
+        .await;
+        t.join_served(
+            &h,
+            "ann/crew",
+            "k1",
+            &[
+                ("CLAUDE.md", "# Crew\n"),
+                ("skills/same/SKILL.md", "same\n"),
+            ],
+            gf(&["ann"], false),
+            false,
+        )
+        .await;
+        h.send(Command::SyncNow).await.unwrap();
+        (t, h)
+    }
+
+    fn req() -> CopyRequest {
+        CopyRequest {
+            claude_md: format!("- use tabs\n- token {KEY}"),
+            skills: vec!["lint".into(), "same".into()],
+            agents: vec!["reviewer.md".into()],
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn copy_previews_then_puts_claude_md_skills_and_agents_into_the_other_group() {
+        let (t, h) = two_groups(true).await;
+        let Event::CopyPreview(pv) = h
+            .send(Command::CopyPreview {
+                from: "zed/team".into(),
+                to: "ann/crew".into(),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(pv.can_push && pv.syncs_skills);
+        assert!(
+            pv.claude_md.contains("use tabs") && !pv.claude_md.contains("ghp_"),
+            "{}",
+            pv.claude_md
+        );
+        let s: Vec<_> = pv
+            .skills
+            .iter()
+            .map(|i| (i.name.as_str(), i.in_target, i.same))
+            .collect();
+        assert_eq!(s, [("lint", false, false), ("same", true, true)]);
+        assert_eq!(pv.agents[0].name, "reviewer.md");
+        assert!(
+            t.sent("POST", "/repos/ann/crew/git/blobs").await.is_empty(),
+            "a preview writes nothing"
+        );
+
+        let e = h
+            .send(Command::Copy {
+                from: "zed/team".into(),
+                to: "ann/crew".into(),
+                req: req(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            e,
+            Event::Copied {
+                files: 3,
+                claude_md: true,
+                proposed: None
+            }
+        );
+        let blobs: Vec<String> = t
+            .sent("POST", "/repos/ann/crew/git/blobs")
+            .await
+            .iter()
+            .map(|b| {
+                String::from_utf8(
+                    base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD,
+                        b["content"].as_str().unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap()
+            })
+            .collect();
+        assert!(blobs.contains(&"lint\n".to_string()) && blobs.contains(&"review\n".to_string()));
+        let md = blobs.iter().find(|b| b.starts_with("# Crew")).unwrap();
+        assert!(md.starts_with("# Crew\n\n## Team\n\n- use tabs"), "{md}");
+        assert!(!md.contains("ghp_"), "secrets are redacted");
+        let tree = t.sent("POST", "/repos/ann/crew/git/trees").await;
+        let mut paths: Vec<&str> = tree[0]["tree"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        paths.sort();
+        assert_eq!(
+            paths,
+            ["CLAUDE.md", "agents/reviewer.md", "skills/lint/SKILL.md"]
+        );
+        let m = t.sent("POST", "/repos/ann/crew/git/commits").await;
+        assert!(
+            m[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("copy from zed/team"),
+            "{m:?}"
+        );
+        // the target's base is untouched: the next sync delivers the files, no local edits
+        let Event::Edits(ed) = h
+            .send(Command::EditsList {
+                repo: "ann/crew".into(),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(ed.is_empty());
+
+        // errors in v1's words
+        for (to, r, want) in [
+            ("zed/team", req(), "pick another group to copy to"),
+            (
+                "ann/crew",
+                CopyRequest {
+                    skills: vec!["nope".into()],
+                    ..Default::default()
+                },
+                "zed/team has no skill named nope",
+            ),
+        ] {
+            let e = h
+                .send(Command::Copy {
+                    from: "zed/team".into(),
+                    to: to.into(),
+                    req: r,
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(e.0, want);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn copy_needs_push_access_to_the_target() {
+        let (t, h) = two_groups(false).await;
+        let e = h
+            .send(Command::Copy {
+                from: "zed/team".into(),
+                to: "ann/crew".into(),
+                req: req(),
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            e.0.starts_with("You can't push to Team: your GitHub account can read it"),
+            "{}",
+            e.0
+        );
+        assert!(t.sent("POST", "/repos/ann/crew/git/blobs").await.is_empty());
+    }
+
+    /// ann hosts `ann/team`; main is at `cc`, the commit `bb` (parent `aa`) touched the skill
+    /// and added an agent.
+    async fn revert_rig(head_skill: &str) -> (T, Handle) {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        let gfv = gf(&["ann"], false);
+        let readme = ("README.md", "x\n");
+        t.join_served(
+            &h,
+            "ann/team",
+            "cc",
+            &[
+                ("skills/s/SKILL.md", head_skill),
+                ("agents/new.md", "new\n"),
+                readme,
+            ],
+            gfv.clone(),
+            true,
+        )
+        .await;
+        t.serve_repo(
+            "ann/team",
+            "bb",
+            &[
+                ("skills/s/SKILL.md", "two\n"),
+                ("agents/new.md", "new\n"),
+                readme,
+            ],
+            gfv.clone(),
+            false,
+        )
+        .await;
+        t.serve_repo(
+            "ann/team",
+            "aa",
+            &[("skills/s/SKILL.md", "one\n"), readme],
+            gfv,
+            false,
+        )
+        .await;
+        let who = json!({"name": "Ann", "date": "2026-01-02T03:04:05Z"});
+        let detail = |files: serde_json::Value, parents: serde_json::Value, msg: &str| json!({"sha": "bb", "parents": parents, "files": files, "commit": {"message": msg, "author": who, "committer": who}});
+        t.mock(
+            "GET",
+            "/repos/ann/team/commits/bb",
+            200,
+            detail(
+                json!([
+                    {"filename": "skills/s/SKILL.md", "status": "modified"},
+                    {"filename": "agents/new.md", "status": "added"},
+                    {"filename": "README.md", "status": "modified"}
+                ]),
+                json!([{"sha": "aa"}]),
+                "edit skill #12",
+            ),
+        )
+        .await;
+        t.mock(
+            "GET",
+            "/repos/ann/team/commits/first",
+            200,
+            detail(json!([]), json!([]), "first"),
+        )
+        .await;
+        t.mock(
+            "GET",
+            "/repos/ann/team/commits/docs",
+            200,
+            detail(
+                json!([{"filename": "README.md", "status": "modified"}]),
+                json!([{"sha": "aa"}]),
+                "docs",
+            ),
+        )
+        .await;
+        h.send(Command::SyncNow).await.unwrap();
+        (t, h)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn revert_previews_then_puts_each_file_back_in_a_new_commit() {
+        let (t, h) = revert_rig("two\n").await;
+        let c = |sha: &str, preview| {
+            if preview {
+                Command::RevertPreview {
+                    repo: "ann/team".into(),
+                    sha: sha.into(),
+                }
+            } else {
+                Command::Revert {
+                    repo: "ann/team".into(),
+                    sha: sha.into(),
+                }
+            }
+        };
+        let Event::RevertPlan(plan) = h.send(c("bb", true)).await.unwrap() else {
+            panic!()
+        };
+        let f: Vec<_> = plan
+            .files
+            .iter()
+            .map(|f| (f.path.as_str(), f.action.as_str(), f.blocked.is_none()))
+            .collect();
+        assert_eq!(
+            f,
+            [
+                ("agents/new.md", "delete", true),
+                ("skills/s/SKILL.md", "restore", true)
+            ],
+            "README.md is not a synced path"
+        );
+        assert_eq!(plan.summary, "edit skill #12");
+        assert!(
+            t.sent("POST", "/repos/ann/team/git/trees").await.is_empty(),
+            "a preview writes nothing"
+        );
+
+        h.send(c("bb", false)).await.unwrap();
+        let blobs = t.sent("POST", "/repos/ann/team/git/blobs").await;
+        assert_eq!(blobs.len(), 1, "only the restored file is a blob");
+        let tree = &t.sent("POST", "/repos/ann/team/git/trees").await[0]["tree"];
+        assert_eq!(tree[0]["path"], "agents/new.md");
+        assert!(tree[0]["sha"].is_null(), "an added file is deleted");
+        let m = t.sent("POST", "/repos/ann/team/git/commits").await;
+        assert!(
+            m[0]["message"]
+                .as_str()
+                .unwrap()
+                .ends_with("revert bb (edit skill #12)"),
+            "{m:?}"
+        );
+        assert_eq!(
+            t.sent("PATCH", "/repos/ann/team/git/refs/heads/main")
+                .await
+                .len(),
+            1
+        );
+
+        for (sha, want) in [
+            ("first", "first is the first commit and cannot be reverted"),
+            (
+                "docs",
+                "Nothing to revert: the files of docs already match what they were before it",
+            ),
+        ] {
+            assert_eq!(h.send(c(sha, true)).await.unwrap_err().0, want);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_file_that_changed_again_refuses_the_whole_revert_and_members_cannot_revert() {
+        let (t, h) = revert_rig("three\n").await;
+        let Event::RevertPlan(plan) = h
+            .send(Command::RevertPreview {
+                repo: "ann/team".into(),
+                sha: "bb".into(),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        let b = plan.files.iter().find_map(|f| f.blocked.clone()).unwrap();
+        assert_eq!(
+            b,
+            "skills/s/SKILL.md changed again after this commit; revert that first."
+        );
+        let e = h
+            .send(Command::Revert {
+                repo: "ann/team".into(),
+                sha: "bb".into(),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(e.0, b);
+        assert!(t
+            .sent("POST", "/repos/ann/team/git/commits")
+            .await
+            .is_empty());
+
+        let t2 = T::new().await;
+        let h2 = t2.group_with("h1", &[]).await;
+        let e = h2
+            .send(Command::RevertPreview {
+                repo: "zed/team".into(),
+                sha: "bb".into(),
+            })
+            .await
+            .unwrap_err();
+        assert!(e.0.starts_with("Only zed can change zed/team"), "{}", e.0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn history_has_notes_from_the_text_or_the_notes_file_and_issue_chips() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        let who = json!({"name": "Zed", "date": "2026-01-02T03:04:05Z"});
+        let c = |sha: &str, m: &str| json!({"sha": sha, "commit": {"message": m, "author": who, "committer": who}, "author": {"login": "zed"}});
+        let notes = json!({"s2": {"before": "x", "now": "y"}}).to_string();
+        t.server.reset().await;
+        t.mock("GET", "/user", 200, json!({"login": "ann", "id": 1}))
+            .await;
+        t.mock(
+            "GET",
+            "/repos/zed/team/commits",
+            200,
+            json!([
+                c("s1", "edit #12 and #3\n\nBefore: tabs\nNow: spaces"),
+                c("s2", "update"),
+                c("s3", "plain")
+            ]),
+        )
+        .await;
+        t.join_served(
+            &h,
+            "zed/team",
+            "s1",
+            &[
+                ("changes/before-now.json", &notes),
+                ("skills/s/SKILL.md", "s\n"),
+                ("agents/a.md", "a\n"),
+                ("CLAUDE.md", "# T\n"),
+            ],
+            gf(&["ann"], false),
+            false,
+        )
+        .await;
+        let Event::History(l) = h
+            .send(Command::History {
+                repo: "zed/team".into(),
+                limit: 50,
+            })
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        let got: Vec<_> = l
+            .iter()
+            .map(|i| {
+                (
+                    i.sha.as_str(),
+                    i.issues.clone(),
+                    i.before.as_deref(),
+                    i.now.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("s1", vec![12, 3], Some("tabs"), Some("spaces")),
+                ("s2", vec![], Some("x"), Some("y")),
+                ("s3", vec![], None, None)
+            ]
+        );
+        assert_eq!(l[0].summary, "edit #12 and #3");
+        let reqs = t.server.received_requests().await.unwrap();
+        let q = reqs
+            .iter()
+            .find(|r| r.url.path() == "/repos/zed/team/commits")
+            .unwrap();
+        assert!(
+            q.url.query().unwrap().contains("per_page=20"),
+            "at most 20 commits"
+        );
+
+        h.send(Command::SyncNow).await.unwrap();
+        let Event::Contents(c) = h
+            .send(Command::Contents {
+                repo: "zed/team".into(),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        let got: Vec<_> = c
+            .iter()
+            .map(|i| (i.kind.as_str(), i.name.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [("claudeMd", "CLAUDE.md"), ("agent", "a.md"), ("skill", "s")]
+        );
     }
 }

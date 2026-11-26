@@ -62,7 +62,11 @@ pub struct Core {
     pub(crate) jobs_env: crate::jobs::JobsEnv,
     /// Lets a long command show its state before it ends (the actor sets it).
     pub(crate) publish: Option<tokio::sync::watch::Sender<Snapshot>>,
+    /// (repo, number) to the (head sha, updated_at) a proposal view was built on, and the view.
+    pub(crate) proposal_cache: std::collections::HashMap<(String, u64), ProposalCached>,
 }
+
+pub(crate) type ProposalCached = ((String, String), ProposalView);
 
 impl Core {
     pub fn open(env: Env) -> Result<Core> {
@@ -89,6 +93,7 @@ impl Core {
             syncing: false,
             jobs_env: crate::jobs::JobsEnv::system(&home_path),
             publish: None,
+            proposal_cache: Default::default(),
         };
         c.restore_session();
         Ok(c)
@@ -160,6 +165,18 @@ impl Core {
                 self.device_edit(crate::personal::Pending::Rename { id, name })
             }
             DeviceRemove { id } => self.device_edit(crate::personal::Pending::Remove { id }),
+            SetProposalMode { repo, on } => self.set_proposal_mode(&repo, on),
+            Proposals { repo } => self.proposals(&repo).map(Event::Proposals),
+            ProposalApprove { repo, number } => self.proposal_approve(&repo, number),
+            ProposalDecline { repo, number } => self.proposal_decline(&repo, number),
+            ProposalsAcceptAll { repo } => self.proposals_accept_all(&repo),
+            ProposalsDeclineAll { repo } => self.proposals_decline_all(&repo),
+            CopyPreview { from, to } => self.copy_preview(&from, &to),
+            Copy { from, to, req } => self.copy(&from, &to, req),
+            RevertPreview { repo, sha } => self.revert_preview(&repo, &sha),
+            Revert { repo, sha } => self.revert(&repo, &sha),
+            History { repo, limit } => self.history(&repo, limit),
+            Contents { repo } => self.contents(&repo),
             Pause => self.set_app(|a| a.paused = true),
             Resume => self.set_app(|a| a.paused = false),
             SetInterval { secs } => self.set_app(|a| a.interval_secs = Some(secs)),

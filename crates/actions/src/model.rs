@@ -157,6 +157,99 @@ ts! {
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
+    pub struct ProposalFile {
+        pub path: String,
+        pub patch: String,
+    }
+
+    /// An open proposal: a pull request from a `proposal/<login>-<stamp>` branch (Parity 36, 83-85).
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ProposalView {
+        pub number: u64,
+        pub branch: String,
+        pub author: String,
+        pub title: String,
+        pub url: String,
+        pub files: Vec<ProposalFile>,
+        /// Members (never the author) whose approval holds on the current head.
+        pub approvals: Vec<String>,
+        /// Behind main: tagged "needs an update", cannot be merged.
+        pub needs_update: bool,
+        pub mine: bool,
+        pub approved_by_me: bool,
+        pub head: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct CopyItem {
+        pub name: String,
+        pub in_target: bool,
+        /// The target has the same bytes, so copying changes nothing.
+        pub same: bool,
+    }
+
+    /// What copying to another group would do (Parity 33).
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct CopyPreviewView {
+        pub to: String,
+        pub to_name: String,
+        pub host: String,
+        pub can_push: bool,
+        pub syncs_claude_md: bool,
+        pub syncs_skills: bool,
+        pub syncs_agents: bool,
+        /// The source group's CLAUDE.md, secrets redacted; empty when it has none.
+        pub claude_md: String,
+        pub skills: Vec<CopyItem>,
+        pub agents: Vec<CopyItem>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct RevertFile {
+        pub path: String,
+        /// `restore`, `delete` or `recreate`.
+        pub action: String,
+        /// Why this file cannot go back (it changed again); `None` when it can.
+        pub blocked: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct RevertPlan {
+        pub sha: String,
+        pub summary: String,
+        pub files: Vec<RevertFile>,
+    }
+
+    /// One commit of the group's history (Parity 35).
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct HistoryItem {
+        pub sha: String,
+        pub summary: String,
+        pub author: String,
+        pub at: Option<String>,
+        /// `#123` chips found in the commit text.
+        pub issues: Vec<u64>,
+        pub before: Option<String>,
+        pub now: Option<String>,
+    }
+
+    /// What a group gives this device (Parity 35): `claudeMd`, `skill`, `agent`, `command`,
+    /// `outputStyle`, `settings`, `plugin`, `jobs`.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ContentItem {
+        pub kind: String,
+        pub name: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct ReviewLine {
         pub id: String,
         pub add: bool,
@@ -298,6 +391,56 @@ pub enum Command {
     DeviceRemove {
         id: String,
     },
+    // proposals (Parity 36, 83, 84, 85)
+    /// Host only.
+    SetProposalMode {
+        repo: String,
+        on: bool,
+    },
+    Proposals {
+        repo: String,
+    },
+    /// Never your own; the host's approval merges.
+    ProposalApprove {
+        repo: String,
+        number: u64,
+    },
+    ProposalDecline {
+        repo: String,
+        number: u64,
+    },
+    ProposalsAcceptAll {
+        repo: String,
+    },
+    ProposalsDeclineAll {
+        repo: String,
+    },
+    // copy, revert, history (Parity 33, 34, 35)
+    CopyPreview {
+        from: String,
+        to: String,
+    },
+    Copy {
+        from: String,
+        to: String,
+        req: CopyRequest,
+    },
+    /// Host only; writes nothing.
+    RevertPreview {
+        repo: String,
+        sha: String,
+    },
+    Revert {
+        repo: String,
+        sha: String,
+    },
+    History {
+        repo: String,
+        limit: u32,
+    },
+    Contents {
+        repo: String,
+    },
     // sync loop switches
     Pause,
     Resume,
@@ -308,8 +451,31 @@ pub enum Command {
     WindowOpened,
 }
 
+/// What the person picked in the copy preview.
+#[derive(Debug, Clone, Default)]
+pub struct CopyRequest {
+    /// CLAUDE.md lines to append, as the person left them; redacted again.
+    pub claude_md: String,
+    pub skills: Vec<String>,
+    /// Agent file names (`reviewer.md`).
+    pub agents: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
+    /// The change went out as proposal #n, not as a commit.
+    Proposed(u64),
+    Proposals(Vec<ProposalView>),
+    CopyPreview(CopyPreviewView),
+    Copied {
+        files: usize,
+        claude_md: bool,
+        /// The target is in proposal mode: the proposal number.
+        proposed: Option<u64>,
+    },
+    RevertPlan(RevertPlan),
+    History(Vec<HistoryItem>),
+    Contents(Vec<ContentItem>),
     Done,
     Message(String),
     DeviceCode {

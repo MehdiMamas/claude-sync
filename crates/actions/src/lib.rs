@@ -19,14 +19,17 @@
 
 mod actor;
 mod choices;
+mod copy;
 mod core;
 mod edits;
 mod error;
 mod groups;
+mod history;
 pub mod jobs;
 pub mod model;
 pub mod msg;
 mod personal;
+mod proposals;
 mod review;
 mod schedule;
 mod signin;

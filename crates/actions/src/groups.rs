@@ -55,7 +55,7 @@ impl Core {
         Ok((head.sha, doc))
     }
 
-    fn require_host(&self, repo: &str) -> Result<()> {
+    pub(crate) fn require_host(&self, repo: &str) -> Result<()> {
         let is_host = self
             .db
             .groups()?
@@ -69,7 +69,11 @@ impl Core {
     }
 
     /// Change the group file and push it; retried when someone else pushed first.
-    fn edit_group(&self, repo: &str, f: impl Fn(&mut GroupFile) -> Result<String>) -> Result<()> {
+    pub(crate) fn edit_group(
+        &self,
+        repo: &str,
+        f: impl Fn(&mut GroupFile) -> Result<String>,
+    ) -> Result<()> {
         let me = self.me()?;
         for _ in 0..3 {
             let (sha, mut doc) = self.read_group(repo)?;

@@ -24,7 +24,7 @@ impl Core {
         FsDisk::new(&self.home, Scope::Group(repo.into()))
     }
 
-    fn base(&self, repo: &str) -> Result<BaseRec> {
+    pub(crate) fn base(&self, repo: &str) -> Result<BaseRec> {
         self.db
             .load_base(repo, &self.home.state)?
             .ok_or_else(|| Error::new(msg::not_a_group(repo)))
@@ -120,6 +120,18 @@ impl Core {
     /// One commit with `files` on the group's main; the base learns them so they are not
     /// edits any more. A secret in any file stops it before anything is sent.
     fn push_files(&self, repo: &str, files: FileSet, what: &str) -> Result<Event> {
+        self.push_files_to(repo, files, &format!("share {what}"), true)
+    }
+
+    /// `own_base`: the files are on this device too (a share), so the base learns them; a copy
+    /// into another group leaves the base alone and the next sync delivers the files.
+    pub(crate) fn push_files_to(
+        &self,
+        repo: &str,
+        files: FileSet,
+        what: &str,
+        own_base: bool,
+    ) -> Result<Event> {
         for (p, b) in &files {
             let text = String::from_utf8_lossy(b);
             if !text.contains(ALLOW_MARKER) {
@@ -127,6 +139,9 @@ impl Core {
                     return Err(Error::new(msg::secret_found(p, h.line, h.pattern)));
                 }
             }
+        }
+        if self.proposal_mode(repo) {
+            return self.propose(repo, &files, what);
         }
         let me = self.me()?;
         let remote = self.remote(repo)?;
@@ -140,14 +155,16 @@ impl Core {
         let sha = remote.push(
             &head.sha,
             &pushes,
-            &format!("{me}@{}: share {what}", self.env.device),
+            &format!("{me}@{}: {what}", self.env.device),
         )?;
-        let mut base = self.base(repo)?;
-        base.files
-            .extend(files.into_iter().filter(|(p, _)| is_planned_path(p)));
-        base.head_sha = sha;
-        base.etag = None;
-        self.db.save_base(repo, &base, self.now())?;
+        if own_base {
+            let mut base = self.base(repo)?;
+            base.files
+                .extend(files.into_iter().filter(|(p, _)| is_planned_path(p)));
+            base.head_sha = sha;
+            base.etag = None;
+            self.db.save_base(repo, &base, self.now())?;
+        }
         Ok(Event::Done)
     }
 

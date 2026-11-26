@@ -97,12 +97,37 @@ pub struct Pull {
     pub head: Option<PullRef>,
     pub user: Option<Owner>,
     pub updated_at: Option<String>,
+    #[serde(default)]
+    pub html_url: String,
+    /// Only the single-pull reply has it; `Some(false)`: behind main, needs an update.
+    #[serde(default)]
+    pub mergeable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Review {
     pub user: Option<Owner>,
     pub state: String,
+    /// The branch head the review was given on.
+    #[serde(default)]
+    pub commit_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Parent {
+    pub sha: String,
+}
+
+/// One commit with the files it touched.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CommitDetail {
+    pub sha: String,
+    #[serde(default)]
+    pub parents: Vec<Parent>,
+    #[serde(default)]
+    pub files: Vec<ChangedFile>,
+    #[serde(default)]
+    pub commit: Option<CommitInfo>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -513,6 +538,29 @@ impl Client {
     /// Open pull requests; a `304` is answered from the cache, so it costs nothing.
     pub fn open_pulls(&self, o: &str, r: &str) -> Result<Vec<Pull>> {
         self.get_pages(&rp(o, r, "/pulls?state=open&per_page=100"))
+    }
+
+    /// The single pull: the list reply leaves `mergeable` out.
+    pub fn pull(&self, o: &str, r: &str, n: u64) -> Result<Pull> {
+        self.get(&rp(o, r, &format!("/pulls/{n}")))?.json()
+    }
+
+    pub fn pull_files(&self, o: &str, r: &str, n: u64) -> Result<Vec<ChangedFile>> {
+        self.get_pages(&rp(o, r, &format!("/pulls/{n}/files?per_page=100")))
+    }
+
+    pub fn comment(&self, o: &str, r: &str, n: u64, body: &str) -> Result<()> {
+        let body = json!({ "body": body });
+        self.send(
+            Method::POST,
+            &rp(o, r, &format!("/issues/{n}/comments")),
+            Some(&body),
+        )
+        .map(drop)
+    }
+
+    pub fn commit_detail(&self, o: &str, r: &str, sha: &str) -> Result<CommitDetail> {
+        self.get(&rp(o, r, &format!("/commits/{sha}")))?.json()
     }
 
     pub fn reviews(&self, o: &str, r: &str, n: u64) -> Result<Vec<Review>> {

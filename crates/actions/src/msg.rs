@@ -116,3 +116,40 @@ pub fn personal_mod(repo: &str) -> String {
 pub fn personal_foreign(repo: &str) -> String {
     format!("{repo} already exists on GitHub and wasn't made by claude-sync, so personal memory won't use it. Rename or delete that repo on GitHub, then turn this on again.")
 }
+
+pub fn own_proposal() -> &'static str {
+    "you cannot approve your own proposal; another member has to"
+}
+pub fn needs_update(n: u64) -> String {
+    format!("proposal #{n} needs an update before it can be merged")
+}
+pub fn not_open(n: u64) -> String {
+    format!("proposal #{n} is not open")
+}
+pub fn declined_note(login: &str) -> String {
+    format!("Declined by {login} in claude-sync.")
+}
+pub fn no_push(group: &str, host: &str) -> String {
+    format!("You can't push to {group}: your GitHub account can read it but not write to it. Ask its host ({host}) for write access.")
+}
+pub fn copy_same_group() -> &'static str {
+    "pick another group to copy to"
+}
+pub fn no_such_item(from: &str, what: &str, name: &str) -> String {
+    format!("{from} has no {what} named {name}")
+}
+pub fn different_item(to: &str, what: &str, name: &str) -> String {
+    format!("{to} already has a different {what} named {name}")
+}
+pub fn first_commit(sha: &str) -> String {
+    format!("{sha} is the first commit and cannot be reverted")
+}
+pub fn nothing_reverted(why: &str) -> String {
+    format!("Nothing was reverted. {why}")
+}
+pub fn nothing_to_revert(sha: &str) -> String {
+    format!("Nothing to revert: the files of {sha} already match what they were before it")
+}
+pub fn changed_again(path: &str) -> String {
+    format!("{path} changed again after this commit; revert that first.")
+}

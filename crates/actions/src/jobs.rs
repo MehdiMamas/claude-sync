@@ -39,6 +39,8 @@ pub struct JobsEnv {
     pub online: Arc<dyn Fn() -> bool + Send + Sync>,
     /// Start `exe args` detached (Run now must not block the actor).
     pub spawn: Spawn,
+    /// How long a job-timeout minute lasts (60 s; tests shorten it).
+    pub minute: Duration,
 }
 
 impl JobsEnv {
@@ -63,6 +65,7 @@ impl JobsEnv {
                     .spawn()
                     .map(|_| ())
             }),
+            minute: Duration::from_secs(60),
         }
     }
 }
@@ -646,7 +649,7 @@ impl Core {
         std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
         let result = (|| -> std::io::Result<Option<i32>> {
             let mut child = cmd.spawn()?;
-            let deadline = Instant::now() + Duration::from_secs(u64::from(j.timeout) * 60);
+            let deadline = Instant::now() + io.minute * j.timeout;
             loop {
                 if let Some(s) = child.try_wait()? {
                     return Ok(Some(s.code().unwrap_or(-1)));
