@@ -54,15 +54,35 @@ pub fn gh_token() -> Option<String> {
     (out.status.success() && !t.is_empty()).then_some(t)
 }
 
-/// No sign-in, or one GitHub refused: take the `gh` sign-in if GitHub accepts it.
+/// A sign-in GitHub refused (never: no sign-in at all): take the `gh` sign-in if GitHub accepts it.
 pub fn recover(core: &mut Core, gh: impl FnOnce() -> Option<String>) -> bool {
-    core.needs_sign_in() && gh().is_some_and(|t| core.recover_sign_in(&t))
+    core.token_refused() && gh().is_some_and(|t| core.recover_sign_in(&t))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use claude_sync_github::secrets::{delete, load, save};
+    use std::cell::Cell;
+
+    #[test]
+    fn after_logout_gh_is_never_asked() {
+        let h = tempfile::tempdir().unwrap();
+        let ctx = crate::Ctx {
+            home: Some(h.path().to_path_buf()),
+            ..crate::Ctx::cli()
+        };
+        let mut core = Core::open(crate::run::env(&ctx).unwrap()).unwrap();
+        core.handle(claude_sync_actions::Command::SignOut).unwrap();
+        let asked = Cell::new(false);
+        let fake_gh = || {
+            asked.set(true);
+            Some("ghtok".to_string())
+        };
+        assert!(!recover(&mut core, fake_gh));
+        assert!(!asked.get(), "no token at all: gh stays unasked");
+        assert!(core.snapshot().login.is_none());
+    }
 
     #[test]
     fn round_trips_and_is_private() {

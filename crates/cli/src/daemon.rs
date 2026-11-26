@@ -126,7 +126,7 @@ pub fn run_loop(
     step: Duration,
     gh: &dyn Fn() -> Option<String>,
 ) {
-    // `gh auth token` at most once a minute while signed out or expired.
+    // `gh auth token` at most once a minute while the sign-in is expired (never after logout).
     let mut last_gh: Option<std::time::Instant> = None;
     let token = state.join("token");
     let mut seen: Option<Vec<u8>> = None;
@@ -144,7 +144,7 @@ pub fn run_loop(
             if let Err(e) = c.tick() {
                 eprintln!("claude-sync-cli: {e}");
             }
-            if c.needs_sign_in() && last_gh.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
+            if c.token_refused() && last_gh.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
                 last_gh = Some(std::time::Instant::now());
                 crate::token::recover(c, gh);
             }

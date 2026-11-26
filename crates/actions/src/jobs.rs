@@ -246,7 +246,15 @@ impl Job {
     }
 
     fn spec(&self, exe: &Path) -> Result<TaskSpec> {
-        TaskSpec::new(&self.id, &self.title, &self.cron, exe, self.timeout).map_err(Error::new)
+        TaskSpec::new(
+            &self.repo,
+            &self.id,
+            &self.title,
+            &self.cron,
+            exe,
+            self.timeout,
+        )
+        .map_err(Error::new)
     }
 }
 
@@ -538,7 +546,7 @@ impl Core {
         if !Self::accepted(&self.choices(), &j) {
             return Err(Error::new(format!("job {id:?} is not accepted yet")));
         }
-        (self.jobs_env.spawn)(&["run-job".into(), id.into(), "--now".into()])?;
+        (self.jobs_env.spawn)(&["run-job".into(), repo.into(), id.into(), "--now".into()])?;
         Ok(Event::Done)
     }
 

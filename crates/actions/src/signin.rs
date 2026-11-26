@@ -146,6 +146,12 @@ impl Core {
         self.login.is_none() || self.expired.is_some() || self.client.is_expired()
     }
 
+    /// A sign-in GitHub refused (expiry or a 401). Only then does the `gh` fallback run: with no
+    /// token at all (after logout) it stays signed out, as v1.
+    pub fn token_refused(&self) -> bool {
+        self.login.is_some() && (self.expired.is_some() || self.client.is_expired())
+    }
+
     /// Sign in with a token another tool holds (`gh auth token`) if GitHub accepts it. After an
     /// expiry only the same account is taken (as v1). Returns whether it was saved. The token
     /// is never logged.

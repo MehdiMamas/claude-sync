@@ -64,7 +64,7 @@ fn place(ctx: &Ctx) -> Result<Where, Fail> {
     Ok(Where { home })
 }
 
-fn env(ctx: &Ctx) -> Result<Env, Fail> {
+pub(crate) fn env(ctx: &Ctx) -> Result<Env, Fail> {
     let w = place(ctx)?;
     let mut cfg: Config = ctx.cfg.clone().unwrap_or_else(Config::github);
     if cfg.client_id.is_empty() {
@@ -88,7 +88,7 @@ fn open_plain(ctx: &Ctx) -> Result<Core, Fail> {
     Ok(Core::open(env(ctx)?)?)
 }
 
-/// Opens the core; with no sign-in, or an expired one, tries `gh auth token` first (as v1).
+/// Opens the core; with an expired sign-in (not after logout) tries `gh auth token` first (as v1).
 /// A test's injected home never asks the real `gh`.
 fn open(ctx: &Ctx) -> Result<Core, Fail> {
     let mut core = open_plain(ctx)?;

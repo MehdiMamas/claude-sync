@@ -28,6 +28,7 @@ pub struct TaskSpec {
 
 impl TaskSpec {
     pub fn new(
+        repo: &str,
         id: &str,
         title: &str,
         cron: &str,
@@ -41,7 +42,8 @@ impl TaskSpec {
             times: s.times(),
             days: s.days,
             program: program.into(),
-            args: vec!["run-job".into(), id.into()],
+            // v1 argv: ids are unique only within a group
+            args: vec!["run-job".into(), repo.into(), id.into()],
             timeout_minutes,
         })
     }
@@ -825,7 +827,15 @@ mod tests {
     }
 
     fn spec(id: &str) -> TaskSpec {
-        TaskSpec::new(id, "Nightly", "17 10 * * 1,4", Path::new("/opt/cs"), 20).unwrap()
+        TaskSpec::new(
+            "acme/a",
+            id,
+            "Nightly",
+            "17 10 * * 1,4",
+            Path::new("/opt/cs"),
+            20,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -850,7 +860,7 @@ mod tests {
         assert!(systemd_service(&t).contains("TimeoutStartSec=1800"));
         assert_eq!(
             cron_lines(&t),
-            ["17 10 * * 1,4 /opt/cs run-job a1 # claude-sync-job-a1"]
+            ["17 10 * * 1,4 /opt/cs run-job acme/a a1 # claude-sync-job-a1"]
         );
     }
 

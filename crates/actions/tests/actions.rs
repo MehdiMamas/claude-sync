@@ -1255,7 +1255,7 @@ mod jobs {
         .unwrap();
         assert_eq!(
             r.spawned.lock().unwrap()[0],
-            ["run-job", "nightly", "--now"]
+            ["run-job", "zed/team", "nightly", "--now"]
         );
     }
 
