@@ -7,6 +7,7 @@ import type { Event } from "./generated/Event";
 import type { GroupStatus } from "./generated/GroupStatus";
 import type { GroupView } from "./generated/GroupView";
 import type { JobView } from "./generated/JobView";
+import type { ReviewLine } from "./generated/ReviewLine";
 import type { Snapshot } from "./generated/Snapshot";
 
 const sec = () => Math.floor(Date.now() / 1000);
@@ -30,6 +31,7 @@ const group = (repo: string, over: Partial<GroupView> = {}): GroupView => ({
   syncing: false,
   failedAt: null,
   off: false,
+  pendingInvites: [],
   ...over,
 });
 const many = (n: number) => Array.from({ length: n }, (_, i) => `member-${i + 1}`);
@@ -164,6 +166,25 @@ function scenario(name: string): Snapshot {
       s.jobs = [job(s.groups[0]?.repo ?? "")];
       setProblems(0, ["couldn't install big-pack@mods: registry unreachable"]);
       return s;
+    case "members":
+    case "members-proposal":
+      setStatus(0, "synced", {
+        members: ["alex-host", "sam-member", "kim-dev"],
+        pendingInvites: ["kim-dev"],
+      });
+      return s;
+    case "members-solo":
+      setStatus(0, "synced", { members: ["alex-host"] });
+      return s;
+    case "members-guest":
+    case "review-guest":
+      setStatus(1, "synced", {
+        host: "sam-member",
+        members: ["sam-member", "alex-host", "kim-dev"],
+        proposalMode: name === "members-guest",
+        pendingReview: 1,
+      });
+      return s;
     case "group-member":
       setStatus(1, "synced", { host: "sam-member", pendingReview: 1 });
       s.jobs = [job(s.groups[1]?.repo ?? "")];
@@ -187,6 +208,8 @@ export type FakeControls = {
   patch(p: Partial<Snapshot>): void;
   /** The person approves, or the sign-in ends another way. */
   approve(): void;
+  /** The new owner accepted the transfer on GitHub: the repo moves to them. */
+  transferred(login: string): void;
   end(kind: "expired" | "denied" | "offline"): void;
 };
 
@@ -221,6 +244,22 @@ export function fakeBackend(search: string): Backend {
       set({ login: "alex-host", signIn: { kind: "signedOut" }, groups: [], syncing: true });
       setTimeout(() => set({ syncing: false, groups: baseGroups() }), 1500);
     },
+    transferred(login) {
+      set({
+        groups: snap.groups.map((g) =>
+          g.isHost
+            ? {
+                ...g,
+                repo: `${login}/${g.name}`,
+                host: login,
+                isHost: false,
+                pendingReview: 0,
+                lastSync: sec(),
+              }
+            : g,
+        ),
+      });
+    },
     end(kind) {
       set({ signIn: { kind } });
     },
@@ -236,6 +275,40 @@ export function fakeBackend(search: string): Backend {
     ],
     "sample-org/dev-rules": [{ path: "skills/release-notes/SKILL.md", kept: false }],
   };
+  // The lines waiting for review per group: the host's three, a member's one.
+  const line = (
+    id: string,
+    add: boolean,
+    text: string,
+    author: string,
+    ago: number,
+  ): ReviewLine => ({
+    id,
+    add,
+    lines: [text],
+    author,
+    at: sec() - ago,
+  });
+  const review: Record<string, ReviewLine[]> = {};
+  for (const g of snap.groups) {
+    review[g.repo] =
+      g.pendingReview === 3
+        ? [
+            line("l1", true, "Prefer small pull requests.", "sam-member", 3600),
+            line("l2", true, "Run the tests before a commit.", "sam-member", 3600),
+            line("l3", false, "Use tabs.", "sam-member", 3600),
+          ]
+        : g.pendingReview === 1
+          ? [
+              name === "review-guest"
+                ? line("l1", true, "Answer in short bullets.", "alex-host", 3 * 3600)
+                : line("l1", true, "Prefer small pull requests.", "sam-member", 3600),
+            ]
+          : [];
+  }
+  let clash = q.has("clash");
+  const patchGroup = (repo: string, p: Partial<GroupView>) =>
+    set({ groups: snap.groups.map((g) => (g.repo === repo ? { ...g, ...p } : g)) });
   const secret = "secret found in settings.json:12 (API key); nothing was committed";
   const addGroup = (repo: string, over: Partial<GroupView> = {}) =>
     set({ groups: [...snap.groups, group(repo, { members: many(3), ...over })] });
@@ -334,27 +407,80 @@ export function fakeBackend(search: string): Backend {
       case "leave":
         set({ groups: snap.groups.filter((g) => g.repo !== cmd.data.repo) });
         return done;
-      case "addMember":
-        if (cmd.data.login === "no-such-user") throw `GitHub has no user named ${cmd.data.login}.`;
-        set({
-          groups: snap.groups.map((g) =>
-            g.repo === cmd.data.repo ? { ...g, members: [...g.members, cmd.data.login] } : g,
-          ),
-        });
-        return { kind: "message", data: `Invited ${cmd.data.login}` };
-      case "reviewList": {
-        const n = snap.groups.find((g) => g.repo === cmd.data.repo)?.pendingReview ?? 0;
-        return {
-          kind: "review",
-          data: Array.from({ length: n }, (_, i) => ({
-            id: `l${i}`,
-            add: true,
-            lines: ["Prefer small pull requests."],
-            author: "sam-member",
-            at: sec() - 3600,
-          })),
-        };
+      case "addMember": {
+        const who = cmd.data.login;
+        if (who === "no-such-user" || who === "kim-devv")
+          throw `No GitHub user named ${who}. Nothing was sent.`;
+        const g = snap.groups.find((x) => x.repo === cmd.data.repo);
+        if (g)
+          patchGroup(g.repo, {
+            members: [...g.members, who],
+            pendingInvites: [...g.pendingInvites, who],
+          });
+        return { kind: "message", data: `Invited ${who}` };
       }
+      case "removeMember": {
+        const g = snap.groups.find((x) => x.repo === cmd.data.repo);
+        if (g)
+          patchGroup(g.repo, {
+            members: g.members.filter((m) => m !== cmd.data.login),
+            pendingInvites: g.pendingInvites.filter((m) => m !== cmd.data.login),
+          });
+        return done;
+      }
+      case "transfer":
+        return {
+          kind: "message",
+          data: `Asked ${cmd.data.new_owner} to accept the group. Nothing changes until they do.`,
+        };
+      case "setProposalMode":
+        patchGroup(cmd.data.repo, { proposalMode: cmd.data.on });
+        return done;
+      case "setAutoAccept":
+        patchGroup(cmd.data.repo, { autoAcceptClaudeMd: cmd.data.on });
+        return done;
+      case "setReviewChoice":
+        patchGroup(cmd.data.repo, { reviewChoice: cmd.data.choice });
+        return done;
+      case "reviewList":
+        return { kind: "review", data: structuredClone(review[cmd.data.repo] ?? []) };
+      case "reviewDecide": {
+        const left = (review[cmd.data.repo] ?? []).filter(
+          (l) => cmd.data.ids !== null && !cmd.data.ids.includes(l.id),
+        );
+        review[cmd.data.repo] = left;
+        patchGroup(cmd.data.repo, { pendingReview: left.length });
+        return done;
+      }
+      case "clashes":
+        return {
+          kind: "clashes",
+          data: clash
+            ? [
+                {
+                  kind: "contradiction",
+                  a: { source: null, name: "Your CLAUDE.md", text: "Use two spaces." },
+                  b: {
+                    source: snap.groups[0]?.repo ?? "",
+                    name: snap.groups[0]?.name ?? "",
+                    text: "Use tabs.",
+                  },
+                },
+              ]
+            : [],
+        };
+      case "dropLine":
+        clash = false;
+        return done;
+      case "useGroupVersion":
+        return done;
+      case "explain":
+        if (q.has("noClaude"))
+          throw "Claude is not signed in on this machine. Run claude, sign in, then try again.";
+        return {
+          kind: "text",
+          data: "Adds two working rules and removes the tabs rule. Safe to accept.",
+        };
       case "proposals": {
         const host = cmd.data.repo === "alex-host/claude-group";
         const p = (author: string, mine: boolean) => ({

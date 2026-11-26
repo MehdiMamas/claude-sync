@@ -65,7 +65,9 @@ test("group page: an invite that fails says why and keeps the name", async ({ pa
   await page.getByRole("button", { name: "Create group" }).click();
   await page.getByLabel("GitHub name").fill("no-such-user");
   await page.getByRole("button", { name: "Send invite" }).click();
-  await expect(page.getByText("GitHub has no user named no-such-user.")).toBeVisible();
+  await expect(
+    page.getByText("No GitHub user named no-such-user. Nothing was sent."),
+  ).toBeVisible();
   await expect(page.getByLabel("GitHub name")).toHaveValue("no-such-user");
 });
 

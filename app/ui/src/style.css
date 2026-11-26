@@ -434,3 +434,14 @@ button.b {
 input.in {
   font: inherit;
 }
+.chipb {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+.tgb {
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}

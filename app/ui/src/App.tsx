@@ -7,7 +7,7 @@ import { Join, NewGroup } from "./screens/GroupsForms";
 import { Later, Shell } from "./screens/Shell";
 import { SignIn } from "./screens/SignIn";
 import { useBackend, useSnapshot } from "./store";
-import { go, useRoute } from "./ui";
+import { Go, go, useRoute } from "./ui";
 
 const text = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const none: Flash = { toast: null, joining: null, joinError: null, fresh: null, created: null };
@@ -149,7 +149,14 @@ export function App() {
   } else if (route.startsWith("group/")) {
     const [, owner, name, ...rest] = route.split("/");
     const repo = `${owner}/${name}`;
-    body = (
+    // A transfer the new owner accepted: the old repo name is gone, the new one is in the list.
+    const moved =
+      rest[0] === "members" && rest[1] === "requested"
+        ? snap.groups.find((x) => x.repo === `${rest[2]}/${name}`)
+        : undefined;
+    body = moved ? (
+      <Go to={`group/${moved.repo}/members/transferred/${moved.host}`} />
+    ) : (
       <GroupPage
         snap={snap}
         g={snap.groups.find((x) => x.repo === repo)}

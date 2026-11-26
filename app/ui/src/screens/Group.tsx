@@ -6,6 +6,8 @@ import type { Snapshot } from "../generated/Snapshot";
 import { ago } from "../time";
 import { Banner, Chip, go, Spin, useLoad } from "../ui";
 import { Contents, Copy, Edits, Share } from "./GroupEdits";
+import { Members } from "./GroupMembers";
+import { Review } from "./GroupReview";
 import type { Flash } from "./Groups";
 import { Later } from "./Shell";
 
@@ -53,6 +55,8 @@ export const pages: Record<string, ComponentType<Ctx>> = {
   edits: Edits,
   share: Share,
   copy: Copy,
+  review: Review,
+  members: Members,
 };
 export const tabOf: Record<string, string> = {
   edits: "contents",

@@ -47,6 +47,12 @@ export const go = (route: string) => {
   location.hash = `/${route}`;
 };
 
+/** Sends the window to another route as soon as it shows. */
+export function Go({ to }: { to: string }) {
+  useEffect(() => go(to), [to]);
+  return null;
+}
+
 /** Runs `load` on mount and whenever `key` changes or the returned `reload` is called. */
 export function useLoad<T>(load: () => Promise<T>, key: string) {
   const [data, setData] = useState<T>();

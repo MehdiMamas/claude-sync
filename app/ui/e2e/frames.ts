@@ -1,7 +1,13 @@
 import type { Page } from "@playwright/test";
 
 /** How to reach each frame's state in the app (scenario URL plus the clicks a person makes). */
-export type FrameCase = { frame: string; url: string; steps?: (p: Page) => Promise<void> };
+export type FrameCase = {
+  frame: string;
+  url: string;
+  steps?: (p: Page) => Promise<void>;
+  /** Percent of differing pixels allowed, when the frame leaves out a part the app keeps. */
+  max?: number;
+};
 
 const signInCode = async (p: Page) => {
   await p.getByRole("button", { name: "Sign in with GitHub" }).click();
@@ -14,6 +20,11 @@ const createGroup = async (p: Page) => {
   await p.getByRole("button", { name: "Create group" }).click();
   await p.getByText("Invite members").first().waitFor();
 };
+
+const members = `${base}/members`;
+const host = (p: Page) => p.getByLabel("GitHub name");
+const room = "/?scenario=members";
+const review = `${base}/review`;
 
 export const frames: FrameCase[] = [
   { frame: "SignIn", url: "/?scenario=signed-out" },
@@ -136,4 +147,109 @@ export const frames: FrameCase[] = [
   },
   { frame: "GroupContents", url: `/?scenario=group#${base}/contents` },
   { frame: "GroupCopy", url: `/?scenario=group#${base}/copy` },
+  { frame: "GroupMembers", url: `${room}#${members}` },
+  {
+    frame: "GroupMembersGuest",
+    url: `/?scenario=members-guest#/group/sample-org/dev-rules/members`,
+  },
+  {
+    frame: "GroupMembersProposalMode",
+    url: `/?scenario=members-proposal#${members}`,
+    max: 25, // the frame leaves out the Members card the app keeps
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Proposal mode" }).click();
+      await p.getByText("Proposal mode is on.").waitFor();
+    },
+  },
+  { frame: "GroupMemberRemove", url: `${room}#${members}/remove/sam-member` },
+  {
+    frame: "GroupMemberRemoved",
+    url: `${room}#${members}`,
+    steps: async (p) => {
+      await p.getByRole("link", { name: "Remove" }).click();
+      await p.getByRole("button", { name: "Remove" }).click();
+      await p.getByText("sam-member removed").waitFor();
+    },
+  },
+  {
+    frame: "GroupInvited",
+    url: `/?scenario=members-solo#${members}`,
+    steps: async (p) => {
+      await host(p).fill("kim-dev");
+      await p.getByRole("button", { name: "Invite", exact: true }).click();
+      await p.getByText("Invitation sent to kim-dev").waitFor();
+    },
+  },
+  {
+    frame: "GroupInviteCanceled",
+    url: `${room}#${members}`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Cancel invite" }).click();
+      await p.getByText("Invitation to kim-dev canceled").waitFor();
+    },
+  },
+  {
+    frame: "GroupInviteError",
+    url: `${room}#${members}`,
+    steps: async (p) => {
+      await host(p).fill("kim-devv");
+      await p.getByRole("button", { name: "Invite", exact: true }).click();
+      await p.getByText("Check the spelling").waitFor();
+    },
+  },
+  { frame: "GroupTransfer", url: `${room}#${members}/transfer/sam-member` },
+  {
+    frame: "GroupTransferPending",
+    max: 8, // the frame's two demo buttons are not built
+    url: `${room}#${members}/transfer/sam-member`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Send request" }).click();
+      await p.getByText("transfer requested").waitFor();
+    },
+  },
+  { frame: "GroupTransferExpired", url: `${room}#${members}/expired/sam-member` },
+  {
+    frame: "GroupTransferred",
+    url: `${room}#${members}/transfer/sam-member`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Send request" }).click();
+      await p.getByText("transfer requested").waitFor();
+      await p.evaluate(() =>
+        (window as unknown as { __fake: { transferred(l: string): void } }).__fake.transferred(
+          "sam-member",
+        ),
+      );
+      await p.getByText("sam-member is now the host.").waitFor();
+    },
+  },
+  { frame: "GroupReview", url: `/?scenario=group#${review}` },
+  {
+    frame: "GroupReviewLines",
+    url: `/?scenario=group#${review}`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Choose lines" }).click();
+      await p.getByRole("button", { name: "Apply my choices" }).waitFor();
+    },
+  },
+  { frame: "GroupReviewClash", url: `/?scenario=group&clash#${review}` },
+  {
+    frame: "GroupReviewDeclined",
+    url: `/?scenario=group#${review}`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Decline" }).click();
+      await p.getByText("3 lines declined").waitFor();
+    },
+  },
+  {
+    frame: "GroupReviewDone",
+    url: `/?scenario=group#${review}`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Accept all" }).click();
+      await p.getByText("3 lines accepted").waitFor();
+    },
+  },
+  {
+    frame: "GroupReviewGuest",
+    url: `/?scenario=review-guest#/group/sample-org/dev-rules/review`,
+  },
 ];
