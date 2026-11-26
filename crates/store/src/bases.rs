@@ -151,4 +151,13 @@ impl Db {
         )?;
         Ok(())
     }
+
+    /// The saved conflict copies, newest first (path, when).
+    pub fn conflicts(&self, limit: u32) -> Result<Vec<(String, String, i64)>> {
+        let conn = self.lock();
+        let mut st =
+            conn.prepare("SELECT repo, path, saved_at FROM conflicts ORDER BY id DESC LIMIT ?1")?;
+        let rows = st.query_map([limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
 }

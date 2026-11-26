@@ -172,6 +172,9 @@ pub enum Command {
         repo: String,
         off: bool,
     },
+    // sync
+    /// Sync every group now (the tray's and the window's Sync now).
+    SyncNow,
     // sync loop switches
     Pause,
     Resume,
@@ -204,4 +207,9 @@ pub enum Event {
         warning: String,
     },
     Discovered(Vec<String>),
+    /// A pass ran: files written or removed, groups that failed.
+    Synced {
+        files: usize,
+        failed: usize,
+    },
 }

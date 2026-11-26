@@ -107,7 +107,8 @@ impl<'a> Exec<'a> {
         Ok(had)
     }
 
-    fn save_copy(&self, kind: &str, rel: &str, bytes: &[u8]) -> Result<()> {
+    /// Keep a copy of `bytes` under `<state>/<kind>/<scope>/<stamp>/<rel>`.
+    pub fn save_copy(&self, kind: &str, rel: &str, bytes: &[u8]) -> Result<()> {
         let to = self
             .disk
             .home

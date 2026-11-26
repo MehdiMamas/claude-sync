@@ -51,6 +51,7 @@ pub async fn spawn(env: Env, tick: Duration) -> Result<Handle> {
     let (tx, mut rx) = mpsc::channel::<Msg>(32);
     core.tx = Some(tx.downgrade());
     let (stx, srx) = watch::channel(core.snapshot());
+    core.publish = Some(stx.clone());
     tokio::spawn(async move {
         let mut core = Some(core);
         let mut timer = tokio::time::interval(tick);

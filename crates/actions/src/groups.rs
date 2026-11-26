@@ -35,7 +35,7 @@ fn valid_login(l: &str) -> bool {
 }
 
 impl Core {
-    fn remote(&self, repo: &str) -> Result<GithubRemote> {
+    pub(crate) fn remote(&self, repo: &str) -> Result<GithubRemote> {
         let (o, n) = split(repo)?;
         Ok(GithubRemote::new(self.client.clone(), o, n, "main"))
     }

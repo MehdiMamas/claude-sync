@@ -7,10 +7,10 @@
 use crate::apply;
 use crate::disk::{FsDisk, Home, Scope};
 use crate::exec::{Applied, Exec};
-use claude_sync_engine::formats::group::SyncFlags;
+use claude_sync_engine::formats::group::{SyncFlags, FILE};
 use claude_sync_engine::paths::is_planned_path;
 use claude_sync_engine::plan::{plan, FileSet, Opts, Plan, Scope as PlanScope};
-use claude_sync_engine::traits::{Disk, Head, Remote};
+use claude_sync_engine::traits::{Disk, Head, Remote, Store};
 use claude_sync_store::{blob_sha, Db, RequestRow, PERSONAL};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -188,6 +188,10 @@ impl Pass<'_> {
             &mut raw,
         )?;
         if let Some(all) = raw {
+            // the group file as read, so the flags of the next pass need no network
+            if let Some(b) = all.get(FILE) {
+                let _ = Store::write(self.db, &format!("group-file/{}", g.repo), b);
+            }
             let md = if g.flags.claude_md {
                 all.get("CLAUDE.md").map(|b| b.as_slice())
             } else {
@@ -202,7 +206,11 @@ impl Pass<'_> {
             apply::write_claude_md_copy(self.home, g.repo, md).map_err(|e| e.to_string())?;
             if let Ok(Some(b)) = self.db.load_base(g.repo, &self.home.state) {
                 let paths: BTreeSet<&String> = p.new_base.keys().collect();
-                let date = g.commit_date.and_then(|f| f(&b.head_sha));
+                let has_mp = paths.iter().any(|p| p.starts_with("plugins/"));
+                let date = g
+                    .commit_date
+                    .filter(|_| has_mp)
+                    .and_then(|f| f(&b.head_sha));
                 apply::write_commit_markers(self.home, &paths, &b.head_sha, date.as_deref())
                     .map_err(|e| e.to_string())?;
             }
@@ -230,6 +238,45 @@ impl Pass<'_> {
             );
         }
         Ok(applied)
+    }
+
+    /// Leaving a group: its delivered files go, except any the user changed (those stay, as
+    /// local files), and so do the `COMMIT` markers of its marketplaces. Returns the paths
+    /// removed.
+    pub fn leave(&self, repo: &str) -> Result<Vec<String>, String> {
+        let s = |e: &dyn std::fmt::Display| e.to_string();
+        let disk = FsDisk::new(self.home, Scope::Group(repo.into()));
+        let base = self
+            .db
+            .load_base(repo, &self.home.state)
+            .map_err(|e| s(&e))?
+            .map(|b| b.files)
+            .unwrap_or_default();
+        let known: BTreeSet<String> = base.keys().cloned().collect();
+        let local = disk.scan(&known).map_err(|e| s(&e))?;
+        let links: BTreeSet<String> = disk.links().map_err(|e| s(&e))?.into_iter().collect();
+        let opts = Opts {
+            scope: PlanScope::Group(SyncFlags::default()),
+            push: false,
+            links,
+        };
+        let p = plan(&FileSet::new(), &base, &local, &opts);
+        let mut gone = vec![];
+        for d in &p.deletes {
+            disk.delete(d).map_err(|e| s(&e))?;
+            gone.push(d.clone());
+        }
+        let mps: BTreeSet<&str> = base
+            .keys()
+            .filter_map(|p| p.strip_prefix("plugins/")?.split('/').next())
+            .collect();
+        for mp in mps {
+            let f = self.home.state.join("marketplaces").join(mp).join("COMMIT");
+            if f.exists() {
+                std::fs::remove_file(&f).map_err(|e| s(&e))?;
+            }
+        }
+        Ok(gone)
     }
 
     fn personal(&self, remote: &dyn Remote) -> Result<Applied, String> {

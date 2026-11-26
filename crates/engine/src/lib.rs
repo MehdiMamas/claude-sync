@@ -4,6 +4,7 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo)
 )]
 
+pub mod clashes;
 pub mod claude_md;
 pub mod formats;
 pub mod merge;

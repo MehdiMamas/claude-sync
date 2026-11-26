@@ -69,15 +69,16 @@ impl T {
             .await;
     }
     async fn signed_in(&self) -> Handle {
+        self.signed_in_tick(Duration::from_secs(3600)).await
+    }
+    async fn signed_in_tick(&self, tick: Duration) -> Handle {
         self.mock("GET", "/user", 200, json!({"login": "ann", "id": 1}))
             .await;
         self.secrets
             .set("ann", &claude_sync_github::Tokens::plain("tok").to_secret())
             .unwrap();
         self.secrets.set("@current", "ann").unwrap();
-        spawn(self.env("cid"), Duration::from_secs(3600))
-            .await
-            .unwrap()
+        spawn(self.env("cid"), tick).await.unwrap()
     }
     /// The Git Data calls of one push to `o/r` on `main`.
     async fn push_chain(&self, repo: &str) {
@@ -492,4 +493,137 @@ async fn invitations_and_pause_and_a_401_stops_the_loop() {
     assert!(s.notifications.iter().any(|n| n
         .text
         .contains("GitHub no longer accepts the sign-in of ann")));
+}
+
+fn b64(s: &str) -> String {
+    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, s)
+}
+
+impl T {
+    /// A joined group `zed/team` whose main holds claude-sync.json and the given files.
+    async fn group_with(&self, head: &str, files: &[(&str, &str)]) -> Handle {
+        self.group_with_tick(head, files, Duration::from_secs(3600))
+            .await
+    }
+    async fn group_with_tick(&self, head: &str, files: &[(&str, &str)], tick: Duration) -> Handle {
+        let h = self.signed_in_tick(tick).await;
+        let r = "/repos/zed/team";
+        self.mock(
+            "GET",
+            r,
+            200,
+            json!({"name": "team", "full_name": "zed/team", "private": true}),
+        )
+        .await;
+        self.push_chain("zed/team").await;
+        h.send(Command::Join {
+            repo: "zed/team".into(),
+        })
+        .await
+        .unwrap();
+        self.serve(head, files).await;
+        h
+    }
+    /// Make main serve `head` with these files (plus claude-sync.json).
+    async fn serve(&self, head: &str, files: &[(&str, &str)]) {
+        self.server.reset().await;
+        self.mock("GET", "/user", 200, json!({"login": "ann", "id": 1}))
+            .await;
+        self.mock(
+            "GET",
+            "/repos/zed/team",
+            200,
+            json!({"name": "team", "full_name": "zed/team", "private": true}),
+        )
+        .await;
+        let r = "/repos/zed/team";
+        self.mock(
+            "GET",
+            &format!("{r}/commits/main"),
+            200,
+            json!({"sha": head}),
+        )
+        .await;
+        let gf =
+            serde_json::to_string_pretty(&json!({"schema": 1, "name": "Team", "members": ["ann"]}))
+                .unwrap();
+        let mut tree = vec![
+            json!({"path": "claude-sync.json", "mode": "100644", "type": "blob", "sha": "gf"}),
+        ];
+        self.mock(
+            "GET",
+            &format!("{r}/git/blobs/gf"),
+            200,
+            json!({"content": b64(&gf), "encoding": "base64"}),
+        )
+        .await;
+        for (i, (p, c)) in files.iter().enumerate() {
+            let sha = format!("f{i}{head}");
+            tree.push(json!({"path": p, "mode": "100644", "type": "blob", "sha": sha}));
+            self.mock(
+                "GET",
+                &format!("{r}/git/blobs/{sha}"),
+                200,
+                json!({"content": b64(c), "encoding": "base64"}),
+            )
+            .await;
+        }
+        self.mock(
+            "GET",
+            &format!("{r}/git/trees/{head}"),
+            200,
+            json!({"sha": format!("t{head}"), "tree": tree}),
+        )
+        .await;
+    }
+    fn file(&self, rel: &str) -> std::path::PathBuf {
+        self.dir.path().join(".claude").join(rel)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sync_now_delivers_files_and_a_tick_does_too() {
+    let t = T::new().await;
+    let h = t
+        .group_with("h1", &[("skills/demo/SKILL.md", "---\nname: demo\n---\n")])
+        .await;
+    let e = h.send(Command::SyncNow).await.unwrap();
+    assert!(matches!(e, Event::Synced { failed: 0, .. }), "{e:?}");
+    assert!(t.file("skills/demo/SKILL.md").exists());
+    assert!(!h.snapshot().syncing);
+    assert_eq!(h.snapshot().groups[0].status, GroupStatus::Synced);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_tick_syncs_when_due_and_pause_stops_it() {
+    let t = T::new().await;
+    let h = t.signed_in_tick(Duration::from_millis(150)).await;
+    h.send(Command::Pause).await.unwrap();
+    t.mock(
+        "GET",
+        "/repos/zed/team",
+        200,
+        json!({"name": "team", "full_name": "zed/team", "private": true}),
+    )
+    .await;
+    t.push_chain("zed/team").await;
+    h.send(Command::Join {
+        repo: "zed/team".into(),
+    })
+    .await
+    .unwrap();
+    t.serve("h1", &[("skills/a/SKILL.md", "---\nname: a\n---\n")])
+        .await;
+    t.clock.fetch_add(3600, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!t.file("skills/a/SKILL.md").exists(), "paused: no sync");
+    h.send(Command::Resume).await.unwrap();
+    t.clock.fetch_add(3600, Ordering::SeqCst);
+    for _ in 0..40 {
+        if t.file("skills/a/SKILL.md").exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(t.file("skills/a/SKILL.md").exists());
 }

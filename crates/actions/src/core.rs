@@ -57,6 +57,9 @@ pub struct Core {
     pub(crate) schedule: Schedule,
     pub(crate) invitations: Vec<InvitationView>,
     pub(crate) discoverable: Vec<String>,
+    pub(crate) syncing: bool,
+    /// Lets a long command show its state before it ends (the actor sets it).
+    pub(crate) publish: Option<tokio::sync::watch::Sender<Snapshot>>,
 }
 
 impl Core {
@@ -80,6 +83,8 @@ impl Core {
             schedule: Schedule::default(),
             invitations: vec![],
             discoverable: vec![],
+            syncing: false,
+            publish: None,
         };
         c.restore_session();
         Ok(c)
@@ -125,6 +130,7 @@ impl Core {
             Transfer { repo, new_owner } => self.transfer(&repo, &new_owner),
             Leave { repo } => self.leave(&repo),
             SetGroupOff { repo, off } => self.set_off(&repo, off),
+            SyncNow => self.sync_now(),
             Pause => self.set_app(|a| a.paused = true),
             Resume => self.set_app(|a| a.paused = false),
             SetInterval { secs } => self.set_app(|a| a.interval_secs = Some(secs)),
@@ -175,6 +181,9 @@ impl Core {
         }
         for r in due.renames {
             self.follow_rename(&r);
+        }
+        if due.sync {
+            let _ = self.sync_now();
         }
         self.refresh_session();
         self.note_expired();
@@ -239,12 +248,14 @@ impl Core {
                     is_host: g.host,
                     status: if g.off || c.groups.get(&g.repo).is_some_and(|x| x.off) {
                         GroupStatus::Off
-                    } else if g.state == "failed" {
+                    } else if self.syncing {
+                        GroupStatus::Syncing
+                    } else if !matches!(g.state.as_str(), "ok" | "active" | "") {
                         GroupStatus::Failed
                     } else {
                         GroupStatus::Synced
                     },
-                    error: (g.state != "ok" && g.state != "failed" && !g.state.is_empty())
+                    error: (!matches!(g.state.as_str(), "ok" | "active" | "failed" | ""))
                         .then(|| g.state.clone()),
                     last_sync: self.db.last_synced(&g.repo).ok().flatten(),
                     members: gf
@@ -255,7 +266,8 @@ impl Core {
                     auto_accept_claude_md: gf.as_ref().is_none_or(|f| f.auto_accept_claude_md),
                     host_lock: None,
                     review_choice: c.review_choice(&g.repo),
-                    pending_review: 0,
+                    pending_review: crate::review::load(&self.db, &g.repo)
+                        .map_or(0, |r| r.pending.len() as u32),
                     off: g.off,
                     repo: g.repo,
                 }
@@ -268,7 +280,7 @@ impl Core {
             app_mode: self.app_mode,
             paused: c.app.paused,
             interval_secs: c.interval(),
-            syncing: false,
+            syncing: self.syncing,
             rate_limited_until: self.client.limited_until(),
             groups,
             invitations: self.invitations.clone(),

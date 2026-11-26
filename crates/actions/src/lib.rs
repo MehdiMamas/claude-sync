@@ -24,8 +24,10 @@ mod error;
 mod groups;
 pub mod model;
 pub mod msg;
+mod review;
 mod schedule;
 mod signin;
+mod sync;
 
 pub use actor::{spawn, Handle};
 pub use choices::{Choices, ReviewChoice};
