@@ -59,6 +59,7 @@ pub struct Core {
     pub(crate) invitations: Vec<InvitationView>,
     pub(crate) discoverable: Vec<String>,
     pub(crate) syncing: bool,
+    pub(crate) plugin_backoff: std::collections::HashMap<String, crate::plugins::Backoff>,
     pub(crate) jobs_env: crate::jobs::JobsEnv,
     /// Lets a long command show its state before it ends (the actor sets it).
     pub(crate) publish: Option<tokio::sync::watch::Sender<Snapshot>>,
@@ -99,6 +100,7 @@ impl Core {
             invitations: vec![],
             discoverable: vec![],
             syncing: false,
+            plugin_backoff: Default::default(),
             jobs_env: crate::jobs::JobsEnv::system(&home_path),
             publish: None,
             proposal_cache: Default::default(),
@@ -167,6 +169,7 @@ impl Core {
             Leave { repo } => self.leave(&repo),
             SetGroupOff { repo, off } => self.set_off(&repo, off),
             SyncNow => self.sync_now(),
+            PluginsRetry { repo } => self.plugins_retry(&repo),
             ReviewList { repo } => self.review_list(&repo),
             ReviewDecide { repo, ids, accept } => self.review_decide(&repo, ids, accept),
             DropLine { repo, line } => self.drop_line(&repo, &line),
@@ -371,6 +374,7 @@ impl Core {
                     auto_accept_claude_md: gf.as_ref().is_none_or(|f| f.auto_accept_claude_md),
                     host_lock: self.host_lock(&g.repo, g.host),
                     review_choice: c.review_choice(&g.repo),
+                    plugin_problems: self.plugin_problems(&g.repo),
                     pending_review: crate::review::load(&self.db, &g.repo)
                         .map_or(0, |r| r.pending.len() as u32),
                     off: g.off,

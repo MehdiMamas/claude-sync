@@ -32,6 +32,7 @@ pub mod model;
 pub mod msg;
 mod packs;
 mod personal;
+mod plugins;
 mod proposals;
 mod review;
 mod schedule;

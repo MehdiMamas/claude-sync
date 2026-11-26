@@ -6,4 +6,8 @@ export type GroupView = { repo: string, name: string, host: string, isHost: bool
 /**
  * `on`, `unavailable` or unknown (not tried yet).
  */
-hostLock: string | null, reviewChoice: ReviewChoice, pendingReview: number, off: boolean, };
+hostLock: string | null, reviewChoice: ReviewChoice, pendingReview: number, 
+/**
+ * Plugins that could not install and files the size cap kept out (Parity 26-28).
+ */
+pluginProblems: Array<string>, off: boolean, };

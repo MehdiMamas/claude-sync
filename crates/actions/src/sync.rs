@@ -34,6 +34,7 @@ impl Core {
         self.show();
         let r = self.run_pass();
         self.jobs_after_pass();
+        self.plugins_after_pass();
         self.syncing = false;
         self.note_expired();
         r

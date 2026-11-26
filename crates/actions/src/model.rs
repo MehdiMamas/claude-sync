@@ -53,6 +53,8 @@ ts! {
         pub host_lock: Option<String>,
         pub review_choice: crate::choices::ReviewChoice,
         pub pending_review: u32,
+        /// Plugins that could not install and files the size cap kept out (Parity 26-28).
+        pub plugin_problems: Vec<String>,
         pub off: bool,
     }
 
@@ -338,6 +340,10 @@ pub enum Command {
     // sync
     /// Sync every group now (the tray's and the window's Sync now).
     SyncNow,
+    /// Run the plugin installs of a group again, now.
+    PluginsRetry {
+        repo: String,
+    },
     // CLAUDE.md review (Parity 37, 38, 82)
     ReviewList {
         repo: String,

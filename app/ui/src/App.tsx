@@ -88,6 +88,7 @@ export function App() {
           : "Synced: nothing changed",
       });
     },
+    retryPlugins: (repo: string) => void call({ kind: "pluginsRetry", data: { repo } }),
     setOff: (repo: string, off: boolean) => void call({ kind: "setGroupOff", data: { repo, off } }),
     allOn: () =>
       void Promise.all(

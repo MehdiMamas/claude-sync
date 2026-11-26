@@ -3253,3 +3253,173 @@ mod recovery_and_requests {
         .unwrap();
     }
 }
+
+// ---- group plugins (Parity 26, 27, 28) ----
+
+#[cfg(unix)]
+mod plugins {
+    use super::*;
+    use claude_sync_actions::jobs::JobsEnv;
+    use claude_sync_fs::tasks::{Kind, Out, Runner};
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    struct NoRunner;
+    impl Runner for NoRunner {
+        fn run(&self, _: &str, _: &[String], _: Option<&[u8]>) -> std::io::Result<Out> {
+            Ok(Out {
+                ok: true,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    fn jobs_env(t: &T, claude: Option<PathBuf>) -> JobsEnv {
+        JobsEnv {
+            exe: "/app/claude-sync".into(),
+            kind: Kind::Launchd {
+                agents_dir: t.dir.path().join("agents"),
+                uid: "501".into(),
+            },
+            runner: Arc::new(NoRunner),
+            claude: Arc::new(move || claude.clone()),
+            login_path: Arc::new(|| None),
+            online: Arc::new(|| true),
+            spawn: Arc::new(|_| Ok(())),
+            minute: Duration::from_secs(60),
+        }
+    }
+
+    /// A `claude` that logs its arguments, knows no plugin yet, and fails installs while the
+    /// file `fail` exists.
+    fn fake_claude(t: &T) -> (PathBuf, PathBuf) {
+        let bin = t.dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let log = t.dir.path().join("calls.log");
+        let fail = t.dir.path().join("fail");
+        let claude = bin.join("claude");
+        std::fs::write(
+            &claude,
+            format!(
+                "#!/bin/sh\necho \"$@\" >> '{}'\n\
+                 case \"$*\" in\n\
+                 *' list --json') echo '[]';;\n\
+                 *install*) if [ -e '{}' ]; then echo 'registry unreachable' >&2; exit 1; fi;;\n\
+                 esac\n",
+                log.display(),
+                fail.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (claude, log)
+    }
+
+    fn files(big: &str) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "plugins/mods/.claude-plugin/marketplace.json",
+                r#"{"name":"mods","plugins":[{"name":"router","source":"./router"}]}"#.into(),
+            ),
+            ("plugins/mods/router/a.txt", "x".into()),
+            ("plugins/mods/big.bin", big.into()),
+            (
+                "settings.shared.json",
+                r#"{"enabledPlugins":{"router@mods":true,"not a valid id":true}}"#.into(),
+            ),
+        ]
+    }
+
+    async fn synced(t: &T) -> Handle {
+        let big = "0".repeat((1 << 20) + 1);
+        let f = files(&big);
+        let f: Vec<(&str, &str)> = f.iter().map(|(p, c)| (*p, c.as_str())).collect();
+        let h = t.group_with("h1", &f).await;
+        h.send(Command::SyncNow).await.unwrap();
+        h
+    }
+
+    fn calls(log: &PathBuf) -> Vec<String> {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn registers_installs_retries_and_reports_the_size_cap() {
+        let t = T::new().await;
+        let (claude, log) = fake_claude(&t);
+        std::fs::write(t.dir.path().join("fail"), "").unwrap();
+        *t.jobs.lock().unwrap() = Some(jobs_env(&t, Some(claude)));
+        let h = synced(&t).await;
+
+        // the marketplace is registered with Claude Code before the install is tried
+        let c = calls(&log);
+        let add = c
+            .iter()
+            .position(|l| {
+                l.starts_with("plugin marketplace add ")
+                    && l.ends_with(".claude-sync/marketplaces/mods")
+            })
+            .expect("marketplace add");
+        let install = c
+            .iter()
+            .position(|l| l == "plugin install router@mods --scope user")
+            .expect("install");
+        assert!(add < install, "{c:?}");
+        assert!(!c.iter().any(|l| l.contains("not a valid id")), "{c:?}");
+
+        // the failed install and the file over the cap are the group's plugin problems
+        let problems = h.snapshot().groups[0].plugin_problems.clone();
+        assert_eq!(
+            problems,
+            vec![
+                "couldn't install router@mods: registry unreachable".to_string(),
+                "plugins/mods/big.bin is over the 1 MiB limit and was not placed".to_string(),
+            ]
+        );
+        let placed = t.dir.path().join(".claude-sync/marketplaces/mods");
+        assert!(placed.join("router/a.txt").exists());
+        assert!(
+            !placed.join("big.bin").exists(),
+            "the cap keeps the file out"
+        );
+
+        // a second sync inside the back-off does not run the CLI again
+        let before = calls(&log).len();
+        h.send(Command::SyncNow).await.unwrap();
+        assert_eq!(calls(&log).len(), before);
+
+        // Retry runs it now; the install works this time and only the cap problem is left
+        std::fs::remove_file(t.dir.path().join("fail")).unwrap();
+        h.send(Command::PluginsRetry {
+            repo: "zed/team".into(),
+        })
+        .await
+        .unwrap();
+        assert!(calls(&log).len() > before);
+        assert_eq!(h.snapshot().groups[0].plugin_problems.len(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn no_claude_is_a_problem_and_a_group_without_plugins_has_none() {
+        let t = T::new().await;
+        *t.jobs.lock().unwrap() = Some(jobs_env(&t, None));
+        let h = synced(&t).await;
+        let problems = h.snapshot().groups[0].plugin_problems.clone();
+        assert_eq!(problems[0], claude_sync_actions::msg::CLAUDE_NOT_FOUND);
+
+        let t = T::new().await;
+        let (claude, log) = fake_claude(&t);
+        *t.jobs.lock().unwrap() = Some(jobs_env(&t, Some(claude)));
+        let h = t
+            .group_with("h1", &[("skills/s/SKILL.md", "---\nname: s\n---\n")])
+            .await;
+        h.send(Command::SyncNow).await.unwrap();
+        assert!(h.snapshot().groups[0].plugin_problems.is_empty());
+        assert!(calls(&log).is_empty(), "no work, no claude call");
+    }
+}

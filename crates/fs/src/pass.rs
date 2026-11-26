@@ -7,7 +7,7 @@
 use crate::apply;
 use crate::disk::{FsDisk, Home, Scope};
 use crate::exec::{Applied, Exec};
-use claude_sync_engine::formats::group::{SyncFlags, FILE};
+use claude_sync_engine::formats::group::{SyncFlags, FILE, MAX_PLUGIN_FILE};
 use claude_sync_engine::paths::is_planned_path;
 use claude_sync_engine::plan::{plan, FileSet, Opts, Plan, Scope as PlanScope};
 use claude_sync_engine::traits::{Disk, Head, Remote, Store};
@@ -112,6 +112,11 @@ pub struct Report {
     pub notifications: Vec<String>,
 }
 
+/// A bundled-marketplace file over the cap is never placed (Parity 28).
+fn oversize(path: &str, bytes: &[u8]) -> bool {
+    path.starts_with("plugins/") && bytes.len() > MAX_PLUGIN_FILE
+}
+
 fn blobs(f: &FileSet) -> BTreeMap<String, String> {
     f.iter().map(|(p, b)| (p.clone(), blob_sha(b))).collect()
 }
@@ -151,7 +156,7 @@ impl Pass<'_> {
         };
         let remote_files: FileSet = remote_all
             .iter()
-            .filter(|(p, _)| keep(p))
+            .filter(|(p, b)| keep(p) && !oversize(p, b))
             .map(|(p, b)| (p.clone(), b.clone()))
             .collect();
         let known: BTreeSet<String> = base_files
@@ -214,6 +219,17 @@ impl Pass<'_> {
                 let _ = Store::write(self.db, &format!("group-file/{}", g.repo), b);
             }
             // repo-only, never applied: the jobs of the group are read from this copy
+            // the files the size cap kept out, for the plugin warnings
+            let big: Vec<&str> = all
+                .iter()
+                .filter(|(p, b)| oversize(p, b))
+                .map(|(p, _)| p.as_str())
+                .collect();
+            let _ = Store::write(
+                self.db,
+                &format!("plugin-skipped/{}", g.repo),
+                big.join("\n").as_bytes(),
+            );
             let sched = all.get("schedules.json").map(|b| b.as_slice());
             let _ = Store::write(
                 self.db,

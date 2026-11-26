@@ -87,7 +87,7 @@ test("sync tick edge: plugin problem warns with Retry", async ({ page }) => {
   await page.goto("/?scenario=groups-plugins");
   await expect(
     page.getByText(
-      "2 group plugins are waiting: one could not install (repo-tools), one has a file over the 1 MiB limit (big-pack).",
+      "2 group plugin problems: couldn't install repo-tools@mods: registry unreachable plugins/mods/big-pack.bin is over the 1 MiB limit and was not placed",
     ),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();

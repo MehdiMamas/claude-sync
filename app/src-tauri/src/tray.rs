@@ -283,6 +283,7 @@ mod tests {
             host_lock: None,
             review_choice: Default::default(),
             pending_review: 0,
+            plugin_problems: vec![],
             off,
         }
     }

@@ -16,6 +16,7 @@ type Props = {
   flash: Flash;
   act: {
     syncNow: () => void;
+    retryPlugins: (repo: string) => void;
     setOff: (repo: string, off: boolean) => void;
     allOn: () => void;
     move: (repo: string, dir: -1 | 1) => void;
@@ -62,7 +63,8 @@ export function Groups(p: Props) {
   const failed = gs.find((g) => g.status === "failed");
   const offline = gs.some((g) => g.status === "offline");
   const limited = snap.rateLimitedUntil !== null;
-  const plugins = snap.notifications.find((n) => n.kind === "plugins" && !n.read);
+  const withPlugins = gs.find((g) => g.pluginProblems.length > 0);
+  const problems = gs.flatMap((g) => g.pluginProblems);
   const nonOff = gs.filter((g) => g.status !== "off");
   const invitations = snap.invitations.filter((v) => v.repo !== flash.joining);
 
@@ -159,21 +161,26 @@ export function Groups(p: Props) {
           back.
         </Banner>
       )}
-      {plugins && (
+      {withPlugins && (
         <Banner
           kind="warn"
           actions={
             <>
-              <button type="button" className="b" onClick={act.syncNow}>
+              <button
+                type="button"
+                className="b"
+                onClick={() => act.retryPlugins(withPlugins.repo)}
+              >
                 Retry
               </button>
-              <a className="b" href={`#/group/${plugins.repo ?? ""}/contents`}>
+              <a className="b" href={`#/group/${withPlugins.repo}/contents`}>
                 Details
               </a>
             </>
           }
         >
-          {plugins.text}
+          {problems.length} group plugin {problems.length === 1 ? "problem" : "problems"}:{" "}
+          {problems.join(" ")}
         </Banner>
       )}
       {allOff && (

@@ -23,6 +23,7 @@ const group = (repo: string, over: Partial<GroupView> = {}): GroupView => ({
   hostLock: null,
   reviewChoice: "followGroup",
   pendingReview: 0,
+  pluginProblems: [],
   off: false,
   ...over,
 });
@@ -86,6 +87,8 @@ function scenario(name: string): Snapshot {
   const setStatus = (i: number, status: GroupStatus, over: Partial<GroupView> = {}) => {
     s.groups[i] = { ...(s.groups[i] as GroupView), status, ...over };
   };
+  const setProblems = (i: number, pluginProblems: string[]) =>
+    setStatus(i, (s.groups[i] as GroupView).status, { pluginProblems });
   switch (name) {
     case "signed-out":
       return { ...s, login: null, groups: [], unread: 0 };
@@ -127,16 +130,10 @@ function scenario(name: string): Snapshot {
       return s;
     case "groups-plugins":
       s.invitations = [];
-      s.notifications = [
-        {
-          id: 1,
-          kind: "plugins",
-          text: "2 group plugins are waiting: one could not install (repo-tools), one has a file over the 1 MiB limit (big-pack).",
-          read: false,
-          time: sec(),
-          repo: "alex-host/claude-group",
-        },
-      ];
+      setProblems(0, [
+        "couldn't install repo-tools@mods: registry unreachable",
+        "plugins/mods/big-pack.bin is over the 1 MiB limit and was not placed",
+      ]);
       return s;
     case "groups-all-off":
       s.groups = s.groups.slice(0, 2).map((g) => ({ ...g, status: "off" as const, off: true }));
@@ -235,6 +232,13 @@ export function fakeBackend(search: string): Backend {
         });
         return { kind: "synced", data: { files: 2, failed: 0 } };
       }
+      case "pluginsRetry":
+        set({
+          groups: snap.groups.map((g) =>
+            g.repo === cmd.data.repo ? { ...g, pluginProblems: [] } : g,
+          ),
+        });
+        return done;
       case "reorderGroups":
         set({
           groups: cmd.data

@@ -6,6 +6,8 @@ pub const NO_APP: &str = "This build has no GitHub App.";
 pub const SESSION_EXPIRED: &str = "Your GitHub sign-in expired. Sign in again.";
 pub const PLUGINS_WARNING: &str =
     "Plugins in this group run code on every member's machine; only join groups whose members you trust.";
+pub const CLAUDE_NOT_FOUND: &str =
+    "Claude Code not found (the claude command), so the group's plugins were not installed";
 pub const LOCK_UNAVAILABLE: &str =
     "GitHub can't lock this repo on your plan; the app still only sends changes from your machine.";
 
