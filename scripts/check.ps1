@@ -25,6 +25,7 @@ if (-not (Test-Path 'app/ui/node_modules')) {
 }
 Step 'pnpm -C app/ui test' { pnpm -C app/ui test }
 Step 'pnpm -C app/ui build' { pnpm -C app/ui build }
+Step 'pnpm -C app/ui size' { pnpm -C app/ui size }
 Step 'cargo fmt --check' { cargo fmt --all -- --check }
 Step 'cargo clippy' { cargo clippy --workspace --all-targets -- -D warnings }
 Step 'cargo test' { cargo test --workspace }
