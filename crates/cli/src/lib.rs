@@ -75,6 +75,11 @@ impl From<claude_sync_actions::Error> for Fail {
     }
 }
 
+/// Messages name commands as `claude-sync-cli ...`; say the program that was started.
+fn named(text: &str, ctx: &Ctx) -> String {
+    text.replace("claude-sync-cli", ctx.name)
+}
+
 /// `args` as `std::env::args()` gives them: the program name first.
 pub fn run(args: Vec<String>, ctx: &Ctx) -> ExitCode {
     ExitCode::from(run_status(args, ctx))
@@ -106,7 +111,7 @@ pub fn run_status(mut args: Vec<String>, ctx: &Ctx) -> u8 {
                     serde_json::to_string_pretty(&out.json).unwrap_or_default()
                 );
             } else if !out.text.is_empty() {
-                println!("{}", out.text);
+                println!("{}", named(&out.text, ctx));
             }
             0
         }
@@ -118,9 +123,25 @@ pub fn run_status(mut args: Vec<String>, ctx: &Ctx) -> u8 {
             if cli.json && code == 1 {
                 println!("{}", serde_json::json!({ "ok": false, "error": msg }));
             } else {
-                eprintln!("{}: {msg}", ctx.name);
+                eprintln!("{}: {}", ctx.name, named(&msg, ctx));
             }
             code
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hints_name_the_program_that_was_started() {
+        let app = Ctx {
+            name: "claude-sync",
+            ..Ctx::cli()
+        };
+        let m = "not signed in: run `claude-sync-cli login`";
+        assert_eq!(named(m, &app), "not signed in: run `claude-sync login`");
+        assert_eq!(named(m, &Ctx::cli()), m);
     }
 }
