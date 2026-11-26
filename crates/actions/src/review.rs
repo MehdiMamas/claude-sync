@@ -52,7 +52,7 @@ impl Core {
     }
 
     /// The gate for one group's pass: text in, accepted text out.
-    pub(crate) fn gate(&self, repo: &str) -> Box<dyn Fn(Option<&[u8]>) -> Option<Vec<u8>> + '_> {
+    pub(crate) fn gate(&self, repo: &str) -> Box<claude_sync_fs::pass::Gate<'_>> {
         let review = self.review_on(repo);
         let repo = repo.to_string();
         Box::new(move |md: Option<&[u8]>| {

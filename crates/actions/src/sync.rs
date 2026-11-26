@@ -5,7 +5,7 @@ use crate::core::Core;
 use crate::error::{Error, Result};
 use crate::model::Event;
 use crate::msg;
-use claude_sync_fs::pass::{GroupIn, Pass};
+use claude_sync_fs::pass::{CommitDate, GroupIn, Pass};
 use claude_sync_store::RequestRow;
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -47,7 +47,7 @@ impl Core {
             })
             .collect();
         let gates: Vec<_> = recs.iter().map(|g| self.gate(&g.repo)).collect();
-        let dates: Vec<Box<dyn Fn(&str) -> Option<String>>> = recs
+        let dates: Vec<Box<CommitDate<'_>>> = recs
             .iter()
             .map(|g| {
                 let repo = g.repo.clone();
@@ -60,7 +60,7 @@ impl Core {
                         .into_iter()
                         .next()?;
                     (c.sha == sha).then(|| c.commit.committer?.date).flatten()
-                }) as Box<dyn Fn(&str) -> Option<String>>
+                }) as Box<CommitDate<'_>>
             })
             .collect();
         let groups: Vec<GroupIn> = recs
