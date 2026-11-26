@@ -324,6 +324,14 @@ impl Reader<'_> {
             add(&l, "", "declined")?;
         }
         let Some(r) = review else { return Ok(()) };
+        // v2's review state has v1's shape (format 2): carry it over, so the first v2 pass
+        // holds the pending lines instead of accepting the group's text. The per-group
+        // choice wins over the flag in the file.
+        let mut st = r.clone();
+        if let Some(c) = eff["groups"][g]["reviewClaudeMd"].as_bool() {
+            st["review"] = json!(c);
+        }
+        put(tx, &format!("review/{g}"), &st)?;
         for it in r["pending"].as_array().into_iter().flatten() {
             let lines = strings(&it["lines"]).join("\n");
             add(&lines, it["author"].as_str().unwrap_or(""), "pending")?;

@@ -3,6 +3,7 @@ use crate::actor::Msg;
 use crate::choices::Choices;
 use crate::error::{Error, Result};
 use crate::model::*;
+use crate::msg;
 use crate::schedule::{Facts, Schedule};
 use claude_sync_fs::Home;
 use claude_sync_github::{secrets::SecretStore, Client, Config};
@@ -262,6 +263,10 @@ impl Core {
                         GroupStatus::Off
                     } else if self.syncing {
                         GroupStatus::Syncing
+                    } else if g.state.starts_with(msg::OFFLINE_PREFIX) {
+                        GroupStatus::Offline
+                    } else if g.state.starts_with(msg::RATE_LIMITED_PREFIX) {
+                        GroupStatus::RateLimited
                     } else if !matches!(g.state.as_str(), "ok" | "active" | "") {
                         GroupStatus::Failed
                     } else {
@@ -330,5 +335,62 @@ impl Core {
                 .unwrap_or(false),
             update: String::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NoSecrets;
+    impl SecretStore for NoSecrets {
+        fn get(&self, _: &str) -> claude_sync_github::Result<Option<String>> {
+            Ok(None)
+        }
+        fn set(&self, _: &str, _: &str) -> claude_sync_github::Result<()> {
+            Ok(())
+        }
+        fn delete(&self, _: &str) -> claude_sync_github::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_failed_pass_is_offline_rate_limited_or_failed_by_its_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Env {
+            home: dir.path().into(),
+            cfg: Config {
+                api: "http://127.0.0.1:9".into(),
+                login: "http://127.0.0.1:9".into(),
+                relay: "http://127.0.0.1:9".into(),
+                releases: String::new(),
+                client_id: String::new(),
+                retry_delay: std::time::Duration::from_millis(1),
+            },
+            app_client_id: String::new(),
+            secrets: Secrets(Arc::new(NoSecrets)),
+            now: Arc::new(|| 1),
+            device: "laptop".into(),
+        };
+        let c = Core::open(env).unwrap();
+        c.db.add_group("zed/team", false).unwrap();
+        let status = |state: &str| {
+            c.db.set_group_state("zed/team", state).unwrap();
+            let g = c.snapshot().groups.remove(0);
+            (g.status, g.error)
+        };
+        let offline = "network error: connection refused";
+        assert_eq!(
+            status(offline),
+            (GroupStatus::Offline, Some(offline.into()))
+        );
+        let limit = "GitHub limit reached, resumes 3:00 PM";
+        assert_eq!(
+            status(limit),
+            (GroupStatus::RateLimited, Some(limit.into()))
+        );
+        assert_eq!(status("GitHub returned 500: x").0, GroupStatus::Failed);
+        assert_eq!(status("ok"), (GroupStatus::Synced, None));
     }
 }

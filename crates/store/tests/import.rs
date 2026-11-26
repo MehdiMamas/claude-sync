@@ -515,3 +515,26 @@ fn request_counts_are_added_per_flush() {
     assert_eq!(got[0], row(5));
     assert_eq!(got.len(), 2);
 }
+
+#[test]
+fn v1_review_state_becomes_the_v2_review_state() {
+    use claude_sync_engine::review::ReviewState;
+    let h = Home::new();
+    let db = h.db();
+    h.import(&db);
+    let b = Store::read(&db, "review/sample-org/friends-data")
+        .unwrap()
+        .expect("review state imported");
+    let st: ReviewState = serde_json::from_slice(&b).unwrap();
+    // the pending line is held, not accepted; the per-group choice (review first) applies
+    assert_eq!(st.pending.len(), 1);
+    assert_eq!(st.pending[0].lines, ["Prefer small PRs"]);
+    assert_eq!(st.pending[0].author, "sample-friend");
+    assert_eq!(st.declined[0].id, "i0");
+    assert_eq!(st.review, Some(true));
+    assert_eq!(st.accepted, "# Friends rules\n");
+    // a group with no v1 review file gets none (its first pass accepts, as in v1)
+    assert!(Store::read(&db, "review/sample-org/team-data")
+        .unwrap()
+        .is_none());
+}

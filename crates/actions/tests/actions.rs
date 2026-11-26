@@ -824,3 +824,111 @@ async fn a_file_changed_on_both_sides_is_listed_as_a_conflict() {
         ("zed/team", "skills/s/SKILL.md")
     );
 }
+
+impl T {
+    /// What each push to `zed/team` sent: blob contents in order.
+    async fn pushed_blobs(&self) -> Vec<String> {
+        self.server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.method.as_str() == "POST" && r.url.path() == "/repos/zed/team/git/blobs")
+            .map(|r| {
+                let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+                let b = base64::Engine::decode(
+                    &base64::engine::general_purpose::STANDARD,
+                    v["content"].as_str().unwrap(),
+                )
+                .unwrap();
+                String::from_utf8(b).unwrap()
+            })
+            .collect()
+    }
+    async fn tree_paths(&self) -> Vec<String> {
+        self.server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.method.as_str() == "POST" && r.url.path() == "/repos/zed/team/git/trees")
+            .flat_map(|r| {
+                let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+                v["tree"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|e| e["path"].as_str().unwrap().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sharing_an_edit_a_skill_and_claude_md_pushes_the_expected_bytes() {
+    let t = T::new().await;
+    let h = t
+        .group_with(
+            "h1",
+            &[
+                ("skills/s/SKILL.md", "---\nname: s\n---\nhello\n"),
+                ("CLAUDE.md", "# Team\n"),
+            ],
+        )
+        .await;
+    h.send(Command::SyncNow).await.unwrap();
+    t.push_chain("zed/team").await;
+    let repo = "zed/team".to_string();
+
+    // an edited delivered file goes up as it is on disk
+    std::fs::write(t.file("skills/s/SKILL.md"), "mine\n").unwrap();
+    h.send(Command::ShareEdit {
+        repo: repo.clone(),
+        path: "skills/s/SKILL.md".into(),
+    })
+    .await
+    .unwrap();
+    assert_eq!(t.pushed_blobs().await, ["mine\n"]);
+    assert_eq!(t.tree_paths().await, ["skills/s/SKILL.md"]);
+    let Event::Edits(e) = h
+        .send(Command::EditsList { repo: repo.clone() })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(e.is_empty(), "a shared edit is not an edit any more");
+
+    // a new skill goes up with every file of its folder
+    let dir = t.file("skills/new");
+    std::fs::create_dir_all(dir.join("ref")).unwrap();
+    std::fs::write(dir.join("SKILL.md"), "---\nname: new\n---\n").unwrap();
+    std::fs::write(dir.join("ref/a.md"), "A\n").unwrap();
+    h.send(Command::ShareSkill {
+        repo: repo.clone(),
+        name: "new".into(),
+    })
+    .await
+    .unwrap();
+    let mut tp = t.tree_paths().await;
+    tp.sort();
+    assert_eq!(
+        tp,
+        [
+            "skills/new/SKILL.md",
+            "skills/new/ref/a.md",
+            "skills/s/SKILL.md"
+        ]
+    );
+    let blobs = t.pushed_blobs().await;
+    assert!(blobs.contains(&"---\nname: new\n---\n".to_string()) && blobs.contains(&"A\n".into()));
+
+    // my CLAUDE.md is added under my login after the group's text
+    std::fs::write(t.file("CLAUDE.md"), "my rule\n").unwrap();
+    h.send(Command::ShareClaudeMd { repo }).await.unwrap();
+    assert_eq!(
+        t.pushed_blobs().await.last().unwrap(),
+        "# Team\n\n## ann\n\nmy rule\n"
+    );
+}

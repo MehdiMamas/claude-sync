@@ -9,6 +9,11 @@ pub const PLUGINS_WARNING: &str =
 pub const LOCK_UNAVAILABLE: &str =
     "GitHub can't lock this repo on your plan; the app still only sends changes from your machine.";
 
+/// How the GitHub client words an unreachable network and a spent rate limit (v1 texts); a
+/// group whose last pass failed with one of them is Offline or RateLimited, not Failed.
+pub const OFFLINE_PREFIX: &str = "network error";
+pub const RATE_LIMITED_PREFIX: &str = "GitHub limit reached";
+
 pub fn session_expired_for(login: &str) -> String {
     format!("GitHub no longer accepts the sign-in of {login}, so syncing stopped. Sign in again to pick up where you left off; your groups and files on this computer are kept.")
 }
