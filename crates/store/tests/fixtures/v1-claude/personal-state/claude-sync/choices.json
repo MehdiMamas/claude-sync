@@ -1,0 +1,26 @@
+{
+  "groups": {
+    "sample-org/friends-data": {
+      "off": false,
+      "reviewClaudeMd": true,
+      "autoRunJobs": false,
+      "acceptedJobs": { "nightly": "hash-new" },
+      "offJobs": [],
+      "droppedLines": ["Always use tabs"],
+      "member": true,
+      "ts": 1790000000000
+    },
+    "sample-org/team-data": {
+      "off": false,
+      "autoRunJobs": true,
+      "member": true,
+      "ts": 1790000000000
+    }
+  },
+  "personal": { "off": false, "ts": 1790000000000 },
+  "sshPeers": { "on": false, "ts": 0 },
+  "activity": { "share": false, "ts": 0 },
+  "order": { "list": ["sample-org/team-data", "sample-org/friends-data"], "ts": 1790000000000 },
+  "app": { "paused": false, "intervalSecs": 60, "startAtLogin": true, "ts": 1790000000000 },
+  "futureKey": { "kept": true }
+}

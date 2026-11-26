@@ -201,6 +201,20 @@ impl Client {
         v
     }
 
+    /// The counts since the last call, and reset them: the shell adds them to the store's
+    /// `requests` table every minute (no dependency between the two crates).
+    pub fn take_counts(&self) -> Vec<Count> {
+        std::mem::take(&mut *lock(&self.0.counts))
+            .into_iter()
+            .map(|((caller, endpoint, result), count)| Count {
+                caller,
+                endpoint,
+                result,
+                count,
+            })
+            .collect()
+    }
+
     // ----- requests ------------------------------------------------------------------
 
     pub(crate) fn get(&self, path: &str) -> Result<Response> {

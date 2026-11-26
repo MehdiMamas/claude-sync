@@ -86,4 +86,7 @@ fn an_idle_hour_is_424_conditional_requests() {
     assert_eq!(total - counted_before, 424);
     assert!(s304 >= 424, "all 424 answered 304");
     assert!(c.limited_until().is_none());
+    // The per-minute flush takes the counts and starts again from zero.
+    assert_eq!(c.take_counts().iter().map(|x| x.count).sum::<u64>(), total);
+    assert!(c.take_counts().is_empty());
 }

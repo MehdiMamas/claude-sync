@@ -1,0 +1,1 @@
+{ "name": "friends-data", "host": "sample-user", "members": ["sample-user", "sample-friend"], "invited": [], "lastSyncUnix": 1790000400, "lastError": null, "rateLimitedUntil": null, "conflicts": [], "collisions": [], "shared": [], "hostLock": "on" }

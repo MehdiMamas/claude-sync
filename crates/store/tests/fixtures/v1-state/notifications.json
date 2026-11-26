@@ -1,0 +1,7 @@
+{
+  "nextId": 4,
+  "items": [
+    { "id": 3, "time": 1790000300, "title": "Update ready", "body": "claude-sync 0.1.27 is ready", "kind": "update", "read": false },
+    { "id": 2, "time": 1790000200, "title": "Joined", "body": "You joined friends-data", "kind": "group", "group": "sample-org/friends-data", "read": true }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "since": 1790000000,
+  "last10min": [ { "caller": "tick", "endpoint": "GET repos/:repo", "result": "304", "count": 4 } ],
+  "total": [
+    { "caller": "tick", "endpoint": "GET repos/:repo", "result": "304", "count": 40 },
+    { "caller": "sync", "endpoint": "GET repos/:repo/git/trees/:sha", "result": "200", "count": 7 }
+  ]
+}
