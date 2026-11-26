@@ -919,8 +919,17 @@
    "page": "v2",
    "is_interactive": true
   },
-  "v2-ScreenInstallImportFailed.dc.html": {
+  "v2-ScreenInstallV1Daemon.dc.html": {
    "x": 5760,
+   "y": 16280,
+   "w": 880,
+   "h": 640,
+   "title": "Screen: Install: v1 daemon still running",
+   "page": "v2",
+   "is_interactive": true
+  },
+  "v2-ScreenInstallImportFailed.dc.html": {
+   "x": 6720,
    "y": 16280,
    "w": 880,
    "h": 640,
@@ -929,8 +938,8 @@
    "is_interactive": true
   },
   "v2-ScreenGroupTransferPending.dc.html": {
-   "x": 6720,
-   "y": 16280,
+   "x": 0,
+   "y": 17040,
    "w": 880,
    "h": 640,
    "title": "Screen: Group: transfer requested",
@@ -938,7 +947,7 @@
    "is_interactive": true
   },
   "v2-ScreenGroupTransferExpired.dc.html": {
-   "x": 0,
+   "x": 960,
    "y": 17040,
    "w": 880,
    "h": 640,
@@ -947,7 +956,7 @@
    "is_interactive": true
   },
   "v2-ScreenSettingsDeviceRemove.dc.html": {
-   "x": 960,
+   "x": 1920,
    "y": 17040,
    "w": 880,
    "h": 640,
@@ -956,7 +965,7 @@
    "is_interactive": true
   },
   "v2-ScreenSettingsAccountApp.dc.html": {
-   "x": 1920,
+   "x": 2880,
    "y": 17040,
    "w": 880,
    "h": 640,
@@ -965,7 +974,7 @@
    "is_interactive": true
   },
   "v2-ScreenFeedbackRefused.dc.html": {
-   "x": 2880,
+   "x": 3840,
    "y": 17040,
    "w": 880,
    "h": 640,
@@ -974,7 +983,7 @@
    "is_interactive": true
   },
   "v2-ScreenFeedbackTooLarge.dc.html": {
-   "x": 3840,
+   "x": 4800,
    "y": 17040,
    "w": 880,
    "h": 640,
@@ -983,7 +992,7 @@
    "is_interactive": true
   },
   "v2-ScreenFeedbackRateLimited.dc.html": {
-   "x": 4800,
+   "x": 5760,
    "y": 17040,
    "w": 880,
    "h": 640,
@@ -992,7 +1001,7 @@
    "is_interactive": true
   },
   "v2-ScreenGroupsLoading.dc.html": {
-   "x": 5760,
+   "x": 6720,
    "y": 17040,
    "w": 880,
    "h": 640,
@@ -1001,8 +1010,8 @@
    "is_interactive": true
   },
   "v2-ScreenSettingsUpdated.dc.html": {
-   "x": 6720,
-   "y": 17040,
+   "x": 0,
+   "y": 17800,
    "w": 880,
    "h": 640,
    "title": "Screen: Settings: updated",
@@ -1010,7 +1019,7 @@
    "is_interactive": true
   },
   "v2-ScreenTray.dc.html": {
-   "x": 0,
+   "x": 960,
    "y": 17800,
    "w": 880,
    "h": 640,
@@ -1019,7 +1028,7 @@
    "is_interactive": true
   },
   "v2-ScreenTrayQuit.dc.html": {
-   "x": 960,
+   "x": 1920,
    "y": 17800,
    "w": 880,
    "h": 640,
@@ -1308,7 +1317,7 @@
    "x": 2408,
    "y": 31340,
    "w": 960,
-   "h": 650,
+   "h": 712,
    "title": "Install and first start: edge cases",
    "page": "v2",
    "is_interactive": true
@@ -1365,7 +1374,7 @@
    "x": 5900,
    "y": 32182,
    "w": 1240,
-   "h": 1484,
+   "h": 1542,
    "title": "Edge cases",
    "page": "v2"
   },
@@ -1525,7 +1534,7 @@
    "x": 1360,
    "y": 41634,
    "w": 1280,
-   "h": 1200,
+   "h": 1400,
    "title": "Cutover from v1",
    "page": "v2",
    "expand": "fill"
@@ -3453,6 +3462,7 @@
   "v2-ScreenGroupJobScheduled.dc.html",
   "v2-ScreenGroupsAllOff.dc.html",
   "v2-ScreenInstallUnsigned.dc.html",
+  "v2-ScreenInstallV1Daemon.dc.html",
   "v2-ScreenInstallImportFailed.dc.html",
   "v2-ScreenGroupTransferPending.dc.html",
   "v2-ScreenGroupTransferExpired.dc.html",
