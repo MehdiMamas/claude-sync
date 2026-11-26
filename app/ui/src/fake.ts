@@ -2,9 +2,11 @@
 // `open_target` interface as the shell, over the generated types. Sample data only.
 import type { Backend } from "./backend";
 import type { Command } from "./generated/Command";
+import type { EditView } from "./generated/EditView";
 import type { Event } from "./generated/Event";
 import type { GroupStatus } from "./generated/GroupStatus";
 import type { GroupView } from "./generated/GroupView";
+import type { JobView } from "./generated/JobView";
 import type { Snapshot } from "./generated/Snapshot";
 
 const sec = () => Math.floor(Date.now() / 1000);
@@ -88,6 +90,21 @@ const code = {
   expires_in: 900,
 } as const;
 
+const job = (repo: string): JobView => ({
+  repo,
+  id: "nightly-lint",
+  accepted: false,
+  enabled: false,
+  lastResult: "",
+  title: "nightly-lint",
+  cron: "0 3 * * *",
+  prompt: "Lint the repo",
+  cwd: "~/work",
+  mode: "plan",
+  timeoutMinutes: 10,
+  args: [],
+});
+
 /** The state each `?scenario=` starts in. */
 function scenario(name: string): Snapshot {
   const s = base();
@@ -142,6 +159,17 @@ function scenario(name: string): Snapshot {
         "couldn't install repo-tools@mods: registry unreachable",
         "plugins/mods/big-pack.bin is over the 1 MiB limit and was not placed",
       ]);
+      return s;
+    case "group":
+      s.jobs = [job(s.groups[0]?.repo ?? "")];
+      setProblems(0, ["couldn't install big-pack@mods: registry unreachable"]);
+      return s;
+    case "group-member":
+      setStatus(1, "synced", { host: "sam-member", pendingReview: 1 });
+      s.jobs = [job(s.groups[1]?.repo ?? "")];
+      return s;
+    case "group-off":
+      setStatus(0, "off", { off: true, lastSync: null });
       return s;
     case "groups-all-off":
       s.groups = s.groups.slice(0, 2).map((g) => ({ ...g, status: "off" as const, off: true }));
@@ -200,6 +228,15 @@ export function fakeBackend(search: string): Backend {
   (window as unknown as { __fake: FakeControls }).__fake = controls;
 
   const done: Event = { kind: "done" };
+  // Local edits per group: the host has two, the member one.
+  const edits: Record<string, EditView[]> = {
+    "alex-host/claude-group": [
+      { path: "skills/release-notes/SKILL.md", kept: false },
+      { path: "settings.json", kept: false },
+    ],
+    "sample-org/dev-rules": [{ path: "skills/release-notes/SKILL.md", kept: false }],
+  };
+  const secret = "secret found in settings.json:12 (API key); nothing was committed";
   const addGroup = (repo: string, over: Partial<GroupView> = {}) =>
     set({ groups: [...snap.groups, group(repo, { members: many(3), ...over })] });
 
@@ -275,7 +312,10 @@ export function fakeBackend(search: string): Backend {
         if (snap.groups.some((g) => g.repo === cmd.data.repo))
           throw `You already have a repo named ${cmd.data.name}. Pick another name.`;
         addGroup(cmd.data.repo, { isHost: true, members: [snap.login ?? ""] });
-        return { kind: "created", data: { repo: cmd.data.repo, lock: "on" } };
+        return {
+          kind: "created",
+          data: { repo: cmd.data.repo, lock: q.has("noLock") ? "unavailable" : "on" },
+        };
       case "discover":
         return { kind: "discovered", data: snap.discoverable };
       case "join":
@@ -291,6 +331,137 @@ export function fakeBackend(search: string): Backend {
         if (inv) addGroup(inv.repo);
         return { kind: "joined", data: { repo: inv?.repo ?? "", warning: "" } };
       }
+      case "leave":
+        set({ groups: snap.groups.filter((g) => g.repo !== cmd.data.repo) });
+        return done;
+      case "addMember":
+        if (cmd.data.login === "no-such-user") throw `GitHub has no user named ${cmd.data.login}.`;
+        set({
+          groups: snap.groups.map((g) =>
+            g.repo === cmd.data.repo ? { ...g, members: [...g.members, cmd.data.login] } : g,
+          ),
+        });
+        return { kind: "message", data: `Invited ${cmd.data.login}` };
+      case "reviewList": {
+        const n = snap.groups.find((g) => g.repo === cmd.data.repo)?.pendingReview ?? 0;
+        return {
+          kind: "review",
+          data: Array.from({ length: n }, (_, i) => ({
+            id: `l${i}`,
+            add: true,
+            lines: ["Prefer small pull requests."],
+            author: "sam-member",
+            at: sec() - 3600,
+          })),
+        };
+      }
+      case "proposals": {
+        const host = cmd.data.repo === "alex-host/claude-group";
+        const p = (author: string, mine: boolean) => ({
+          number: 12,
+          branch: `proposal/${author}-20261126100000`,
+          author,
+          title: "Add test-runner skill",
+          url: "https://github.com/sample-org/dev-rules/pull/12",
+          files: [],
+          approvals: [],
+          needsUpdate: false,
+          mine,
+          approvedByMe: false,
+          head: "abc1234",
+        });
+        return {
+          kind: "proposals",
+          data: host
+            ? [p("sam-member", false)]
+            : [{ ...p("kim-dev", false), number: 13 }, p("alex-host", true)],
+        };
+      }
+      case "history":
+        return {
+          kind: "history",
+          data: [
+            {
+              sha: "a1",
+              summary: "sam-member changed CLAUDE.md",
+              author: "sam-member",
+              at: new Date((sec() - 3600) * 1000).toISOString(),
+              issues: [],
+              before: null,
+              now: null,
+            },
+            {
+              sha: "b2",
+              summary: "you added skill release-notes",
+              author: snap.login ?? "",
+              at: new Date((sec() - 86400) * 1000).toISOString(),
+              issues: [],
+              before: null,
+              now: null,
+            },
+          ],
+        };
+      case "editsList":
+        return { kind: "edits", data: structuredClone(edits[cmd.data.repo] ?? []) };
+      case "keepMine":
+        for (const e of edits[cmd.data.repo] ?? []) if (e.path === cmd.data.path) e.kept = true;
+        return done;
+      case "undoEdit":
+        edits[cmd.data.repo] = (edits[cmd.data.repo] ?? []).filter((e) => e.path !== cmd.data.path);
+        return done;
+      case "sharePreview":
+        return cmd.data.path === "settings.json"
+          ? {
+              kind: "sharePreview",
+              data: { added: ['"env": { "SAMPLE_KEY": "sk-…redacted" }'], secret },
+            }
+          : {
+              kind: "sharePreview",
+              data: {
+                added: ["Write release notes in plain words.", "One line per change."],
+                secret: null,
+              },
+            };
+      case "shareEdit":
+        if (cmd.data.path === "settings.json") throw secret;
+        await gate();
+        edits[cmd.data.repo] = (edits[cmd.data.repo] ?? []).filter((e) => e.path !== cmd.data.path);
+        return done;
+      case "contents": {
+        const it = (kind: string, name: string) => ({ kind, name });
+        return {
+          kind: "contents",
+          data: [
+            it("claudeMd", "CLAUDE.md"),
+            ...["a", "b", "c"].map((n) => it("skill", n)),
+            it("agent", "reviewer.md"),
+            it("command", "ship.md"),
+            it("command", "triage.md"),
+            it("plugin", "repo-tools"),
+            it("plugin", "big-pack"),
+            it("jobs", "schedules.json"),
+            it("settings", "model, permissions"),
+          ],
+        };
+      }
+      case "copyPreview":
+        return {
+          kind: "copyPreview",
+          data: {
+            to: cmd.data.to,
+            toName: cmd.data.to.split("/")[1] ?? "",
+            host: cmd.data.to.split("/")[0] ?? "",
+            canPush: true,
+            syncsClaudeMd: true,
+            syncsSkills: true,
+            syncsAgents: true,
+            claudeMd: "Prefer small pull requests.",
+            skills: [],
+            agents: [],
+          },
+        };
+      case "copy":
+        return { kind: "copied", data: { files: 0, claude_md: true, proposed: null } };
       default:
         return done;
     }

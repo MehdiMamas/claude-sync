@@ -8,6 +8,8 @@ export type Flash = {
   joining: string | null;
   joinError: string | null;
   fresh: { repos: string[]; files: number } | null;
+  /** The group this window just created, and whether GitHub could lock main (`on`). */
+  created: { repo: string; lock: string } | null;
 };
 
 type Props = {

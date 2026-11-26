@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 export const Logo = () => (
   <svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18">
@@ -46,3 +46,22 @@ export const useRoute = () =>
 export const go = (route: string) => {
   location.hash = `/${route}`;
 };
+
+/** Runs `load` on mount and whenever `key` changes or the returned `reload` is called. */
+export function useLoad<T>(load: () => Promise<T>, key: string) {
+  const [data, setData] = useState<T>();
+  const [tick, setTick] = useState(0);
+  const ref = useRef(load);
+  ref.current = load;
+  useEffect(() => {
+    let on = true;
+    ref.current().then(
+      (d) => on && setData(d),
+      () => {},
+    );
+    return () => {
+      on = false;
+    };
+  }, [key, tick]);
+  return [data, () => setTick((n) => n + 1)] as const;
+}

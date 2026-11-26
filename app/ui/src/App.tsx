@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Command } from "./generated/Command";
 import type { Event } from "./generated/Event";
+import { GroupPage } from "./screens/Group";
 import { type Flash, Groups } from "./screens/Groups";
 import { Join, NewGroup } from "./screens/GroupsForms";
 import { Later, Shell } from "./screens/Shell";
@@ -9,7 +10,7 @@ import { useBackend, useSnapshot } from "./store";
 import { go, useRoute } from "./ui";
 
 const text = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const none: Flash = { toast: null, joining: null, joinError: null, fresh: null };
+const none: Flash = { toast: null, joining: null, joinError: null, fresh: null, created: null };
 
 export function App() {
   const b = useBackend();
@@ -37,6 +38,9 @@ export function App() {
     const t = setTimeout(() => patch({ toast: null }), 4000);
     return () => clearTimeout(t);
   }, [flash.toast, patch]);
+  useEffect(() => {
+    if (flash.created && !route.startsWith(`group/${flash.created.repo}`)) patch({ created: null });
+  }, [route, flash.created, patch]);
   useEffect(() => void b.send({ kind: "windowOpened" }).catch(() => {}), [b]);
   useEffect(() => {
     if (route === "groups/join") b.send({ kind: "discover" }).catch(() => {});
@@ -134,6 +138,7 @@ export function App() {
           const repo = `${snap.login}/${name}`;
           const r = await call({ kind: "createGroup", data: { name, repo } });
           if ("err" in r) return r.err;
+          if (r.ev.kind === "created") patch({ created: { repo, lock: r.ev.data.lock } });
           go(`group/${repo}`);
           return null;
         }}
@@ -142,7 +147,21 @@ export function App() {
   } else if (route === "groups/join") {
     body = <Join snap={snap} accept={act.accept} decline={act.decline} join={act.join} />;
   } else if (route.startsWith("group/")) {
-    body = <Later title={route.slice(6)} part="8b" />;
+    const [, owner, name, ...rest] = route.split("/");
+    const repo = `${owner}/${name}`;
+    body = (
+      <GroupPage
+        snap={snap}
+        g={snap.groups.find((x) => x.repo === repo)}
+        now={now}
+        flash={flash}
+        call={call}
+        toast={(toast) => patch({ toast })}
+        syncNow={act.syncNow}
+        sub={rest[0] === "leave" ? [] : rest}
+        leaving={rest[0] === "leave"}
+      />
+    );
   } else {
     body = <Later title={route[0]?.toUpperCase() + route.slice(1)} part="8c" />;
   }

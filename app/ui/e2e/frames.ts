@@ -8,6 +8,13 @@ const signInCode = async (p: Page) => {
   await p.getByText("WDJB-MJHT").waitFor();
 };
 
+const base = "/group/alex-host/claude-group";
+const edits = `${base}/edits`;
+const createGroup = async (p: Page) => {
+  await p.getByRole("button", { name: "Create group" }).click();
+  await p.getByText("Invite members").first().waitFor();
+};
+
 export const frames: FrameCase[] = [
   { frame: "SignIn", url: "/?scenario=signed-out" },
   { frame: "SignInCode", url: "/?scenario=signed-out", steps: signInCode },
@@ -89,4 +96,44 @@ export const frames: FrameCase[] = [
   },
   { frame: "GroupsSyncError", url: "/?scenario=groups-sync-error" },
   { frame: "GroupsSyncing", url: "/?scenario=groups-syncing" },
+  { frame: "Group", url: "/?scenario=group#/group/alex-host/claude-group" },
+  { frame: "GroupGuest", url: "/?scenario=group-member#/group/sample-org/dev-rules" },
+  { frame: "GroupOff", url: "/?scenario=group-off#/group/alex-host/claude-group" },
+  { frame: "GroupLeave", url: "/?scenario=group-member#/group/sample-org/dev-rules/leave" },
+  { frame: "GroupCreated", url: "/?scenario=groups-empty#/groups/new", steps: createGroup },
+  {
+    frame: "GroupCreatedNoRuleset",
+    url: "/?scenario=groups-empty&noLock#/groups/new",
+    steps: createGroup,
+  },
+  { frame: "GroupLocalEdits", url: `/?scenario=group#${edits}` },
+  {
+    frame: "GroupEditKept",
+    url: `/?scenario=group#${edits}`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Keep mine" }).first().click();
+      await p.getByText("Kept yours. It is not shared.").waitFor();
+    },
+  },
+  {
+    frame: "GroupEditUndone",
+    url: `/?scenario=group#${edits}`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Undo" }).first().click();
+      await p.getByText("Undone: the group version of skills/release-notes is back").waitFor();
+    },
+  },
+  { frame: "GroupShare", url: `/?scenario=group#${base}/share/skills/release-notes/SKILL.md` },
+  { frame: "GroupShareBlocked", url: `/?scenario=group#${base}/share/settings.json` },
+  {
+    frame: "GroupShared",
+    url: `/?scenario=group#${edits}`,
+    steps: async (p) => {
+      await p.getByRole("link", { name: "Share" }).first().click();
+      await p.getByRole("button", { name: "Share with group" }).click();
+      await p.getByText("Shared. Members get it on their next sync.").waitFor();
+    },
+  },
+  { frame: "GroupContents", url: `/?scenario=group#${base}/contents` },
+  { frame: "GroupCopy", url: `/?scenario=group#${base}/copy` },
 ];
