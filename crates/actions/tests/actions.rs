@@ -851,6 +851,17 @@ async fn keep_mine_undo_and_a_secret_blocks_sharing() {
     .await
     .unwrap();
     assert!(edits().await[0].kept);
+    let Event::SharePreview { added, secret } = h
+        .send(Command::SharePreview {
+            repo: repo.clone(),
+            path: "skills/s/SKILL.md".into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!((added, secret), (vec!["mine".to_string()], None));
     // a secret in the edit stops the share before anything is sent
     let token = format!("ghp_{}", "a".repeat(36));
     std::fs::write(&f, format!("key {token}\n")).unwrap();
@@ -861,6 +872,17 @@ async fn keep_mine_undo_and_a_secret_blocks_sharing() {
         })
         .await
         .unwrap_err();
+    let Event::SharePreview { secret, .. } = h
+        .send(Command::SharePreview {
+            repo: repo.clone(),
+            path: "skills/s/SKILL.md".into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(secret.as_deref(), Some(e.0.as_str()));
     assert!(
         e.0.starts_with("secret found in skills/s/SKILL.md:1 (")
             && e.0.ends_with("); nothing was committed"),

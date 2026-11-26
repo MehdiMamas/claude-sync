@@ -403,6 +403,11 @@ pub enum Command {
         repo: String,
         path: String,
     },
+    /// What sharing this edit would send: the added lines (redacted) and the first secret hit.
+    SharePreview {
+        repo: String,
+        path: String,
+    },
     ShareEdit {
         repo: String,
         path: String,
@@ -623,6 +628,11 @@ pub enum Event {
         claude_md: bool,
         /// The target is in proposal mode: the proposal number.
         proposed: Option<u64>,
+    },
+    SharePreview {
+        added: Vec<String>,
+        /// The refusal text when a line looks like a secret; `None` when the scan is clean.
+        secret: Option<String>,
     },
     RevertPlan(RevertPlan),
     History(Vec<HistoryItem>),

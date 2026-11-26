@@ -168,6 +168,35 @@ impl Core {
         Ok(Event::Done)
     }
 
+    /// The lines my version adds to the group's, redacted, and the scan result; nothing is sent.
+    pub(crate) fn share_preview(&self, repo: &str, path: &str) -> Result<Event> {
+        let mine = self
+            .edit_of(repo, path)?
+            .ok_or_else(|| Error::new(msg::no_files_to_share(path)))?;
+        let text = String::from_utf8_lossy(&mine);
+        let theirs = self
+            .base(repo)?
+            .files
+            .get(path)
+            .cloned()
+            .unwrap_or_default();
+        let theirs = String::from_utf8_lossy(&theirs);
+        let old: std::collections::BTreeSet<&str> = theirs.lines().collect();
+        let added = text
+            .lines()
+            .filter(|l| !old.contains(l))
+            .map(claude_sync_fs::redact::redact)
+            .collect();
+        let secret = (!text.contains(ALLOW_MARKER))
+            .then(|| {
+                scan(&text)
+                    .first()
+                    .map(|h| msg::secret_found(path, h.line, h.pattern))
+            })
+            .flatten();
+        Ok(Event::SharePreview { added, secret })
+    }
+
     pub(crate) fn share_edit(&mut self, repo: &str, path: &str) -> Result<Event> {
         let mine = self
             .edit_of(repo, path)?

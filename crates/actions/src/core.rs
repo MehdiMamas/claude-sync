@@ -187,6 +187,7 @@ impl Core {
             EditsList { repo } => self.edits_list(&repo),
             KeepMine { repo, path } => self.keep_mine(&repo, &path),
             UndoEdit { repo, path } => self.undo_edit(&repo, &path),
+            SharePreview { repo, path } => self.share_preview(&repo, &path),
             ShareEdit { repo, path } => self.share_edit(&repo, &path),
             ShareSkill { repo, name } => self.share_skill(&repo, &name),
             ShareClaudeMd { repo } => self.share_claude_md(&repo),

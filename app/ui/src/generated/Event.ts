@@ -14,7 +14,11 @@ export type Event = { "kind": "proposed", "data": number } | { "kind": "packs", 
 /**
  * The target is in proposal mode: the proposal number.
  */
-proposed: number | null, } } | { "kind": "revertPlan", "data": RevertPlan } | { "kind": "history", "data": Array<HistoryItem> } | { "kind": "contents", "data": Array<ContentItem> } | { "kind": "done" } | { "kind": "message", "data": string } | { "kind": "deviceCode", "data": { user_code: string, verification_uri: string, expires_in: number, } } | { "kind": "signedIn", "data": { login: string, } } | { "kind": "signedOut" } | { "kind": "created", "data": { repo: string, lock: string, } } | { "kind": "joined", "data": { repo: string, warning: string, } } | { "kind": "discovered", "data": Array<DiscoverView> } | { "kind": "review", "data": Array<ReviewLine> } | { "kind": "edits", "data": Array<EditView> } | { "kind": "conflicts", "data": Array<ConflictView> } | { "kind": "path", "data": string | null } | { "kind": "clashes", "data": unknown[] } | { "kind": "synced", "data": { files: number, failed: number, 
+proposed: number | null, } } | { "kind": "sharePreview", "data": { added: Array<string>, 
+/**
+ * The refusal text when a line looks like a secret; `None` when the scan is clean.
+ */
+secret: string | null, } } | { "kind": "revertPlan", "data": RevertPlan } | { "kind": "history", "data": Array<HistoryItem> } | { "kind": "contents", "data": Array<ContentItem> } | { "kind": "done" } | { "kind": "message", "data": string } | { "kind": "deviceCode", "data": { user_code: string, verification_uri: string, expires_in: number, } } | { "kind": "signedIn", "data": { login: string, } } | { "kind": "signedOut" } | { "kind": "created", "data": { repo: string, lock: string, } } | { "kind": "joined", "data": { repo: string, warning: string, } } | { "kind": "discovered", "data": Array<DiscoverView> } | { "kind": "review", "data": Array<ReviewLine> } | { "kind": "edits", "data": Array<EditView> } | { "kind": "conflicts", "data": Array<ConflictView> } | { "kind": "path", "data": string | null } | { "kind": "clashes", "data": unknown[] } | { "kind": "synced", "data": { files: number, failed: number, 
 /**
  * Groups whose files changed.
  */
