@@ -1,0 +1,2 @@
+@reboot '/home/me/.local/bin/claude-sync-cli' daemon >/dev/null 2>&1 # claude-sync
+*/5 * * * * '/home/me/.local/bin/claude-sync-cli' daemon >/dev/null 2>&1 # claude-sync

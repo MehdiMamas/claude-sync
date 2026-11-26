@@ -1,0 +1,12 @@
+[Unit]
+Description=claude-sync background sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart="/home/me/.local/bin/claude-sync-cli" daemon
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

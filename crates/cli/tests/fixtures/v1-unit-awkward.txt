@@ -1,0 +1,2 @@
+ExecStart="/home/a b/50%%/it's/cli" daemon
+@reboot '/home/a b/50\%/it'\''s/cli' daemon >/dev/null 2>&1 # claude-sync

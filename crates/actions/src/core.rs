@@ -226,20 +226,7 @@ impl Core {
         };
         let due = self.schedule.due(&facts);
         if due.invites {
-            if let Ok(list) =
-                claude_sync_github::with_caller("invitations", || self.client.invitations())
-            {
-                self.invitations = list
-                    .into_iter()
-                    .filter_map(|i| {
-                        Some(InvitationView {
-                            id: i.id,
-                            repo: i.repository?.full_name,
-                            inviter: i.inviter.map(|o| o.login).unwrap_or_default(),
-                        })
-                    })
-                    .collect();
-            }
+            self.load_invitations();
         }
         for r in due.renames {
             self.follow_rename(&r);
@@ -250,6 +237,24 @@ impl Core {
         self.refresh_session();
         self.note_expired();
         Ok(Event::Done)
+    }
+
+    /// Ask GitHub for the invitations now (a one-shot command's `groups` and `join`).
+    pub fn load_invitations(&mut self) {
+        if let Ok(list) =
+            claude_sync_github::with_caller("invitations", || self.client.invitations())
+        {
+            self.invitations = list
+                .into_iter()
+                .filter_map(|i| {
+                    Some(InvitationView {
+                        id: i.id,
+                        repo: i.repository?.full_name,
+                        inviter: i.inviter.map(|o| o.login).unwrap_or_default(),
+                    })
+                })
+                .collect();
+        }
     }
 
     /// Parity 16: one repo GET a day; a new `full_name` moves the group's rows.
