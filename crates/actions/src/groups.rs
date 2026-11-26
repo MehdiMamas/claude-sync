@@ -2,7 +2,7 @@
 //! the changed keys are written, then one commit with the retries v1 had.
 use crate::core::Core;
 use crate::error::{Error, Result};
-use crate::model::Event;
+use crate::model::{DiscoverView, Event};
 use crate::msg;
 use claude_sync_engine::formats::group::{GroupFile, FILE, TOPIC};
 use claude_sync_engine::formats::Doc;
@@ -149,7 +149,7 @@ impl Core {
             .into_iter()
             .map(|g| g.repo.to_lowercase())
             .collect();
-        let found: Vec<String> = self
+        let found: Vec<DiscoverView> = self
             .client
             .user_repos()?
             .into_iter()
@@ -161,6 +161,14 @@ impl Core {
             })
             .map(|r| r.full_name)
             .filter(|n| !joined.contains(&n.to_lowercase()))
+            // shortcut: reads each group's files for its member count, upgrade to the group file alone if repos get big
+            .map(|repo| DiscoverView {
+                members: self
+                    .read_group(&repo)
+                    .ok()
+                    .map(|(_, d)| d.value.members.len() as u32),
+                repo,
+            })
             .collect();
         self.discoverable = found.clone();
         Ok(Event::Discovered(found))
@@ -177,7 +185,7 @@ impl Core {
         self.db
             .add_group(&info.full_name, o.eq_ignore_ascii_case(&me))?;
         self.discoverable
-            .retain(|d| !d.eq_ignore_ascii_case(&info.full_name));
+            .retain(|d| !d.repo.eq_ignore_ascii_case(&info.full_name));
         let warning = if doc.value.sync.plugins {
             msg::PLUGINS_WARNING.to_string()
         } else {
@@ -268,6 +276,7 @@ impl Core {
             pinned: Default::default(),
             crash_at: None,
             skip_kinds: Default::default(),
+            on_group: None,
         };
         // delivered files go; a file the person changed stays (as a local file)
         pass.leave(repo).map_err(Error::new)?;

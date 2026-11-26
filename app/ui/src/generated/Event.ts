@@ -2,6 +2,7 @@
 import type { ConflictView } from "./ConflictView";
 import type { ContentItem } from "./ContentItem";
 import type { CopyPreviewView } from "./CopyPreviewView";
+import type { DiscoverView } from "./DiscoverView";
 import type { EditView } from "./EditView";
 import type { HistoryItem } from "./HistoryItem";
 import type { PackView } from "./PackView";
@@ -13,4 +14,8 @@ export type Event = { "kind": "proposed", "data": number } | { "kind": "packs", 
 /**
  * The target is in proposal mode: the proposal number.
  */
-proposed: number | null, } } | { "kind": "revertPlan", "data": RevertPlan } | { "kind": "history", "data": Array<HistoryItem> } | { "kind": "contents", "data": Array<ContentItem> } | { "kind": "done" } | { "kind": "message", "data": string } | { "kind": "deviceCode", "data": { user_code: string, verification_uri: string, expires_in: number, } } | { "kind": "signedIn", "data": { login: string, } } | { "kind": "signedOut" } | { "kind": "created", "data": { repo: string, lock: string, } } | { "kind": "joined", "data": { repo: string, warning: string, } } | { "kind": "discovered", "data": Array<string> } | { "kind": "review", "data": Array<ReviewLine> } | { "kind": "edits", "data": Array<EditView> } | { "kind": "conflicts", "data": Array<ConflictView> } | { "kind": "path", "data": string | null } | { "kind": "clashes", "data": unknown[] } | { "kind": "synced", "data": { files: number, failed: number, } };
+proposed: number | null, } } | { "kind": "revertPlan", "data": RevertPlan } | { "kind": "history", "data": Array<HistoryItem> } | { "kind": "contents", "data": Array<ContentItem> } | { "kind": "done" } | { "kind": "message", "data": string } | { "kind": "deviceCode", "data": { user_code: string, verification_uri: string, expires_in: number, } } | { "kind": "signedIn", "data": { login: string, } } | { "kind": "signedOut" } | { "kind": "created", "data": { repo: string, lock: string, } } | { "kind": "joined", "data": { repo: string, warning: string, } } | { "kind": "discovered", "data": Array<DiscoverView> } | { "kind": "review", "data": Array<ReviewLine> } | { "kind": "edits", "data": Array<EditView> } | { "kind": "conflicts", "data": Array<ConflictView> } | { "kind": "path", "data": string | null } | { "kind": "clashes", "data": unknown[] } | { "kind": "synced", "data": { files: number, failed: number, 
+/**
+ * Groups whose files changed.
+ */
+repos: Array<string>, } };

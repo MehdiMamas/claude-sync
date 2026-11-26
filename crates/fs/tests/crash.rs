@@ -123,6 +123,7 @@ fn world(home: &Path) -> (Fake, Fake, Db) {
         pinned: Default::default(),
         crash_at: None,
         skip_kinds: Default::default(),
+        on_group: None,
     };
     let r = pass.run(
         &[GroupIn {
@@ -161,6 +162,7 @@ fn pass_once(home: &Path, g: &Fake, p: &Fake, db: &Db, crash: Option<usize>) -> 
         pinned: Default::default(),
         crash_at: crash,
         skip_kinds: Default::default(),
+        on_group: None,
     };
     let r = pass.run(
         &[GroupIn {

@@ -5,7 +5,7 @@ use claude_sync_github::secrets::SecretStore;
 use claude_sync_github::{Config, Result as GhResult};
 use serde_json::json;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use wiremock::matchers::{method, path, path_regex};
@@ -458,25 +458,38 @@ async fn discover_lists_unjoined_private_groups() {
         {"name": "c", "full_name": "zed/c", "private": false, "topics": ["claude-sync-group"]}]),
     )
     .await;
+    t.serve_repo(
+        "zed/a",
+        "h1",
+        &[],
+        json!({"schema": 1, "name": "A", "members": ["ann", "bob"]}),
+        false,
+    )
+    .await;
+    let found = vec![DiscoverView {
+        repo: "zed/a".into(),
+        members: Some(2),
+    }];
     assert_eq!(
         h.send(Command::Discover).await.unwrap(),
-        Event::Discovered(vec!["zed/a".into()])
+        Event::Discovered(found.clone())
     );
-    assert_eq!(h.snapshot().discoverable, vec!["zed/a".to_string()]);
+    assert_eq!(h.snapshot().discoverable, found);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invitations_and_pause_and_a_401_stops_the_loop() {
     let t = T::new().await;
     let h = t.signed_in().await;
-    t.mock("GET", "/user/repository_invitations", 200, json!([{"id": 7, "repository": {"name": "t", "full_name": "zed/t", "private": true}, "inviter": {"login": "zed"}}])).await;
+    t.mock("GET", "/user/repository_invitations", 200, json!([{"id": 7, "repository": {"name": "t", "full_name": "zed/t", "private": true}, "inviter": {"login": "zed"}, "created_at": "2024-01-02T03:04:05Z"}])).await;
     h.send(Command::WindowOpened).await.unwrap();
     assert_eq!(
         h.snapshot().invitations,
         vec![InvitationView {
             id: 7,
             repo: "zed/t".into(),
-            inviter: "zed".into()
+            inviter: "zed".into(),
+            created_at: Some(1704164645)
         }]
     );
     h.send(Command::SetInterval { secs: 5 }).await.unwrap();
@@ -618,6 +631,55 @@ async fn sync_now_delivers_files_and_a_tick_does_too() {
     assert!(t.file("skills/demo/SKILL.md").exists());
     assert!(!h.snapshot().syncing);
     assert_eq!(h.snapshot().groups[0].status, GroupStatus::Synced);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pass_names_its_groups_and_a_failure_has_its_own_time() {
+    let t = T::new().await;
+    let h = t
+        .group_with("h1", &[("skills/demo/SKILL.md", "---\nname: demo\n---\n")])
+        .await;
+    for _ in 0..40 {
+        if t.file("skills/demo/SKILL.md").exists() {
+            break; // the first pass (the loop's own) delivered it
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    t.serve(
+        "h2",
+        &[("skills/demo/SKILL.md", "---\nname: demo\n---\nv2\n")],
+    )
+    .await;
+    let mut rx = h.watch();
+    let seen = Arc::new(AtomicBool::new(false));
+    let flag = seen.clone();
+    tokio::spawn(async move {
+        while rx.changed().await.is_ok() {
+            if rx.borrow().groups.iter().any(|g| g.syncing) {
+                flag.store(true, Ordering::SeqCst);
+            }
+        }
+    });
+    let e = h.send(Command::SyncNow).await.unwrap();
+    assert_eq!(
+        e,
+        Event::Synced {
+            files: 1,
+            failed: 0,
+            repos: vec!["zed/team".into()]
+        }
+    );
+    assert!(seen.load(Ordering::SeqCst), "the group showed as syncing");
+    let g = h.snapshot().groups.remove(0);
+    assert!(!g.syncing && g.failed_at.is_none());
+    // the next pass fails: the failure time is set, the last good sync stays
+    t.server.reset().await;
+    t.clock.fetch_add(100, Ordering::SeqCst);
+    let e = h.send(Command::SyncNow).await.unwrap();
+    assert!(matches!(e, Event::Synced { failed: 1, .. }), "{e:?}");
+    let f = h.snapshot().groups.remove(0);
+    assert_eq!(f.last_sync, g.last_sync);
+    assert!(f.failed_at.is_some_and(|x| x > g.last_sync.unwrap_or(0)));
 }
 
 #[tokio::test(flavor = "multi_thread")]

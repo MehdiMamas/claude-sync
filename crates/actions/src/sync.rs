@@ -5,6 +5,7 @@ use crate::core::Core;
 use crate::error::{Error, Result};
 use crate::model::Event;
 use crate::msg;
+use claude_sync_engine::traits::Store;
 use claude_sync_fs::pass::{CommitDate, GroupIn, Pass};
 use claude_sync_store::RequestRow;
 use std::collections::BTreeSet;
@@ -89,6 +90,12 @@ impl Core {
             })
             .collect();
         let personal = self.personal_before();
+        let on_group = |repo: &str| {
+            if let Ok(mut c) = self.current.lock() {
+                *c = Some(repo.to_string());
+            }
+            self.show();
+        };
         let pass = Pass {
             home: &self.home,
             db: &self.db,
@@ -96,6 +103,7 @@ impl Core {
             pinned: BTreeSet::new(),
             crash_at: None,
             skip_kinds: self.pchoice().kinds_off,
+            on_group: Some(&on_group),
         };
         let counts = || {
             self.client
@@ -124,19 +132,36 @@ impl Core {
                 "Another sync is running; try again in a moment.",
             ));
         }
-        let (mut files, mut failed) = (0, 0);
+        if let Ok(mut c) = self.current.lock() {
+            *c = None;
+        }
+        let (mut files, mut failed, mut repos) = (0, 0, vec![]);
         for (repo, r) in rep.groups {
             match r {
                 Ok(a) => {
-                    files += a.written.len() + a.removed.len();
+                    let n = a.written.len() + a.removed.len();
+                    files += n;
+                    if n > 0 {
+                        repos.push(repo.clone());
+                    }
                     self.db.set_group_state(&repo, "ok")?;
+                    let _ = Store::write(&self.db, &format!("failed-at/{repo}"), b"");
                 }
                 Err(e) => {
                     failed += 1;
                     self.db.set_group_state(&repo, &e)?;
+                    let _ = Store::write(
+                        &self.db,
+                        &format!("failed-at/{repo}"),
+                        self.now().to_string().as_bytes(),
+                    );
                 }
             }
         }
-        Ok(Event::Synced { files, failed })
+        Ok(Event::Synced {
+            files,
+            failed,
+            repos,
+        })
     }
 }

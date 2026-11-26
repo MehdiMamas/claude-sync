@@ -90,6 +90,8 @@ pub struct Pass<'a> {
     /// Personal kinds this person switched off (`claudeMd`, `memory`, `state`, `settings`):
     /// their files leave the base and are neither pulled nor pushed until switched back on.
     pub skip_kinds: BTreeSet<String>,
+    /// Called with the repo before each group is synced.
+    pub on_group: Option<&'a dyn Fn(&str)>,
 }
 
 /// The personal kind a repo path belongs to; the marker, devices and machines files have none.
@@ -381,6 +383,9 @@ impl Pass<'_> {
             return rep;
         };
         for g in groups.iter().filter(|g| !g.off) {
+            if let Some(f) = self.on_group {
+                f(g.repo);
+            }
             let r = self.group(g, &mut rep);
             rep.groups.push((g.repo.to_string(), r));
         }

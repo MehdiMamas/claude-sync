@@ -72,15 +72,11 @@ export function App() {
 
   const act = {
     syncNow: async () => {
-      const before = new Map(snap.groups.map((g) => [g.repo, g.lastSync]));
       const r = await call({ kind: "syncNow" });
       if ("err" in r) return patch({ toast: r.err });
       if (r.ev.kind !== "synced") return;
       const files = r.ev.data.files;
-      const after = await b.snapshot();
-      const repos = after.groups
-        .filter((g) => g.lastSync !== before.get(g.repo))
-        .map((g) => g.repo);
+      const repos = r.ev.data.repos;
       patch({
         fresh: files ? { repos, files } : null,
         toast: files

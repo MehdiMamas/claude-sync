@@ -10,4 +10,12 @@ hostLock: string | null, reviewChoice: ReviewChoice, pendingReview: number,
 /**
  * Plugins that could not install and files the size cap kept out (Parity 26-28).
  */
-pluginProblems: Array<string>, off: boolean, };
+pluginProblems: Array<string>, 
+/**
+ * This group is being synced right now.
+ */
+syncing: boolean, 
+/**
+ * When the last pass failed for this group; `last_sync` is untouched.
+ */
+failedAt: number | null, off: boolean, };

@@ -55,6 +55,10 @@ ts! {
         pub pending_review: u32,
         /// Plugins that could not install and files the size cap kept out (Parity 26-28).
         pub plugin_problems: Vec<String>,
+        /// This group is being synced right now.
+        pub syncing: bool,
+        /// When the last pass failed for this group; `last_sync` is untouched.
+        pub failed_at: Option<i64>,
         pub off: bool,
     }
 
@@ -64,6 +68,16 @@ ts! {
         pub id: u64,
         pub repo: String,
         pub inviter: String,
+        /// Unix seconds.
+        pub created_at: Option<i64>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct DiscoverView {
+        pub repo: String,
+        /// Read from the group file; `None` when it could not be read.
+        pub members: Option<u32>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,7 +145,7 @@ ts! {
         pub groups: Vec<GroupView>,
         pub invitations: Vec<InvitationView>,
         /// Groups on GitHub the person can read but has not joined.
-        pub discoverable: Vec<String>,
+        pub discoverable: Vec<DiscoverView>,
         pub personal_on: bool,
         pub personal: PersonalView,
         pub unread: u32,
@@ -621,7 +635,7 @@ pub enum Event {
         repo: String,
         warning: String,
     },
-    Discovered(Vec<String>),
+    Discovered(Vec<DiscoverView>),
     /// A pass ran: files written or removed, groups that failed.
     Review(Vec<ReviewLine>),
     Edits(Vec<EditView>),
@@ -634,5 +648,7 @@ pub enum Event {
     Synced {
         files: usize,
         failed: usize,
+        /// Groups whose files changed.
+        repos: Vec<String>,
     },
 }

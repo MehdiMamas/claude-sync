@@ -5,6 +5,7 @@ use crate::error::{Error, Result};
 use crate::model::*;
 use crate::msg;
 use crate::schedule::{Facts, Schedule};
+use claude_sync_engine::traits::Store;
 use claude_sync_fs::Home;
 use claude_sync_github::{secrets::SecretStore, Client, Config};
 use claude_sync_store::Db;
@@ -57,7 +58,9 @@ pub struct Core {
     pub(crate) expired: Option<String>,
     pub(crate) schedule: Schedule,
     pub(crate) invitations: Vec<InvitationView>,
-    pub(crate) discoverable: Vec<String>,
+    pub(crate) discoverable: Vec<crate::model::DiscoverView>,
+    /// The group the pass is syncing now.
+    pub(crate) current: std::sync::Mutex<Option<String>>,
     pub(crate) syncing: bool,
     pub(crate) plugin_backoff: std::collections::HashMap<String, crate::plugins::Backoff>,
     pub(crate) jobs_env: crate::jobs::JobsEnv,
@@ -99,6 +102,7 @@ impl Core {
             schedule: Schedule::default(),
             invitations: vec![],
             discoverable: vec![],
+            current: Default::default(),
             syncing: false,
             plugin_backoff: Default::default(),
             jobs_env: crate::jobs::JobsEnv::system(&home_path),
@@ -288,6 +292,10 @@ impl Core {
                         id: i.id,
                         repo: i.repository?.full_name,
                         inviter: i.inviter.map(|o| o.login).unwrap_or_default(),
+                        created_at: i
+                            .created_at
+                            .and_then(|t| chrono::DateTime::parse_from_rfc3339(&t).ok())
+                            .map(|t| t.timestamp()),
                     })
                 })
                 .collect();
@@ -342,6 +350,11 @@ impl Core {
             .map(|g| {
                 let gf = crate::groups::cached(&self.db, &g.repo);
                 let host = self.login.clone().unwrap_or_default();
+                let syncing = self.syncing
+                    && self
+                        .current
+                        .lock()
+                        .is_ok_and(|c| c.as_deref() == Some(g.repo.as_str()));
                 GroupView {
                     name: gf
                         .as_ref()
@@ -352,7 +365,7 @@ impl Core {
                     is_host: g.host,
                     status: if g.off || c.groups.get(&g.repo).is_some_and(|x| x.off) {
                         GroupStatus::Off
-                    } else if self.syncing {
+                    } else if syncing {
                         GroupStatus::Syncing
                     } else if g.state.starts_with(msg::OFFLINE_PREFIX) {
                         GroupStatus::Offline
@@ -375,6 +388,11 @@ impl Core {
                     host_lock: self.host_lock(&g.repo, g.host),
                     review_choice: c.review_choice(&g.repo),
                     plugin_problems: self.plugin_problems(&g.repo),
+                    syncing,
+                    failed_at: Store::read(&self.db, &format!("failed-at/{}", g.repo))
+                        .ok()
+                        .flatten()
+                        .and_then(|b| String::from_utf8(b).ok()?.parse().ok()),
                     pending_review: crate::review::load(&self.db, &g.repo)
                         .map_or(0, |r| r.pending.len() as u32),
                     off: g.off,

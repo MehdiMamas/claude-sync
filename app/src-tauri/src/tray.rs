@@ -284,6 +284,8 @@ mod tests {
             review_choice: Default::default(),
             pending_review: 0,
             plugin_problems: vec![],
+            syncing: false,
+            failed_at: None,
             off,
         }
     }

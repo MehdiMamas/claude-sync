@@ -72,6 +72,8 @@ pub struct Invitation {
     pub repository: Option<Repo>,
     pub inviter: Option<Owner>,
     pub invitee: Option<Owner>,
+    /// RFC 3339.
+    pub created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

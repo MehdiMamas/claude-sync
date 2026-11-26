@@ -24,6 +24,8 @@ const group = (repo: string, over: Partial<GroupView> = {}): GroupView => ({
   reviewChoice: "followGroup",
   pendingReview: 0,
   pluginProblems: [],
+  syncing: false,
+  failedAt: null,
   off: false,
   ...over,
 });
@@ -50,8 +52,13 @@ const base = (): Snapshot => ({
   syncing: false,
   rateLimitedUntil: null,
   groups: baseGroups(),
-  invitations: [{ id: 7, repo: "sample-org/dev-rules-2", inviter: "sam-member" }],
-  discoverable: ["sample-org/dev-rules", "sample-org/ml-team"],
+  invitations: [
+    { id: 7, repo: "sample-org/dev-rules-2", inviter: "sam-member", createdAt: sec() - 86400 },
+  ],
+  discoverable: [
+    { repo: "sample-org/dev-rules", members: 9 },
+    { repo: "sample-org/ml-team", members: 3 },
+  ],
   personalOn: false,
   personal: {
     on: false,
@@ -230,7 +237,10 @@ export function fakeBackend(search: string): Backend {
                 },
           ),
         });
-        return { kind: "synced", data: { files: 2, failed: 0 } };
+        return {
+          kind: "synced",
+          data: { files: 2, failed: 0, repos: [snap.groups[0]?.repo ?? ""] },
+        };
       }
       case "pluginsRetry":
         set({
@@ -270,7 +280,7 @@ export function fakeBackend(search: string): Backend {
       case "join":
         await gate();
         if (cmd.data.repo.endsWith("/ml-team")) throw "GitHub says you have no access (404).";
-        set({ discoverable: snap.discoverable.filter((r) => r !== cmd.data.repo) });
+        set({ discoverable: snap.discoverable.filter((d) => d.repo !== cmd.data.repo) });
         addGroup(cmd.data.repo);
         return { kind: "joined", data: { repo: cmd.data.repo, warning: "" } };
       case "acceptInvitation": {

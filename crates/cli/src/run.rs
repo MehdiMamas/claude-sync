@@ -343,7 +343,7 @@ fn join(ctx: &Ctx, repo: &str) -> Res {
 fn sync(ctx: &Ctx) -> Res {
     let mut core = open(ctx)?;
     need_sign_in(&core)?;
-    let Event::Synced { files, failed } = core.handle(Command::SyncNow)? else {
+    let Event::Synced { files, failed, .. } = core.handle(Command::SyncNow)? else {
         return Err("the sync produced no report".into());
     };
     let s = core.snapshot();

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Snapshot } from "../generated/Snapshot";
+import { ago } from "../time";
 import { Banner } from "../ui";
 
 /** GitHub repo name rules, checked before any call (ScenarioGroupHappy step 1). */
@@ -88,7 +89,12 @@ export function Join(p: {
             <div className="row" key={v.id}>
               <div>
                 <b>{v.repo}</b>
-                <div className="sm muted">from {v.inviter}</div>
+                <div className="sm muted">
+                  from {v.inviter}
+                  {v.createdAt === null
+                    ? ""
+                    : ` · ${ago(v.createdAt, Math.floor(Date.now() / 1000))}`}
+                </div>
               </div>
               <div className="acts">
                 <button type="button" className="b p" onClick={() => p.accept(v.id, v.repo)}>
@@ -105,14 +111,20 @@ export function Join(p: {
       <div className="card">
         <h2>You can join</h2>
         {discoverable.length === 0 && <p className="sm muted">No other groups found.</p>}
-        {discoverable.map((r, i) => (
-          <div className="row" key={r}>
+        {discoverable.map((d, i) => (
+          <div className="row" key={d.repo}>
             <div>
-              <b>{r}</b>
-              <div className="sm muted">you have read access</div>
+              <b>{d.repo}</b>
+              <div className="sm muted">
+                {d.members === null ? "" : `${d.members} members · `}you have read access
+              </div>
             </div>
             <div className="acts">
-              <button type="button" className={i === 0 ? "b p" : "b"} onClick={() => p.join(r)}>
+              <button
+                type="button"
+                className={i === 0 ? "b p" : "b"}
+                onClick={() => p.join(d.repo)}
+              >
                 Join
               </button>
             </div>

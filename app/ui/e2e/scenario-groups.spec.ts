@@ -77,7 +77,7 @@ test("join: no access writes nothing", async ({ page }) => {
       "Plugins in this group run code on every member's machine; only join groups whose members you trust.",
     ),
   ).toBeVisible();
-  await expect(page.getByText("9 members")).toHaveCount(0);
+  await expect(page.getByText("9 members")).toBeVisible();
   await page.getByRole("button", { name: "Join" }).nth(1).click();
   await expect(
     page.getByText("Could not join sample-org/ml-team: GitHub says you have no access (404)."),
