@@ -1,0 +1,79 @@
+@startuml
+skinparam shadowing false
+skinparam backgroundColor #ffffff
+skinparam defaultFontName sans-serif
+skinparam defaultFontSize 13
+skinparam defaultFontColor #1c1f24
+skinparam ArrowColor #5f6672
+skinparam ArrowFontColor #1c1f24
+skinparam roundCorner 8
+skinparam RectangleBackgroundColor #ffffff
+skinparam RectangleBorderColor #5f6672
+skinparam RectangleFontColor #1c1f24
+skinparam NodeBackgroundColor #ffffff
+skinparam NodeBorderColor #5f6672
+skinparam ComponentBackgroundColor #ffffff
+skinparam ComponentBorderColor #5f6672
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassBorderColor #5f6672
+skinparam ClassAttributeFontColor #1c1f24
+skinparam ActorBackgroundColor #ffffff
+skinparam ActorBorderColor #5f6672
+skinparam UsecaseBackgroundColor #e6eefc
+skinparam UsecaseBorderColor #2f6fde
+skinparam DatabaseBackgroundColor #ffffff
+skinparam DatabaseBorderColor #5f6672
+skinparam CloudBackgroundColor #ffffff
+skinparam CloudBorderColor #5f6672
+skinparam PackageBackgroundColor #f6f7f9
+skinparam PackageBorderColor #5f6672
+skinparam PackageFontColor #1c1f24
+skinparam NoteBackgroundColor #fff4dc
+skinparam NoteBorderColor #9a5b00
+skinparam NoteFontColor #1c1f24
+class Engine {
+ +handle(Command): Result<Event>
+ -store: Store
+ -gh: GitHub
+}
+class Plan {
+ +writes: Vec<Write>
+ +deletes: Vec<PathBuf>
+ +conflicts: Vec<Conflict>
+ +new_base: Base
+}
+class Group {
+ +repo: RepoId
+ +role: Host|Member
+ +state: GroupState
+ +order: u32
+}
+class Base {
+ +head_sha: String
+ +etag: String
+ +files: Map<Path, BlobSha>
+}
+class ReviewItem {
+ +line: String
+ +author: String
+ +status: Pending|Accepted|Declined
+}
+class Job {
+ +id: JobId
+ +schedule: Cron
+ +timeout_min: u16
+ +accepted_hash: Option<Sha>
+}
+class Choices {
+ +groups_off: Set<RepoId>
+ +order: Vec<RepoId>
+ +interval_min: u16
+ +paused: bool
+}
+Engine "1" --> "0..*" Group
+Group "1" --> "1" Base
+Group "1" --> "0..*" ReviewItem
+Group "1" --> "0..*" Job
+Engine "1" --> "1" Choices
+Engine ..> Plan : plan(remote, base, local)
+@enduml

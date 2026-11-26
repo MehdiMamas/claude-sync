@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Engineering rules</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#f6f7f9;--surface:#ffffff;--ink:#1c1f24;--muted:#5f6672;--accent:#2862c4;--on-accent:#ffffff;--error:#c4312b;--error-bg:#fdecea;--accent-bg:#e6eefc;--warn-bg:#fff4dc;--ok:#197a42;--ok-bg:#e3f4ea;--warn:#9a5b00;--dg-bg:#17191d;--dg-lane:#212429;--dg-node:#353a42;--dg-line:#9aa1ad;--dg-ink:#e7e9ec;--dg-muted:#a3a9b4;--rule:color-mix(in srgb,var(--muted) 35%,transparent);--font-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent)}
+
+</style>
+</helmet>
+<div data-page="v2" data-section="plan" data-created="2026-11-26" data-updated="2026-11-26" data-status="current" style="min-height:1100px;box-sizing:border-box;padding:48px 32px;background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:16px;line-height:1.55"><div style="max-width:960px;margin:0 auto"><h1 style="margin:0 0 8px;font:600 36px/1.2 var(--font-display)">Engineering rules</h1><p style="margin:0 0 32px;color:var(--muted);font-size:14px">Created 2026-11-26. Updated 2026-11-26.</p><svg role="img" aria-label="Rules" width="420" height="72" viewBox="0 0 420 72" style="display:block;margin:0 0 20px"><rect x="0" y="16" width="124" height="40" rx="6" fill="var(--surface)" stroke="var(--rule)" stroke-width="2"/><text x="62" y="41" text-anchor="middle" font-size="14" fill="var(--ink)">Lint</text><path d="M128 36 H144" stroke="var(--muted)" stroke-width="2"/><rect x="148" y="16" width="124" height="40" rx="6" fill="var(--surface)" stroke="var(--rule)" stroke-width="2"/><text x="210" y="41" text-anchor="middle" font-size="14" fill="var(--ink)">Test</text><path d="M276 36 H292" stroke="var(--muted)" stroke-width="2"/><rect x="296" y="16" width="124" height="40" rx="6" fill="var(--surface)" stroke="var(--rule)" stroke-width="2"/><text x="358" y="41" text-anchor="middle" font-size="14" fill="var(--ink)">Bench</text></svg><h2 style="margin:32px 0 8px;font:600 22px/1.3 var(--font-display)">Lint (fails CI)</h2><ul style="margin:0 0 12px;padding-left:24px"><li>Rust: cargo fmt; clippy -D warnings with unwrap_used, expect_used, panic and todo denied outside tests; cargo-deny for licences and advisories.</li><li>TypeScript: strict mode, Biome lint and format; no any; the command client is generated from the Rust types (ts-rs) so the two never drift.</li><li>A mistake made twice becomes a lint rule whose message says how to fix it.</li></ul><h2 style="margin:32px 0 8px;font:600 22px/1.3 var(--font-display)">Property tests (proptest)</h2><ul style="margin:0 0 12px;padding-left:24px"><li>Planner: plan(remote, base, local) applied twice equals once (idempotent); never deletes a file the user changed.</li><li>MEMORY.md merge: keeps every line either side added; CRLF vs LF alone gives no push.</li><li>Secret scanner: every pattern in the list is found inside random text; the allow marker passes.</li><li>Schedule validation: limits of row 73 hold for random input.</li><li>Path safety: no planned write leaves the managed folders (no .., no absolute, no symlink escape).</li></ul><h2 style="margin:32px 0 8px;font:600 22px/1.3 var(--font-display)">Other tests</h2><ul style="margin:0 0 12px;padding-left:24px"><li>wiremock plays GitHub for every endpoint on the Endpoints frame, including 304, 401, 403 rate limit, 422 and 5xx.</li><li>Crash test: kill the executor between renames and the base commit; the next tick converges.</li><li>Playwright plays every scenario on this page against the fake backend, one run per OS webview.</li></ul><h2 style="margin:32px 0 8px;font:600 22px/1.3 var(--font-display)">Architecture rules</h2><ul style="margin:0 0 12px;padding-left:24px"><li>engine has no I/O: it gets traits Remote, Store, Disk and a clock.</li><li>Only the actor mutates state; the window and tray read snapshots.</li><li>Every GitHub call goes through one client with the ETag cache and a caller name for the request counts.</li></ul></div></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1100}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

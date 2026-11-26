@@ -1,0 +1,50 @@
+@startuml
+skinparam shadowing false
+skinparam backgroundColor #ffffff
+skinparam defaultFontName sans-serif
+skinparam defaultFontSize 13
+skinparam defaultFontColor #1c1f24
+skinparam ArrowColor #5f6672
+skinparam ArrowFontColor #1c1f24
+skinparam roundCorner 8
+skinparam RectangleBackgroundColor #ffffff
+skinparam RectangleBorderColor #5f6672
+skinparam RectangleFontColor #1c1f24
+skinparam NodeBackgroundColor #ffffff
+skinparam NodeBorderColor #5f6672
+skinparam ComponentBackgroundColor #ffffff
+skinparam ComponentBorderColor #5f6672
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassBorderColor #5f6672
+skinparam ClassAttributeFontColor #1c1f24
+skinparam ActorBackgroundColor #ffffff
+skinparam ActorBorderColor #5f6672
+skinparam UsecaseBackgroundColor #e6eefc
+skinparam UsecaseBorderColor #2f6fde
+skinparam DatabaseBackgroundColor #ffffff
+skinparam DatabaseBorderColor #5f6672
+skinparam CloudBackgroundColor #ffffff
+skinparam CloudBorderColor #5f6672
+skinparam PackageBackgroundColor #f6f7f9
+skinparam PackageBorderColor #5f6672
+skinparam PackageFontColor #1c1f24
+skinparam NoteBackgroundColor #fff4dc
+skinparam NoteBorderColor #9a5b00
+skinparam NoteFontColor #1c1f24
+left to right direction
+actor "Member" as M
+actor "Host" as H
+actor "Maintainer" as X
+rectangle "claude-sync v2 (desktop app + headless CLI)" as APP
+rectangle "Claude Code files (~/.claude)" as CC
+cloud "GitHub (repos, pulls, invitations, Releases)" as GH
+rectangle "Relay (one Vercel function: feedback)" as RL
+M --> APP : review, propose, sync
+H --> APP : create, invite, approve
+APP --> CC : writes managed files
+APP --> GH : REST with ETags, device flow
+APP --> RL : feedback with user token
+RL --> GH : issue as the user, private attachments
+X --> GH : publishes signed releases
+APP --> GH : reads latest.json from Releases
+@enduml

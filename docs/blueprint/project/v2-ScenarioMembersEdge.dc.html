@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Members: invite, remove, transfer, leave, discover: edge cases</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#f6f7f9;--surface:#ffffff;--ink:#1c1f24;--muted:#5f6672;--accent:#2862c4;--on-accent:#ffffff;--error:#c4312b;--error-bg:#fdecea;--accent-bg:#e6eefc;--warn-bg:#fff4dc;--ok:#197a42;--ok-bg:#e3f4ea;--warn:#9a5b00;--dg-bg:#17191d;--dg-lane:#212429;--dg-node:#353a42;--dg-line:#9aa1ad;--dg-ink:#e7e9ec;--dg-muted:#a3a9b4;--rule:color-mix(in srgb,var(--muted) 35%,transparent);--font-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent)}
+
+</style>
+</helmet>
+<div data-page="v2" data-section="play" data-created="2026-11-26" data-updated="2026-11-26" data-status="current" data-scenario="MembersEdge" data-kind="edge" data-story="As a host, I want to see what happens when it goes wrong while I manage who is in my group, so that only the people I trust get my setup even then." style="position:relative;width:960px;height:650px;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--font-body)"><h1 style="position:absolute;left:40px;top:28px;margin:0;font:600 28px/1.2 var(--font-display);color:var(--ink)">Members: invite, remove, transfer, leave, discover: edge cases</h1><p style="position:absolute;left:40px;top:72px;margin:0;font-size:14px;color:var(--muted)">Created 2026-11-26. Updated 2026-11-26.</p><p style="position:absolute;left:40px;top:100px;width:880px;margin:0;font-size:15px;color:var(--ink)">As a host, I want to see what happens when it goes wrong while I manage who is in my group, so that only the people I trust get my setup even then. Click a step to open its screen. <a href="v2-FlowMembers.dc.html">The flow behind it</a>.</p><div style="position:absolute;left:40px;top:150px;width:880px;font-size:14px"><b>Acceptance criteria:</b> The user sees what went wrong in words, and what to do next. Nothing is lost or half-written.</div><ol style="position:absolute;left:40px;top:214px;width:880px;margin:0;padding-left:24px;font-size:15px;line-height:1.4"><li style="margin:0 0 10px"><a href="v2-ScreenGroupTransferPending.dc.html" data-flow="v2-FlowMembers:moved" data-endpoint="POST /repos/{owner}/{repo}/transfer">Transfer requested</a><br><span style="color:var(--muted);font-size:14px">System: GitHub emails the new owner; nothing moves until they accept. Calls <strong>POST /repos/{owner}/{repo}/transfer</strong>.</span></li><li style="margin:0 0 10px"><a href="v2-ScreenGroupTransferExpired.dc.html" data-flow="v2-FlowMembers:expired">Not accepted in time, or declined</a><br><span style="color:var(--muted);font-size:14px">System: The old host stays host and can ask again.</span></li><li style="margin:0 0 10px"><a href="v2-ScreenGroupInvited.dc.html" data-flow="v2-FlowMembers:invite" data-endpoint="PUT /repos/{owner}/{repo}/collaborators/{login}">Invite by GitHub name</a><br><span style="color:var(--muted);font-size:14px">System: A collaborator invitation with push rights. Calls <strong>PUT /repos/{owner}/{repo}/collaborators/{login}</strong>.</span></li><li style="margin:0 0 10px"><a href="v2-ScreenGroupInviteError.dc.html" data-flow="v2-FlowMembers:unknown">Unknown name: nothing sent</a><br><span style="color:var(--muted);font-size:14px">System: GitHub answers 404 for the login.</span></li><li style="margin:0 0 10px"><a href="v2-ScreenGroupMembers.dc.html" data-flow="v2-FlowMembers:list" data-endpoint="GET /repos/{owner}/{repo}/collaborators">List collaborators</a><br><span style="color:var(--muted);font-size:14px">System: Permissions decide who is host (admin). Calls <strong>GET /repos/{owner}/{repo}/collaborators</strong>.</span></li><li style="margin:0 0 10px"><a href="v2-ScreenGroupMembersGuest.dc.html" data-flow="v2-FlowMembers:hostonly">Member: host-only actions hidden</a><br><span style="color:var(--muted);font-size:14px">System: The buttons are not shown; a 403 from GitHub would say only the host can do that.</span></li></ol></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":650}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
