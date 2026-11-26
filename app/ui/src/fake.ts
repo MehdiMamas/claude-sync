@@ -20,6 +20,7 @@ const group = (repo: string, over: Partial<GroupView> = {}): GroupView => ({
   members: [],
   proposalMode: false,
   autoAcceptClaudeMd: true,
+  jobsAutoAccept: false,
   hostLock: null,
   reviewChoice: "followGroup",
   pendingReview: 0,
