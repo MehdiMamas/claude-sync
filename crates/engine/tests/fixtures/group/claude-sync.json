@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "name": "Sample Team",
+  "members": [
+    "alice",
+    "bob-b"
+  ],
+  "sync": {
+    "settings": true,
+    "claudeMd": true,
+    "skills": true,
+    "agents": true,
+    "commands": true,
+    "outputStyles": true,
+    "plugins": true
+  },
+  "autoAcceptClaudeMd": true,
+  "proposalMode": true
+}

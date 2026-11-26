@@ -1,0 +1,2 @@
+- [Style](style.md): short replies
+- [Tools](tools.md): use pnpm

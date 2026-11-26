@@ -1,0 +1,16 @@
+{
+  "devices": [
+    {
+      "id": "d1a2b3",
+      "name": "Laptop",
+      "os": "macos",
+      "lastSeenUnix": 1760000000
+    },
+    {
+      "id": "e4f5a6",
+      "name": "Desktop",
+      "os": "windows",
+      "lastSeenUnix": 1760003600
+    }
+  ]
+}

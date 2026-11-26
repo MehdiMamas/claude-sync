@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "name": "Sample Team",
+  "members": [
+    "alice",
+    "bob-b"
+  ],
+  "sync": {
+    "settings": true,
+    "claudeMd": true,
+    "skills": true,
+    "agents": true,
+    "commands": true,
+    "outputStyles": true,
+    "plugins": true,
+    "experimentalFlag": true
+  },
+  "autoAcceptClaudeMd": true,
+  "proposalMode": true,
+  "host": "alice",
+  "topics": [
+    "claude-sync-group"
+  ],
+  "futureKey": {
+    "a": [
+      1,
+      2,
+      {
+        "b": null
+      }
+    ]
+  }
+}

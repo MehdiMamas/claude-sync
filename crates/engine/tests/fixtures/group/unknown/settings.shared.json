@@ -1,0 +1,23 @@
+{
+  "model": "sonnet",
+  "permissions": {
+    "allow": [
+      "Bash(git status)",
+      "Read(*)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)"
+    ]
+  },
+  "env": {
+    "EDITOR": "vim"
+  },
+  "enabledPlugins": {
+    "helper@demo-market": true,
+    "extras@demo-market": false
+  },
+  "somethingNew": {
+    "z": 1,
+    "a": 2
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "groups": {
+    "sample/team-data": {
+      "off": false,
+      "reviewClaudeMd": true,
+      "autoRunJobs": false,
+      "acceptedJobs": {
+        "morning-digest": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+      },
+      "offJobs": [
+        "weekly-clean"
+      ],
+      "droppedLines": [
+        "- A line I do not want"
+      ],
+      "member": true,
+      "ts": 1760000000000
+    }
+  },
+  "personal": {
+    "off": false,
+    "ts": 1760000001000
+  },
+  "sshPeers": {
+    "on": true,
+    "ts": 1760000002000
+  },
+  "activity": {
+    "share": false,
+    "ts": 0
+  },
+  "order": {
+    "list": [
+      "sample/team-data"
+    ],
+    "ts": 1760000003000
+  },
+  "app": {
+    "paused": false,
+    "intervalSecs": 60,
+    "startAtLogin": true,
+    "ts": 1760000004000
+  }
+}
