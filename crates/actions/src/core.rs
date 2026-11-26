@@ -152,6 +152,14 @@ impl Core {
             ShareSkill { repo, name } => self.share_skill(&repo, &name),
             ShareClaudeMd { repo } => self.share_claude_md(&repo),
             Conflicts => self.conflicts(),
+            PersonalOn => self.personal_on(),
+            PersonalOff => self.personal_off(),
+            PersonalDismiss => self.personal_dismiss(),
+            PersonalKind { kind, on } => self.personal_kind(&kind, on),
+            DeviceRename { id, name } => {
+                self.device_edit(crate::personal::Pending::Rename { id, name })
+            }
+            DeviceRemove { id } => self.device_edit(crate::personal::Pending::Remove { id }),
             Pause => self.set_app(|a| a.paused = true),
             Resume => self.set_app(|a| a.paused = false),
             SetInterval { secs } => self.set_app(|a| a.interval_secs = Some(secs)),
@@ -298,6 +306,7 @@ impl Core {
                 }
             })
             .collect();
+        let personal = self.personal_view();
         Snapshot {
             login: self.login.clone(),
             sign_in: self.signin.clone(),
@@ -310,12 +319,8 @@ impl Core {
             groups,
             invitations: self.invitations.clone(),
             discoverable: self.discoverable.clone(),
-            personal_on: !c
-                .rest
-                .get("personal")
-                .and_then(|p| p.get("off"))
-                .and_then(|o| o.as_bool())
-                .unwrap_or(false),
+            personal_on: personal.on,
+            personal,
             unread: self.db.unread_notifications().unwrap_or(0),
             notifications: notes
                 .into_iter()

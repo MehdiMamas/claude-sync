@@ -69,8 +69,7 @@ impl JobsEnv {
 
 fn os_kind(home: &Path) -> Kind {
     let out = |p: &str, a: &[&str]| {
-        Command::new(p)
-            .args(a)
+        claude_sync_fs::quiet(Command::new(p).args(a))
             .output()
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -124,13 +123,13 @@ fn login_shell_path() -> Option<OsString> {
         return None;
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let mut child = Command::new(shell)
-        .args(["-ilc", "printf %s \"$PATH\""])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+    let mut child =
+        claude_sync_fs::quiet(Command::new(shell).args(["-ilc", "printf %s \"$PATH\""]))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
     let deadline = Instant::now() + Duration::from_secs(10);
     while child.try_wait().ok()?.is_none() {
         if Instant::now() > deadline {

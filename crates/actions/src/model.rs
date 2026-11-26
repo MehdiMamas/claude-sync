@@ -85,6 +85,33 @@ ts! {
         pub last_result: String,
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct DeviceView {
+        pub id: String,
+        pub name: String,
+        pub os: String,
+        pub last_seen: i64,
+        pub this: bool,
+    }
+
+    /// Settings, Personal memory (Parity 43, 44, 45, 46, 54, 87).
+    #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct PersonalView {
+        pub on: bool,
+        /// The other devices share personal memory and this one was not asked yet.
+        pub offer: bool,
+        pub repo: String,
+        /// `claudeMd`, `memory`, `state`, `settings` switched off.
+        pub kinds_off: Vec<String>,
+        pub devices: Vec<DeviceView>,
+        /// Files that stay on this device, with the reason.
+        pub stays: Vec<String>,
+        pub error: Option<String>,
+        pub last_sync: Option<i64>,
+    }
+
     /// Everything the window and the tray read; they never touch state themselves.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -104,6 +131,7 @@ ts! {
         /// Groups on GitHub the person can read but has not joined.
         pub discoverable: Vec<String>,
         pub personal_on: bool,
+        pub personal: PersonalView,
         pub unread: u32,
         pub notifications: Vec<NotificationView>,
         pub jobs: Vec<JobView>,
@@ -252,6 +280,23 @@ pub enum Command {
         repo: String,
         id: String,
         report: bool,
+    },
+    // personal memory (Parity 43, 44, 45, 46)
+    PersonalOn,
+    PersonalOff,
+    /// "Not now" on the offer: the check stays quiet.
+    PersonalDismiss,
+    PersonalKind {
+        kind: String,
+        on: bool,
+    },
+    /// Pushed on the next pass.
+    DeviceRename {
+        id: String,
+        name: String,
+    },
+    DeviceRemove {
+        id: String,
     },
     // sync loop switches
     Pause,

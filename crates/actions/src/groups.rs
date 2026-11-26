@@ -257,6 +257,7 @@ impl Core {
             now,
             pinned: Default::default(),
             crash_at: None,
+            skip_kinds: Default::default(),
         };
         // delivered files go; a file the person changed stays (as a local file)
         pass.leave(repo).map_err(Error::new)?;

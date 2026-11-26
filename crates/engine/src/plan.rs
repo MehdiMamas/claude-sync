@@ -10,7 +10,7 @@
 //! v2-Parity rows covered: 24, 25, 29, 31, 39, 43, 46.
 use crate::formats::group::{SyncFlags, CHANGE_NOTES_PATH, SHARED_SETTINGS};
 use crate::formats::personal::{MAX_FILE, MAX_TOTAL};
-use crate::merge::{merge_json_bytes, merge_lines};
+use crate::merge::{merge_choices_bytes, merge_json_bytes, merge_lines};
 use crate::paths::{allowed_by, is_memory_index, is_personal_path, is_planned_path, under_link};
 use crate::secrets::{scan, Hit};
 use std::collections::{BTreeMap, BTreeSet};
@@ -196,12 +196,23 @@ type Triple<'a> = (
 
 /// Both sides changed `p` since the base.
 fn both_changed(out: &mut Plan, o: &Opts, p: &str, (b, l, r): Triple, total: &mut usize) {
+    let personal = matches!(o.scope, Scope::Personal);
     if let (Some(l), Some(r)) = (l, r) {
         if o.push && p == SHARED_SETTINGS {
             if let Some(m) = merge_json_bytes(b.map(Vec::as_slice), l, r) {
                 out.writes.insert(p.to_string(), m.clone());
                 out.new_base.insert(p.to_string(), m.clone());
                 if &m != r {
+                    out.pushes.insert(p.to_string(), Some(m));
+                }
+                return;
+            }
+        }
+        if personal && p == crate::formats::personal::CHOICES_PATH {
+            if let Some(m) = merge_choices_bytes(l, r) {
+                out.writes.insert(p.to_string(), m.clone());
+                out.new_base.insert(p.to_string(), m.clone());
+                if &m != r && o.push {
                     out.pushes.insert(p.to_string(), Some(m));
                 }
                 return;

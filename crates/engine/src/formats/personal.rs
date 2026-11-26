@@ -106,6 +106,13 @@ pub struct AppChoice {
 pub struct PersonalChoice {
     pub off: bool,
     pub ts: u64,
+    /// Kinds this person does not sync (`claudeMd`, `memory`, `state`, `settings`).
+    #[serde(
+        rename = "kindsOff",
+        default,
+        skip_serializing_if = "BTreeSet::is_empty"
+    )]
+    pub kinds_off: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

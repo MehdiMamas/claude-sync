@@ -23,6 +23,7 @@ impl Core {
         if self.expired.is_some() {
             return Err(Error::new(msg::SESSION_EXPIRED));
         }
+        self.personal_discover();
         self.syncing = true;
         self.show();
         let r = self.run_pass();
@@ -80,12 +81,14 @@ impl Core {
                 commit_date: Some(&**date),
             })
             .collect();
+        let personal = self.personal_before();
         let pass = Pass {
             home: &self.home,
             db: &self.db,
             now: self.now(),
             pinned: BTreeSet::new(),
             crash_at: None,
+            skip_kinds: self.pchoice().kinds_off,
         };
         let counts = || {
             self.client
@@ -99,7 +102,16 @@ impl Core {
                 })
                 .collect()
         };
-        let rep = pass.run(&groups, None, None, Some(&counts), Duration::from_secs(10));
+        let rep = pass.run(
+            &groups,
+            personal
+                .as_ref()
+                .map(|r| r as &dyn claude_sync_engine::traits::Remote),
+            None,
+            Some(&counts),
+            Duration::from_secs(10),
+        );
+        self.personal_after(&rep, personal.as_ref());
         if rep.busy {
             return Err(Error::new(
                 "Another sync is running; try again in a moment.",

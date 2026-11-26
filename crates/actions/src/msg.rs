@@ -95,3 +95,24 @@ pub fn no_text_to_share() -> &'static str {
 pub fn not_an_edit(path: &str) -> String {
     format!("{path} has no local edit")
 }
+
+pub const PERSONAL_JOINED: &str =
+    "Personal memory from your other devices is on. Turn off in Settings.";
+pub const PERSONAL_OFFER: &str =
+    "Your other devices share personal memory. Open claude-sync to turn it on here too.";
+pub const PERSONAL_OFF_ELSEWHERE: &str =
+    "Personal memory was turned off on another device, so it is off here too.";
+pub const CANT_REMOVE_SELF: &str =
+    "this device can't remove itself; turn personal memory off instead";
+pub fn cant_reach(repo: &str, e: &str) -> String {
+    format!("can't reach {repo}: {e}; turn personal memory off and on to start it again")
+}
+pub fn not_personal(repo: &str) -> String {
+    format!("{repo} exists but is not a claude-sync personal memory repo; rename or delete it on GitHub")
+}
+pub fn personal_mod(repo: &str) -> String {
+    format!("{repo} is used by the personal-rules mod, not by personal memory. Personal memory can't start until that mod moves to its own repo (an update is on the way).")
+}
+pub fn personal_foreign(repo: &str) -> String {
+    format!("{repo} already exists on GitHub and wasn't made by claude-sync, so personal memory won't use it. Rename or delete that repo on GitHub, then turn this on again.")
+}

@@ -742,6 +742,7 @@ dependencies = [
  "claude-sync-fs",
  "claude-sync-github",
  "claude-sync-store",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

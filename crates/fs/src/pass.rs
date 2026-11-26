@@ -87,6 +87,20 @@ pub struct Pass<'a> {
     pub pinned: BTreeSet<String>,
     /// Crash test: stop every executor before its n-th mutation.
     pub crash_at: Option<usize>,
+    /// Personal kinds this person switched off (`claudeMd`, `memory`, `state`, `settings`):
+    /// their files leave the base and are neither pulled nor pushed until switched back on.
+    pub skip_kinds: BTreeSet<String>,
+}
+
+/// The personal kind a repo path belongs to; the marker, devices and machines files have none.
+pub fn personal_kind(path: &str) -> Option<&'static str> {
+    match path.split('/').next()? {
+        "CLAUDE.md" => Some("claudeMd"),
+        "settings.json" => Some("settings"),
+        "memory" => Some("memory"),
+        "state" => Some("state"),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -122,7 +136,13 @@ impl Pass<'_> {
             .map_err(|e| s(&e))?;
         let etag = base.as_ref().and_then(|b| b.etag.clone());
         let head: Option<Head> = remote.head(etag.as_deref()).map_err(|e| s(&e))?;
-        let base_files = base.as_ref().map(|b| b.files.clone()).unwrap_or_default();
+        let base_files: FileSet = base
+            .as_ref()
+            .map(|b| b.files.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(p, _)| keep(p))
+            .collect();
         let remote_all = match &head {
             Some(h) => remote
                 .files(&h.sha, &blobs(&base_files))
@@ -139,7 +159,8 @@ impl Pass<'_> {
             .chain(remote_files.keys())
             .cloned()
             .collect();
-        let local = disk.scan(&known).map_err(|e| s(&e))?;
+        let mut local = disk.scan(&known).map_err(|e| s(&e))?;
+        local.retain(|p, _| keep(p));
         let links: BTreeSet<String> = disk.links().map_err(|e| s(&e))?.into_iter().collect();
         let p = plan(
             &remote_files,
@@ -286,11 +307,14 @@ impl Pass<'_> {
         Ok(gone)
     }
 
-    fn personal(&self, remote: &dyn Remote) -> Result<Applied, String> {
+    fn personal(&self, remote: &dyn Remote, rep: &mut Report) -> Result<Applied, String> {
         let disk = FsDisk::new(self.home, Scope::Personal);
-        let keep = |p: &str| disk.locate(p).is_some();
+        let keep = |p: &str| {
+            disk.locate(p).is_some()
+                && !personal_kind(p).is_some_and(|k| self.skip_kinds.contains(k))
+        };
         let mut raw = None;
-        let (a, _) = self.one(
+        let (a, p) = self.one(
             PERSONAL,
             &disk,
             remote,
@@ -299,6 +323,29 @@ impl Pass<'_> {
             true,
             &mut raw,
         )?;
+        // what stays on this device, as the window lists it (Parity 44)
+        let mut stays = p.notes.clone();
+        stays.extend(
+            p.secrets
+                .iter()
+                .map(|(f, _)| format!("{f}: not synced, it looks like a secret")),
+        );
+        let _ = Store::write(
+            self.db,
+            "personal/stays",
+            &serde_json::to_vec(&stays).unwrap_or_default(),
+        );
+        for c in &p.conflicts {
+            self.note(
+                rep,
+                None,
+                "conflict",
+                format!(
+                    "personal: your copy of {} was saved; the other device's version was applied",
+                    c.path
+                ),
+            );
+        }
         Ok(a)
     }
 
@@ -370,7 +417,8 @@ impl Pass<'_> {
             );
         }
         if let Some(r) = personal {
-            rep.personal = Some(self.personal(r));
+            let r = self.personal(r, &mut rep);
+            rep.personal = Some(r);
             if self.crash_at.is_some() && matches!(rep.personal, Some(Err(_))) {
                 return rep;
             }

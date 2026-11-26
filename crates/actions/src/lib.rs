@@ -26,6 +26,7 @@ mod groups;
 pub mod jobs;
 pub mod model;
 pub mod msg;
+mod personal;
 mod review;
 mod schedule;
 mod signin;

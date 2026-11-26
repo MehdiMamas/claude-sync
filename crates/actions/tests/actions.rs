@@ -32,11 +32,16 @@ struct T {
     clock: Arc<AtomicI64>,
     secrets: Arc<Map>,
     jobs: Mutex<Option<claude_sync_actions::jobs::JobsEnv>>,
+    device: &'static str,
 }
 
 impl T {
     async fn new() -> T {
+        T::named("laptop").await
+    }
+    async fn named(device: &'static str) -> T {
         T {
+            device,
             server: MockServer::start().await,
             dir: tempfile::tempdir().unwrap(),
             clock: Arc::new(AtomicI64::new(1_000_000)),
@@ -60,7 +65,7 @@ impl T {
             app_client_id: String::new(),
             secrets: claude_sync_actions::Secrets(self.secrets.clone()),
             now: Arc::new(move || clock.load(Ordering::SeqCst)),
-            device: "laptop".into(),
+            device: format!("ann@{}", self.device),
         }
     }
     async fn mock(&self, verb: &str, p: &str, status: u16, body: serde_json::Value) {
@@ -1301,5 +1306,419 @@ mod jobs {
             !state.join("claude-sync.db").exists(),
             "no store is created"
         );
+    }
+}
+
+mod personal {
+    use super::*;
+    use claude_sync_store::blob_sha;
+    use std::collections::{BTreeMap, HashMap};
+    use wiremock::{Request, Respond};
+
+    const REPO: &str = "/repos/ann/claude-sync-personal";
+
+    /// A stateful fake of the one personal repo: Git Data calls over a map of snapshots, so a
+    /// push by one device is what the next device reads. A parent that is not the head is a
+    /// race (422), as on GitHub.
+    #[derive(Default)]
+    pub struct Git {
+        pub exists: bool,
+        pub private: bool,
+        head: String,
+        blobs: HashMap<String, Vec<u8>>,
+        snaps: HashMap<String, BTreeMap<String, String>>,
+        n: u32,
+    }
+
+    pub type Shared = Arc<Mutex<Git>>;
+    type Handler = Box<dyn Fn(&mut Git, &Request) -> ResponseTemplate + Send + Sync>;
+
+    impl Git {
+        pub fn files(&self) -> BTreeMap<String, String> {
+            let snap = self.snaps.get(&self.head).cloned().unwrap_or_default();
+            snap.into_iter()
+                .map(|(p, s)| (p, String::from_utf8_lossy(&self.blobs[&s]).into_owned()))
+                .collect()
+        }
+        pub fn put(&mut self, path: &str, text: &str) {
+            let mut f = self.snaps.get(&self.head).cloned().unwrap_or_default();
+            let sha = blob_sha(text.as_bytes());
+            self.blobs.insert(sha.clone(), text.as_bytes().to_vec());
+            f.insert(path.into(), sha);
+            self.n += 1;
+            self.head = format!("c{}", self.n);
+            self.snaps.insert(self.head.clone(), f);
+        }
+    }
+
+    fn repo_json(g: &Git) -> serde_json::Value {
+        json!({"name": "claude-sync-personal", "full_name": "ann/claude-sync-personal", "private": g.private})
+    }
+
+    struct Fn1<F>(F);
+    impl<F: Fn(&Request) -> ResponseTemplate + Send + Sync> Respond for Fn1<F> {
+        fn respond(&self, r: &Request) -> ResponseTemplate {
+            (self.0)(r)
+        }
+    }
+
+    pub async fn mount(t: &T, git: &Shared) {
+        let on = |m: &'static str, p: String, f: Handler| {
+            let g = git.clone();
+            Mock::given(method(m))
+                .and(path_regex(p))
+                .respond_with(Fn1(move |r: &Request| f(&mut g.lock().unwrap(), r)))
+        };
+        let nf = || ResponseTemplate::new(404).set_body_json(json!({"message": "Not Found"}));
+        let mocks = vec![
+            on(
+                "GET",
+                format!("^{REPO}$"),
+                Box::new(move |g, _| {
+                    if g.exists {
+                        ResponseTemplate::new(200).set_body_json(repo_json(g))
+                    } else {
+                        nf()
+                    }
+                }),
+            ),
+            on(
+                "POST",
+                "^/user/repos$".into(),
+                Box::new(|g, _| {
+                    g.exists = true;
+                    g.private = true;
+                    g.put("README.md", "# claude-sync personal memory\n");
+                    ResponseTemplate::new(201).set_body_json(repo_json(g))
+                }),
+            ),
+            on(
+                "GET",
+                format!("^{REPO}/commits/main$"),
+                Box::new(move |g, _| {
+                    if g.head.is_empty() {
+                        ResponseTemplate::new(409)
+                            .set_body_json(json!({"message": "Git Repository is empty."}))
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(json!({"sha": g.head}))
+                    }
+                }),
+            ),
+            on(
+                "GET",
+                format!("^{REPO}/git/trees/.+$"),
+                Box::new(move |g, r| {
+                    let id = r
+                        .url
+                        .path()
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or_default()
+                        .to_string();
+                    let key = id
+                        .strip_prefix("tn")
+                        .map(|x| format!("n{x}"))
+                        .unwrap_or(id.clone());
+                    let Some(snap) = g.snaps.get(&key) else {
+                        return nf();
+                    };
+                    let tree: Vec<_> = snap
+                        .iter()
+                        .map(
+                            |(p, s)| json!({"path": p, "mode": "100644", "type": "blob", "sha": s}),
+                        )
+                        .collect();
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"sha": format!("t{key}"), "tree": tree}))
+                }),
+            ),
+            on(
+                "GET",
+                format!("^{REPO}/git/blobs/.+$"),
+                Box::new(move |g, r| {
+                    let id = r.url.path().rsplit('/').next().unwrap_or_default();
+                    match g.blobs.get(id) {
+                    Some(b) => ResponseTemplate::new(200).set_body_json(json!({"content": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b), "encoding": "base64"})),
+                    None => nf(),
+                }
+                }),
+            ),
+            on(
+                "POST",
+                format!("^{REPO}/git/blobs$"),
+                Box::new(move |g, r| {
+                    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+                    let b = base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD,
+                        v["content"].as_str().unwrap(),
+                    )
+                    .unwrap();
+                    let sha = blob_sha(&b);
+                    g.blobs.insert(sha.clone(), b);
+                    ResponseTemplate::new(201).set_body_json(json!({"sha": sha}))
+                }),
+            ),
+            on(
+                "POST",
+                format!("^{REPO}/git/trees$"),
+                Box::new(move |g, r| {
+                    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+                    let base = v["base_tree"]
+                        .as_str()
+                        .unwrap()
+                        .trim_start_matches('t')
+                        .to_string();
+                    let mut snap = g.snaps.get(&base).cloned().unwrap_or_default();
+                    for e in v["tree"].as_array().unwrap() {
+                        let p = e["path"].as_str().unwrap().to_string();
+                        match e["sha"].as_str() {
+                            Some(s) => {
+                                snap.insert(p, s.into());
+                            }
+                            None => {
+                                snap.remove(&p);
+                            }
+                        }
+                    }
+                    g.n += 1;
+                    g.snaps.insert(format!("n{}", g.n), snap);
+                    ResponseTemplate::new(201).set_body_json(json!({"sha": format!("tn{}", g.n)}))
+                }),
+            ),
+            on(
+                "POST",
+                format!("^{REPO}/git/commits$"),
+                Box::new(move |g, r| {
+                    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+                    let tree = v["tree"]
+                        .as_str()
+                        .unwrap()
+                        .strip_prefix("tn")
+                        .unwrap()
+                        .to_string();
+                    if v["parents"][0].as_str() != Some(g.head.as_str()) {
+                        return ResponseTemplate::new(422)
+                            .set_body_json(json!({"message": "Update is not a fast forward"}));
+                    }
+                    let snap = g.snaps[&format!("n{tree}")].clone();
+                    g.n += 1;
+                    let id = format!("c{}", g.n);
+                    g.snaps.insert(id.clone(), snap);
+                    ResponseTemplate::new(201).set_body_json(json!({"sha": id}))
+                }),
+            ),
+            on(
+                "PATCH",
+                format!("^{REPO}/git/refs/heads/main$"),
+                Box::new(move |g, r| {
+                    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+                    g.head = v["sha"].as_str().unwrap().to_string();
+                    ResponseTemplate::new(200).set_body_json(json!({}))
+                }),
+            ),
+        ];
+        t.mock("GET", "/user", 200, json!({"login": "ann", "id": 1}))
+            .await;
+        for m in mocks {
+            m.mount(&t.server).await;
+        }
+    }
+
+    pub fn new_git() -> Shared {
+        Arc::default()
+    }
+
+    struct Dev {
+        t: T,
+        h: Handle,
+    }
+
+    async fn device(name: &'static str, git: &Shared) -> Dev {
+        let t = T::named(name).await;
+        mount(&t, git).await;
+        let h = t.signed_in().await;
+        Dev { t, h }
+    }
+
+    impl Dev {
+        fn claude(&self, rel: &str) -> std::path::PathBuf {
+            self.t.dir.path().join(".claude").join(rel)
+        }
+        fn write(&self, rel: &str, text: &str) {
+            let p = self.claude(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        }
+        fn memory(&self) -> String {
+            let enc = claude_sync_fs::disk::encode_folder(&self.t.dir.path().to_string_lossy());
+            format!("projects/{enc}/memory/MEMORY.md")
+        }
+        async fn sync(&self) {
+            self.t.clock.fetch_add(1, Ordering::SeqCst);
+            self.h.send(Command::SyncNow).await.unwrap();
+        }
+        async fn personal(&self) -> PersonalView {
+            self.h.snapshot().personal
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn turning_on_makes_the_private_repo_and_shares_the_files() {
+        let git = new_git();
+        let a = device("laptop", &git).await;
+        a.write("CLAUDE.md", "# Mine\nalways test\n");
+        a.write(&a.memory(), "- likes tabs\n");
+        a.h.send(Command::PersonalOn).await.unwrap();
+        let p = a.personal().await;
+        assert!(p.on && p.error.is_none(), "{p:?}");
+        assert_eq!(p.devices.len(), 1);
+        assert!(p.devices[0].this && p.devices[0].name == "laptop");
+        let files = git.lock().unwrap().files();
+        assert_eq!(
+            files["claude-sync-personal.json"].replace(char::is_whitespace, ""),
+            r#"{"format":1,"newDevicesJoin":true}"#
+        );
+        assert_eq!(files["CLAUDE.md"], "# Mine\nalways test\n");
+        let key = files.keys().find(|k| k.starts_with("memory/home")).unwrap();
+        assert_eq!(files[key], "- likes tabs\n");
+        assert!(files["devices.json"].contains("laptop"));
+        assert!(files.contains_key("state/claude-sync/choices.json"));
+        assert!(git.lock().unwrap().private);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_devices_round_trip_and_a_rename_is_pushed_on_the_next_pass() {
+        let git = new_git();
+        let a = device("laptop", &git).await;
+        a.write(&a.memory(), "- one\n");
+        a.h.send(Command::PersonalOn).await.unwrap();
+        // a second device finds the repo, joins by itself and receives the memory
+        let b = device("desktop", &git).await;
+        b.sync().await;
+        let pb = b.personal().await;
+        assert!(pb.on, "{pb:?}");
+        assert_eq!(
+            std::fs::read_to_string(b.claude(&b.memory())).unwrap(),
+            "- one\n"
+        );
+        // both add a line; the line merge keeps both, with LF bytes
+        a.write(&a.memory(), "- one\n- from laptop\n");
+        b.write(&b.memory(), "- one\n- from desktop\r\n");
+        a.sync().await;
+        b.sync().await;
+        a.sync().await;
+        let merged = std::fs::read_to_string(a.claude(&a.memory())).unwrap();
+        assert!(
+            merged.contains("from laptop") && merged.contains("from desktop"),
+            "{merged}"
+        );
+        let files = git.lock().unwrap().files();
+        let key = files.keys().find(|k| k.starts_with("memory/home")).unwrap();
+        assert!(!files[key].contains('\r'));
+        // the laptop renames the desktop; it is pushed on the next pass and the desktop sees it
+        let id = a
+            .personal()
+            .await
+            .devices
+            .into_iter()
+            .find(|d| d.name == "desktop")
+            .unwrap()
+            .id;
+        a.h.send(Command::DeviceRename {
+            id: id.clone(),
+            name: "Office PC".into(),
+        })
+        .await
+        .unwrap();
+        a.sync().await;
+        assert!(git.lock().unwrap().files()["devices.json"].contains("Office PC"));
+        // a device cannot remove itself
+        let me = a
+            .personal()
+            .await
+            .devices
+            .into_iter()
+            .find(|d| d.this)
+            .unwrap()
+            .id;
+        let e =
+            a.h.send(Command::DeviceRemove { id: me })
+                .await
+                .unwrap_err();
+        assert!(e.0.contains("can't remove itself"));
+        a.h.send(Command::DeviceRemove { id }).await.unwrap();
+        a.sync().await;
+        assert!(!git.lock().unwrap().files()["devices.json"].contains("Office PC"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_repo_that_turns_public_stops_the_sync() {
+        let git = new_git();
+        let a = device("laptop", &git).await;
+        a.write("CLAUDE.md", "# Mine\n");
+        a.h.send(Command::PersonalOn).await.unwrap();
+        let before = git.lock().unwrap().files();
+        git.lock().unwrap().private = false;
+        a.write("CLAUDE.md", "# Mine\nsecret plan\n");
+        a.sync().await;
+        let p = a.personal().await;
+        assert!(p.error.as_deref().unwrap().contains("public"), "{p:?}");
+        assert_eq!(git.lock().unwrap().files(), before, "nothing was pushed");
+        // private again: it syncs again
+        git.lock().unwrap().private = true;
+        a.sync().await;
+        assert_eq!(
+            git.lock().unwrap().files()["CLAUDE.md"],
+            "# Mine\nsecret plan\n"
+        );
+        assert!(a.personal().await.error.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn choices_from_another_device_are_applied_and_off_reaches_it() {
+        let git = new_git();
+        let a = device("laptop", &git).await;
+        a.h.send(Command::PersonalOn).await.unwrap();
+        let b = device("desktop", &git).await;
+        b.sync().await;
+        assert!(b.personal().await.on);
+        // a choice made on the laptop (a kind off, a group paused, the interval) follows
+        a.t.clock.fetch_add(100, Ordering::SeqCst);
+        a.h.send(Command::PersonalKind {
+            kind: "memory".into(),
+            on: false,
+        })
+        .await
+        .unwrap();
+        a.h.send(Command::SetInterval { secs: 300 }).await.unwrap();
+        a.sync().await;
+        b.sync().await;
+        let (pa, sb) = (a.personal().await, b.h.snapshot());
+        assert_eq!(pa.kinds_off, vec!["memory"]);
+        assert_eq!(sb.personal.kinds_off, vec!["memory"]);
+        assert_eq!(sb.interval_secs, 300);
+        // a kind that is off neither pushes nor pulls
+        a.write(&a.memory(), "- private to the laptop\n");
+        a.sync().await;
+        assert!(!git
+            .lock()
+            .unwrap()
+            .files()
+            .values()
+            .any(|v| v.contains("private to the laptop")));
+        // turning it off on the laptop turns it off on the desktop at its next pass, and new
+        // devices stop joining
+        a.h.send(Command::PersonalOff).await.unwrap();
+        assert!(!a.personal().await.on);
+        assert!(git.lock().unwrap().files()["claude-sync-personal.json"].contains("false"));
+        b.sync().await;
+        assert!(!b.personal().await.on);
+        // a third device is offered it, not joined
+        let c = device("tablet", &git).await;
+        c.sync().await;
+        let pc = c.personal().await;
+        assert!(!pc.on && pc.offer, "{pc:?}");
+        c.h.send(Command::PersonalDismiss).await.unwrap();
+        assert!(!c.personal().await.offer);
     }
 }
