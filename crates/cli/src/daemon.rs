@@ -124,7 +124,10 @@ pub fn run_loop(
     open: &dyn Fn() -> Result<Core, String>,
     stop: &AtomicBool,
     step: Duration,
+    gh: &dyn Fn() -> Option<String>,
 ) {
+    // `gh auth token` at most once a minute while signed out or expired.
+    let mut last_gh: Option<std::time::Instant> = None;
     let token = state.join("token");
     let mut seen: Option<Vec<u8>> = None;
     let mut core: Option<Core> = None;
@@ -141,7 +144,11 @@ pub fn run_loop(
             if let Err(e) = c.tick() {
                 eprintln!("claude-sync-cli: {e}");
             }
-            // A refresh the core wrote itself is not a reason to reopen it.
+            if c.needs_sign_in() && last_gh.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
+                last_gh = Some(std::time::Instant::now());
+                crate::token::recover(c, gh);
+            }
+            // A refresh (or a recovery) the core wrote itself is not a reason to reopen it.
             seen = std::fs::read(&token).ok();
         }
         let mut waited = Duration::ZERO;
@@ -160,7 +167,13 @@ pub fn run(state: &Path, version: &str, env: Env) -> Result<String, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let _rt = stop_on_signal(stop.clone())?;
     let open = || Core::open(env.clone()).map_err(|e| e.to_string());
-    run_loop(state, &open, &stop, Duration::from_secs(1));
+    run_loop(
+        state,
+        &open,
+        &stop,
+        Duration::from_secs(1),
+        &crate::token::gh_token,
+    );
     Ok("claude-sync-cli daemon stopped.".into())
 }
 

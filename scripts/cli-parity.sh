@@ -16,7 +16,7 @@ b2="$root/target/debug/claude-sync-cli"
 run() { # binary, args...
   local bin=$1; shift
   local h; h=$(mktemp -d)
-  HOME="$h" CLAUDE_HOME="$h/.claude" CLAUDE_SYNC_HOME="$h/.claude-sync" "$bin" "$@" >/dev/null 2>&1 </dev/null
+  HOME="$h" PATH=/usr/bin:/bin CLAUDE_HOME="$h/.claude" CLAUDE_SYNC_HOME="$h/.claude-sync" "$bin" "$@" >/dev/null 2>&1 </dev/null
   local c=$?
   rm -r "$h"
   echo $c
@@ -55,6 +55,8 @@ packs
 review list
 update --check
 run-job nope
+run-job a/b nope
+run-job nope --now
 service status
 daemon --bogus
 LIST

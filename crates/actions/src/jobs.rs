@@ -342,6 +342,20 @@ impl Core {
     /// The valid jobs of every group that is on, in the person's order; a repeated id keeps
     /// the first.
     pub(crate) fn jobs_all(&self) -> Vec<Job> {
+        self.jobs_scan(true)
+    }
+
+    /// Every group that defines job `id` (for `run-job <id>`, which needs it in exactly one).
+    pub fn job_repos(&self, id: &str) -> Vec<String> {
+        let all = self.jobs_scan(false);
+        all.into_iter()
+            .filter(|j| j.id == id)
+            .map(|j| j.repo)
+            .collect()
+    }
+
+    /// `dedup`: the first group's job wins an id (one OS task per id).
+    fn jobs_scan(&self, dedup: bool) -> Vec<Job> {
         let c = self.choices();
         let mut jobs: Vec<Job> = vec![];
         for g in self.db.groups().unwrap_or_default() {
@@ -359,7 +373,7 @@ impl Core {
                 continue;
             };
             for e in validate(&v).0 {
-                if !jobs.iter().any(|j| j.id == e.id) {
+                if !dedup || !jobs.iter().any(|j| j.id == e.id) {
                     jobs.push(Job::new(&g.repo, e));
                 }
             }
@@ -564,12 +578,13 @@ impl Core {
         Ok(())
     }
 
-    /// `claude-sync run-job <id>`: what an OS task and Run now call. Returns the status.
-    pub fn run_job(&self, id: &str, manual: bool) -> Result<String> {
+    /// `claude-sync run-job [<owner/repo>] <id>`: what an OS task and Run now call (v1 tasks
+    /// carry the group). Returns the status.
+    pub fn run_job(&self, repo: Option<&str>, id: &str, manual: bool) -> Result<String> {
         let j = self
-            .jobs_all()
+            .jobs_scan(false)
             .into_iter()
-            .find(|j| j.id == id)
+            .find(|j| j.id == id && repo.is_none_or(|r| j.repo == r))
             .ok_or_else(|| Error::new(format!("no job {id:?} in any group on this device")))?;
         let c = self.choices();
         if !Self::accepted(&c, &j) {
@@ -685,7 +700,7 @@ impl Core {
 /// The ids come from the store, or from v1's `jobs.json` when there is no store yet. Any
 /// failure is returned, so the command exits 1.
 pub fn remove_jobs(home: &Path, io: &JobsEnv) -> Result<usize> {
-    let state = home.join(".claude-sync");
+    let state = claude_sync_fs::Home::from_env(home).state;
     let db_path = state.join("claude-sync.db");
     let db = db_path.is_file().then(|| Db::open(&db_path)).transpose()?;
     let ids: Vec<String> = match &db {

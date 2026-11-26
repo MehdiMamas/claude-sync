@@ -88,7 +88,9 @@ pub enum Cmd {
     /// Started by the OS scheduler, not typed
     #[command(hide = true)]
     RunJob {
-        id: String,
+        /// `<owner/repo> <id>` (the form v1 tasks use) or just `<id>`
+        #[arg(num_args = 1..=2, required = true)]
+        args: Vec<String>,
         /// Run now, even when the job is off
         #[arg(long)]
         now: bool,

@@ -64,13 +64,21 @@ pub struct Core {
     pub(crate) publish: Option<tokio::sync::watch::Sender<Snapshot>>,
     /// (repo, number) to the (head sha, updated_at) a proposal view was built on, and the view.
     pub(crate) proposal_cache: std::collections::HashMap<(String, u64), ProposalCached>,
+    /// Unix seconds of the last request-count flush (Parity 23: once a minute and on exit).
+    last_flush: i64,
 }
 
 pub(crate) type ProposalCached = ((String, String), ProposalView);
 
+impl Drop for Core {
+    fn drop(&mut self) {
+        self.flush_requests();
+    }
+}
+
 impl Core {
     pub fn open(env: Env) -> Result<Core> {
-        let home = Home::under(&env.home);
+        let home = Home::from_env(&env.home);
         let home_path = env.home.clone();
         std::fs::create_dir_all(&home.state)?;
         let db = Db::open(&home.state.join("claude-sync.db"))?;
@@ -94,9 +102,28 @@ impl Core {
             jobs_env: crate::jobs::JobsEnv::system(&home_path),
             publish: None,
             proposal_cache: Default::default(),
+            last_flush: 0,
         };
         c.restore_session();
         Ok(c)
+    }
+
+    /// Parity 23: add the GitHub request counts to the db (the `requests` table).
+    pub fn flush_requests(&self) {
+        let rows: Vec<_> = self
+            .client
+            .take_counts()
+            .into_iter()
+            .map(|c| claude_sync_store::RequestRow {
+                caller: c.caller,
+                endpoint: c.endpoint,
+                status: c.result,
+                n: c.count,
+            })
+            .collect();
+        if !rows.is_empty() {
+            let _ = self.db.add_requests(&rows);
+        }
     }
 
     pub(crate) fn now(&self) -> i64 {
@@ -236,6 +263,10 @@ impl Core {
         }
         self.refresh_session();
         self.note_expired();
+        if self.now() - self.last_flush >= 60 {
+            self.last_flush = self.now();
+            self.flush_requests();
+        }
         Ok(Event::Done)
     }
 

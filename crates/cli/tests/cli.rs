@@ -36,7 +36,8 @@ fn exit_codes() {
         (vec!["join", "a/b"], 1),
         (vec!["review", "list"], 1),
         (vec!["personal", "enable"], 1),
-        (vec!["run-job", "x"], 1),
+        (vec!["run-job", "x"], 2),
+        (vec!["run-job", "a/b", "x"], 1),
     ] {
         assert_eq!(go(p, &args), code, "{args:?}");
     }

@@ -1070,7 +1070,7 @@ mod jobs {
             tokio::task::spawn_blocking(move || {
                 let mut c = Core::open(env)?;
                 c.set_jobs_env(jobs);
-                c.run_job("nightly", manual)
+                c.run_job(None, "nightly", manual)
             })
             .await
             .unwrap()
@@ -3183,5 +3183,73 @@ mod extras {
                 Some(lock.as_str())
             );
         }
+    }
+}
+
+mod recovery_and_requests {
+    use super::*;
+    use wiremock::matchers::header;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_gh_token_signs_in_the_same_account_only() {
+        let t = T::new().await;
+        for (tok, login) in [("ghtok", "ann"), ("bobtok", "bob")] {
+            Mock::given(method("GET"))
+                .and(path("/user"))
+                .and(header("authorization", format!("Bearer {tok}").as_str()))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(json!({"login": login, "id": 1})),
+                )
+                .mount(&t.server)
+                .await;
+        }
+        let env = t.env("cid");
+        let secrets = t.secrets.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut c = Core::open(env).unwrap();
+            // no sign-in: any account the token belongs to
+            assert!(c.needs_sign_in());
+            assert!(!c.recover_sign_in("unknown"));
+            assert!(c.recover_sign_in("ghtok\n"));
+            assert!(!c.needs_sign_in());
+            assert_eq!(c.snapshot().login.as_deref(), Some("ann"));
+            assert_eq!(
+                secrets.get("ann").unwrap().unwrap(),
+                claude_sync_github::Tokens::plain("ghtok").to_secret()
+            );
+            // signed in as ann: a token of bob is refused, nothing changes
+            assert!(!c.recover_sign_in("bobtok"));
+            assert_eq!(c.snapshot().login.as_deref(), Some("ann"));
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn request_counts_reach_the_db_on_exit() {
+        let t = T::new().await;
+        t.mock("GET", "/user/repository_invitations", 200, json!([]))
+            .await;
+        t.secrets
+            .set("ann", &claude_sync_github::Tokens::plain("tok").to_secret())
+            .unwrap();
+        t.secrets.set("@current", "ann").unwrap();
+        let env = t.env("cid");
+        let db = t.dir.path().join(".claude-sync/claude-sync.db");
+        tokio::task::spawn_blocking(move || {
+            let mut c = Core::open(env).unwrap();
+            c.load_invitations();
+            drop(c);
+            let rows = claude_sync_store::Db::open(&db)
+                .unwrap()
+                .requests()
+                .unwrap();
+            assert!(
+                rows.iter().any(|r| r.caller == "invitations" && r.n >= 1),
+                "{rows:?}"
+            );
+        })
+        .await
+        .unwrap();
     }
 }

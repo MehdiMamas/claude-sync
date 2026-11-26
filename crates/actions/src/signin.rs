@@ -141,6 +141,41 @@ impl Core {
         self.login = Some(login);
     }
 
+    /// No sign-in, or one GitHub refused: the cue to try `gh auth token`.
+    pub fn needs_sign_in(&self) -> bool {
+        self.login.is_none() || self.expired.is_some() || self.client.is_expired()
+    }
+
+    /// Sign in with a token another tool holds (`gh auth token`) if GitHub accepts it. After an
+    /// expiry only the same account is taken (as v1). Returns whether it was saved. The token
+    /// is never logged.
+    pub fn recover_sign_in(&mut self, token: &str) -> bool {
+        let token = token.trim();
+        let Ok(probe) = Client::new(self.env.cfg.clone()) else {
+            return false;
+        };
+        probe.set_tokens(Tokens::plain(token));
+        let Ok(user) = claude_sync_github::with_caller("signin", || probe.user()) else {
+            return false;
+        };
+        if self
+            .login
+            .as_deref()
+            .is_some_and(|l| !l.eq_ignore_ascii_case(&user.login))
+        {
+            return false;
+        }
+        let t = Tokens::plain(token);
+        if secrets::save(&self.env.secrets, &user.login, &t).is_err() {
+            return false;
+        }
+        self.client.set_tokens(t);
+        self.login = Some(user.login);
+        self.app_mode = false;
+        self.expired = None;
+        true
+    }
+
     /// A 401 anywhere stops the loop with a visible notice (Parity 3).
     pub(crate) fn note_expired(&mut self) {
         if self.client.is_expired() && self.expired.is_none() {

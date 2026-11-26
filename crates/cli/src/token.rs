@@ -1,5 +1,6 @@
 //! The headless sign-in: `{login, tokens}` in `<state>/token`, mode 0600, the same JSON as v1.
 //! It plugs into the actions as a `SecretStore`, so the engine never knows it is not a keychain.
+use claude_sync_actions::Core;
 use claude_sync_github::secrets::{file_delete, file_load, file_save, Saved, SecretStore, Tokens};
 use claude_sync_github::Result;
 use std::path::PathBuf;
@@ -41,6 +42,21 @@ impl SecretStore for FileSecrets {
             _ => Ok(()),
         }
     }
+}
+
+/// `gh auth token` (argument list, no shell, no console window): the token of the `gh`
+/// sign-in, or `None` when gh is missing or signed out. As v1.
+pub fn gh_token() -> Option<String> {
+    let mut cmd = std::process::Command::new("gh");
+    cmd.args(["auth", "token"]);
+    let out = claude_sync_fs::quiet(&mut cmd).output().ok()?;
+    let t = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !t.is_empty()).then_some(t)
+}
+
+/// No sign-in, or one GitHub refused: take the `gh` sign-in if GitHub accepts it.
+pub fn recover(core: &mut Core, gh: impl FnOnce() -> Option<String>) -> bool {
+    core.needs_sign_in() && gh().is_some_and(|t| core.recover_sign_in(&t))
 }
 
 #[cfg(test)]

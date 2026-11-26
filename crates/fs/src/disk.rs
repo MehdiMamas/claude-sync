@@ -30,10 +30,25 @@ pub struct Home {
 
 impl Home {
     pub fn under(home: &Path) -> Self {
+        Self::with(home, None, None)
+    }
+
+    /// `under`, then v1's overrides: `CLAUDE_HOME` for `.claude`, `CLAUDE_SYNC_HOME` for the
+    /// state folder (empty counts as unset).
+    pub fn from_env(home: &Path) -> Self {
+        let var = |k| std::env::var_os(k).filter(|v| !v.is_empty());
+        Self::with(home, var("CLAUDE_HOME"), var("CLAUDE_SYNC_HOME"))
+    }
+
+    pub fn with(
+        home: &Path,
+        claude: Option<std::ffi::OsString>,
+        state: Option<std::ffi::OsString>,
+    ) -> Self {
         Home {
             home: home.into(),
-            claude: home.join(".claude"),
-            state: home.join(".claude-sync"),
+            claude: claude.map_or_else(|| home.join(".claude"), PathBuf::from),
+            state: state.map_or_else(|| home.join(".claude-sync"), PathBuf::from),
             ssh: home.join(".ssh"),
         }
     }

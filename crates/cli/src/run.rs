@@ -46,11 +46,12 @@ struct Where {
 }
 
 impl Where {
+    // `CLAUDE_SYNC_HOME` and `CLAUDE_HOME` move these, as in v1.
     fn state(&self) -> PathBuf {
-        self.home.join(".claude-sync")
+        claude_sync_fs::Home::from_env(&self.home).state
     }
     fn claude(&self) -> PathBuf {
-        self.home.join(".claude")
+        claude_sync_fs::Home::from_env(&self.home).claude
     }
 }
 
@@ -83,8 +84,18 @@ fn env(ctx: &Ctx) -> Result<Env, Fail> {
     })
 }
 
-fn open(ctx: &Ctx) -> Result<Core, Fail> {
+fn open_plain(ctx: &Ctx) -> Result<Core, Fail> {
     Ok(Core::open(env(ctx)?)?)
+}
+
+/// Opens the core; with no sign-in, or an expired one, tries `gh auth token` first (as v1).
+/// A test's injected home never asks the real `gh`.
+fn open(ctx: &Ctx) -> Result<Core, Fail> {
+    let mut core = open_plain(ctx)?;
+    if ctx.home.is_none() {
+        crate::token::recover(&mut core, crate::token::gh_token);
+    }
+    Ok(core)
 }
 
 fn need_sign_in(core: &Core) -> Result<(), Fail> {
@@ -113,7 +124,7 @@ pub(crate) fn execute(ctx: &Ctx, cmd: Cmd) -> Res {
     match cmd {
         Cmd::Login => login(ctx),
         Cmd::Logout => {
-            let mut core = open(ctx)?;
+            let mut core = open_plain(ctx)?;
             core.handle(Command::SignOut)?;
             Ok(Out::done(
                 "Signed out. Your groups on this machine are kept.",
@@ -150,7 +161,7 @@ pub(crate) fn execute(ctx: &Ctx, cmd: Cmd) -> Res {
             format!("{} {}", ctx.name, ctx.version),
             json!({ "version": ctx.version }),
         )),
-        Cmd::RunJob { id, now } => run_job(ctx, &id, now),
+        Cmd::RunJob { args, now } => run_job(ctx, &args, now),
         Cmd::RemoveJobs => {
             let w = place(ctx)?;
             let n = claude_sync_actions::jobs::remove_jobs(
@@ -742,9 +753,31 @@ fn update(ctx: &Ctx, check: bool) -> Res {
     ))
 }
 
-fn run_job(ctx: &Ctx, id: &str, now: bool) -> Res {
+/// `run-job <owner/repo> <id>` (what v1 tasks call) or `run-job <id>` (when one group has it).
+fn run_job(ctx: &Ctx, args: &[String], now: bool) -> Res {
     let core = open(ctx)?;
-    let status = core.run_job(id, now)?;
+    let (repo, id) = match args {
+        [id] => match core.job_repos(id).as_slice() {
+            [_] => (None, id),
+            [] => {
+                return Err(Fail::Usage(format!(
+                    "no job {id:?} in any group on this device"
+                )))
+            }
+            _ => {
+                return Err(Fail::Usage(format!(
+                    "job {id:?} is in more than one group: run-job <owner/repo> {id}"
+                )))
+            }
+        },
+        [repo, id] => (Some(repo_arg(repo)?), id),
+        _ => {
+            return Err(Fail::Usage(
+                "run-job <owner/repo> <id> | run-job <id>".into(),
+            ))
+        }
+    };
+    let status = core.run_job(repo.as_deref(), id, now)?;
     if status.starts_with("error") || status.starts_with("failed") {
         return Err(Fail::Run(status));
     }

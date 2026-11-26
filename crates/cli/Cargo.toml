@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 claude-sync-actions = { path = "../actions" }
 claude-sync-engine = { path = "../engine" }
+claude-sync-fs = { path = "../fs" }
 claude-sync-github = { path = "../github", default-features = false }
 claude-sync-store = { path = "../store" }
 serde.workspace = true

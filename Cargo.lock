@@ -878,6 +878,7 @@ dependencies = [
  "clap",
  "claude-sync-actions",
  "claude-sync-engine",
+ "claude-sync-fs",
  "claude-sync-github",
  "claude-sync-store",
  "serde",
