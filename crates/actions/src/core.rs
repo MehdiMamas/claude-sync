@@ -385,6 +385,7 @@ impl Core {
                         .unwrap_or_else(|| vec![host]),
                     proposal_mode: gf.as_ref().is_some_and(|f| f.proposal_mode),
                     auto_accept_claude_md: gf.as_ref().is_none_or(|f| f.auto_accept_claude_md),
+                    jobs_auto_accept: c.groups.get(&g.repo).is_some_and(|x| x.auto_run_jobs),
                     host_lock: self.host_lock(&g.repo, g.host),
                     review_choice: c.review_choice(&g.repo),
                     plugin_problems: self.plugin_problems(&g.repo),

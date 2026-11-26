@@ -139,6 +139,7 @@ impl Core {
                     add: i.kind == Kind::Add,
                     lines: i.lines.clone(),
                     author: i.author.clone(),
+                    at: i.at_unix,
                 })
                 .collect(),
         ))

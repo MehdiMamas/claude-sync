@@ -280,6 +280,7 @@ mod tests {
             members: vec![],
             proposal_mode: false,
             auto_accept_claude_md: true,
+            jobs_auto_accept: false,
             host_lock: None,
             review_choice: Default::default(),
             pending_review: 0,

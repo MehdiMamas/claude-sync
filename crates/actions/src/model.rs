@@ -49,6 +49,8 @@ ts! {
         pub members: Vec<String>,
         pub proposal_mode: bool,
         pub auto_accept_claude_md: bool,
+        /// Jobs of this group run without asking (this account's choice).
+        pub jobs_auto_accept: bool,
         /// `on`, `unavailable` or unknown (not tried yet).
         pub host_lock: Option<String>,
         pub review_choice: crate::choices::ReviewChoice,
@@ -99,6 +101,13 @@ ts! {
         pub accepted: bool,
         pub enabled: bool,
         pub last_result: String,
+        pub title: String,
+        pub cron: String,
+        pub prompt: String,
+        pub cwd: String,
+        pub mode: String,
+        pub timeout_minutes: u32,
+        pub args: Vec<String>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,6 +284,8 @@ ts! {
         pub add: bool,
         pub lines: Vec<String>,
         pub author: String,
+        /// Unix seconds of the commit.
+        pub at: u64,
     }
 
     /// One opt-in pack of a group, as this machine sees it.

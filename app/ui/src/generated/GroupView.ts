@@ -4,6 +4,10 @@ import type { ReviewChoice } from "./ReviewChoice";
 
 export type GroupView = { repo: string, name: string, host: string, isHost: boolean, status: GroupStatus, error: string | null, lastSync: number | null, members: Array<string>, proposalMode: boolean, autoAcceptClaudeMd: boolean, 
 /**
+ * Jobs of this group run without asking (this account's choice).
+ */
+jobsAutoAccept: boolean, 
+/**
  * `on`, `unavailable` or unknown (not tried yet).
  */
 hostLock: string | null, reviewChoice: ReviewChoice, pendingReview: number, 

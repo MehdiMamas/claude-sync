@@ -424,6 +424,13 @@ impl Core {
                     .find(|r| r.repo == j.repo && r.job_id == j.id)
                     .map(|r| r.last_result.clone())
                     .unwrap_or_default(),
+                title: j.title.clone(),
+                cron: j.cron.clone(),
+                prompt: j.prompt.clone(),
+                cwd: j.cwd.clone(),
+                mode: j.mode.clone(),
+                timeout_minutes: j.timeout,
+                args: j.args.clone(),
             })
             .collect()
     }
