@@ -29,6 +29,18 @@ impl Core {
         Ok(Event::Done)
     }
 
+    pub(crate) fn set_auto_accept(&mut self, repo: &str, on: bool) -> Result<Event> {
+        self.require_host(repo)?;
+        self.edit_group(repo, |g| {
+            g.auto_accept_claude_md = on;
+            Ok(format!(
+                "auto-accept CLAUDE.md {}",
+                if on { "on" } else { "off" }
+            ))
+        })?;
+        Ok(Event::Done)
+    }
+
     /// The change as a branch and a pull request; main and the base stay as they were.
     pub(crate) fn propose(&self, repo: &str, files: &FileSet, what: &str) -> Result<Event> {
         let me = self.me()?;

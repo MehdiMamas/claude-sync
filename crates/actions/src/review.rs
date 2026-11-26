@@ -161,6 +161,22 @@ impl Core {
         Ok(Event::Done)
     }
 
+    pub(crate) fn set_review_choice(
+        &mut self,
+        repo: &str,
+        choice: crate::choices::ReviewChoice,
+    ) -> Result<Event> {
+        use crate::choices::ReviewChoice::*;
+        let mut c = self.choices();
+        c.group(repo, self.now() as u64 * 1000).review_claude_md = match choice {
+            FollowGroup => None,
+            ReviewFirst => Some(true),
+            AutoAccept => Some(false),
+        };
+        c.save(&self.db)?;
+        Ok(Event::Done)
+    }
+
     pub(crate) fn drop_line(&mut self, repo: &str, line: &str) -> Result<Event> {
         let mut st = self.state(repo)?;
         let now = self.now();

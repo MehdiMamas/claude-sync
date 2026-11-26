@@ -409,6 +409,11 @@ pub enum Command {
         repo: String,
     },
     Clashes,
+    /// This person's choice for a group's CLAUDE.md lines (follows them to every machine).
+    SetReviewChoice {
+        repo: String,
+        choice: crate::choices::ReviewChoice,
+    },
     // local edits to delivered files (Parity 39, 40, 41, 42)
     EditsList {
         repo: String,
@@ -484,6 +489,11 @@ pub enum Command {
     // proposals (Parity 36, 83, 84, 85)
     /// Host only.
     SetProposalMode {
+        repo: String,
+        on: bool,
+    },
+    /// Host only: members get CLAUDE.md changes without review (the group default).
+    SetAutoAccept {
         repo: String,
         on: bool,
     },

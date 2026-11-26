@@ -204,6 +204,8 @@ impl Core {
             }
             DeviceRemove { id } => self.device_edit(crate::personal::Pending::Remove { id }),
             SetProposalMode { repo, on } => self.set_proposal_mode(&repo, on),
+            SetAutoAccept { repo, on } => self.set_auto_accept(&repo, on),
+            SetReviewChoice { repo, choice } => self.set_review_choice(&repo, choice),
             Proposals { repo } => self.proposals(&repo).map(Event::Proposals),
             ProposalApprove { repo, number } => self.proposal_approve(&repo, number),
             ProposalDecline { repo, number } => self.proposal_decline(&repo, number),
