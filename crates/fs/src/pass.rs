@@ -59,6 +59,11 @@ impl Drop for SyncLock {
     }
 }
 
+/// Review gate: gets the remote CLAUDE.md text, returns what may be imported.
+pub type Gate<'a> = dyn Fn(Option<&[u8]>) -> Option<Vec<u8>> + 'a;
+/// Committer date for a head sha (the `COMMIT` marker's second line).
+pub type CommitDate<'a> = dyn Fn(&str) -> Option<String> + 'a;
+
 pub struct GroupIn<'a> {
     pub repo: &'a str,
     /// This device hosts the group: it pushes.
@@ -69,9 +74,9 @@ pub struct GroupIn<'a> {
     pub remote: &'a dyn Remote,
     /// Review gating: gets the group's CLAUDE.md text as the remote has it and returns the text
     /// to place in the copy that is imported (the accepted text). `None`: copy as is.
-    pub gate: Option<&'a (dyn Fn(Option<&[u8]>) -> Option<Vec<u8>> + 'a)>,
+    pub gate: Option<&'a Gate<'a>>,
     /// Committer date of a head sha, for the marketplace `COMMIT` file (`None`: sha only).
-    pub commit_date: Option<&'a (dyn Fn(&str) -> Option<String> + 'a)>,
+    pub commit_date: Option<&'a CommitDate<'a>>,
 }
 
 pub struct Pass<'a> {
