@@ -1,283 +1,251 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-//! claude-sync desktop app (docs/architecture.md §11): tray, background sync, UI.
-
-mod auth;
-mod background;
-mod cli;
-mod commands;
-mod config;
-mod ctx;
-mod feedback;
-mod guard;
-mod jobs;
-#[cfg(target_os = "macos")]
-mod mac_notify;
-mod notify;
-mod packs;
-mod personal;
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo)
+)]
+//! claude-sync desktop shell (v2-Plan step 7): tray, one window, one instance. Every command
+//! word is answered by `claude-sync-cli` before Tauri starts; the app itself only draws what the
+//! actor (`claude-sync-actions`) publishes and sends it the commands it is given.
 mod tray;
-mod updates;
 mod window;
 
-use claude_sync_core::notifications::Kind;
-use claude_sync_core::Paths;
-use ctx::Ctx;
-use std::sync::Arc;
-use tauri::{RunEvent, WindowEvent};
+use claude_sync_actions::{Command, Event, Handle, Secrets, Snapshot};
+use claude_sync_cli::daemon::{single_instance, Instance};
+use claude_sync_cli::Ctx;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_opener::OpenerExt;
 
-/// Log to `<state>/logs` (§11). If that fails the app still runs, logging to stderr.
-/// The returned guard flushes the log when dropped.
-fn init_logging(paths: &Paths) -> Option<Box<dyn std::any::Any + Send>> {
-    match claude_sync_core::logging::init(paths) {
-        Ok(log_guard) => Some(log_guard),
-        Err(e) => {
-            let _ = tracing_subscriber::fmt()
-                .with_writer(std::io::stderr)
-                .with_ansi(false)
-                .try_init();
-            tracing::warn!("could not open the log file, logging to stderr: {e}");
-            None
+const BACKGROUND: &str = "--background";
+const REFRESH: &str = "--refresh";
+
+fn ctx() -> Ctx {
+    Ctx {
+        name: "claude-sync",
+        remove_jobs: true,
+        ..Ctx::cli()
+    }
+}
+
+/// The app starts only for no words, `--background` (autostart) and `--refresh`; any other word
+/// is a command (`status`, `run-job`, `remove-jobs`, ...) and goes to the CLI.
+fn is_app_launch(args: &[String]) -> bool {
+    args.iter()
+        .all(|a| a == BACKGROUND || a == REFRESH || a.starts_with("-psn_"))
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// The window's one way in: run a command, get its event. Everything else it learns from the
+/// `snapshot` event.
+#[tauri::command]
+async fn send(h: State<'_, Handle>, cmd: Command) -> Result<Event, String> {
+    h.send(cmd).await.map_err(|e| e.0)
+}
+
+#[tauri::command]
+fn snapshot(h: State<'_, Handle>) -> Snapshot {
+    h.snapshot()
+}
+
+/// Open a web address or a file in the system handler (Parity 59). Only `http(s)` addresses and
+/// paths that exist.
+#[tauri::command]
+fn open_target(app: AppHandle, target: String) -> Result<(), String> {
+    let o = app.opener();
+    if target.starts_with("https://") || target.starts_with("http://") {
+        o.open_url(target, None::<&str>).map_err(|e| e.to_string())
+    } else if std::path::Path::new(&target).exists() {
+        o.open_path(target, None::<&str>).map_err(|e| e.to_string())
+    } else {
+        Err("that file does not exist".into())
+    }
+}
+
+/// Tell the window and the tray on every change, and show new notifications on the desktop.
+fn pump(app: AppHandle, h: Handle) {
+    tauri::async_runtime::spawn(async move {
+        let mut rx = h.watch();
+        let mut sent: Option<Snapshot> = None;
+        let mut seen = h.snapshot().notifications.iter().map(|n| n.id).max();
+        let mut clock = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            let s = rx.borrow_and_update().clone();
+            tray::apply(&app, &s, now());
+            if sent.as_ref() != Some(&s) {
+                let _ = app.emit("snapshot", &s);
+                for n in s.notifications.iter().filter(|n| Some(n.id) > seen) {
+                    if !n.read && s.desktop_notifications {
+                        let _ = app
+                            .notification()
+                            .builder()
+                            .title("claude-sync")
+                            .body(&n.text)
+                            .show();
+                    }
+                }
+                seen = seen.max(s.notifications.iter().map(|n| n.id).max());
+                sent = Some(s);
+            }
+            tokio::select! {
+                r = rx.changed() => if r.is_err() { break },
+                _ = clock.tick() => {}
+            }
         }
-    }
+    });
 }
 
-/// The headless subcommands (§17): started by the OS scheduler, "Run now" and the
-/// uninstaller. They run before Tauri starts, so there is no tray, no window and no
-/// single-instance check. `None`: start the app.
-fn headless(paths: &Paths) -> Option<i32> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
-        Some(claude_sync_core::jobs::RUN_JOB_ARG) => Some(jobs::run_job_main(paths, &args[1..])),
-        Some(jobs::REMOVE_JOBS_ARG) => Some(jobs::remove_jobs_main(paths)),
-        Some(c) if cli::COMMANDS.contains(&c) => Some(cli::run(paths, &args)),
-        _ => None,
-    }
-}
-
-/// Turn start-at-login on once, on the first run (§11). Debug builds skip it so a dev
-/// run does not register target/debug in the login items; so does
-/// `CLAUDE_SYNC_NO_AUTOSTART=1`.
-fn first_run_autostart(app: &tauri::AppHandle, ctx: &Ctx) {
-    let mut prefs = ctx.prefs();
-    if prefs.autostart_initialized
+/// First run: start at login, except in debug builds or with `CLAUDE_SYNC_NO_AUTOSTART`
+/// (Parity 72). The choice is saved, so it is made once.
+fn first_run_autostart(app: &AppHandle, h: &Handle) {
+    if h.snapshot().start_at_login.is_some()
         || cfg!(debug_assertions)
         || std::env::var_os("CLAUDE_SYNC_NO_AUTOSTART").is_some()
     {
         return;
     }
-    match app.autolaunch().enable() {
-        Ok(()) => tracing::info!("start at login turned on (first run)"),
-        Err(e) => tracing::warn!("could not turn on start at login: {e}"),
+    let on = app.autolaunch().enable().is_ok();
+    let h = h.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = h.send(Command::StartAtLogin { on }).await;
+    });
+}
+
+/// macOS and Linux release builds: `~/.local/bin/claude-sync` points at this binary, only when
+/// that folder exists and the name is free (Parity 65).
+#[cfg(unix)]
+fn link_cli() {
+    if cfg!(debug_assertions) {
+        return;
     }
-    prefs.autostart_initialized = true;
-    if let Err(e) = ctx.save_prefs(&prefs) {
-        tracing::warn!("could not save app prefs: {e}");
+    let (Some(home), Ok(exe)) = (std::env::home_dir(), std::env::current_exe()) else {
+        return;
+    };
+    let dir = home.join(".local/bin");
+    let link = dir.join("claude-sync");
+    if dir.is_dir() && std::fs::symlink_metadata(&link).is_err() {
+        let _ = std::os::unix::fs::symlink(exe, link);
     }
 }
 
-/// Move a v0 clone out of `~/.claude-sync` (§10) before the app reads its state.
-/// Skipped when `CLAUDE_SYNC_HOME` points somewhere else. A failure is only logged:
-/// the app then keeps its state in `~/.claude-sync/app`.
-fn migrate_v0() -> Option<claude_sync_core::migrate::Migrated> {
-    let set = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty());
-    if set("CLAUDE_SYNC_HOME").is_some() {
-        return None;
-    }
-    let home = std::env::home_dir()?;
-    let claude_home = set("CLAUDE_HOME").map_or_else(|| home.join(".claude"), Into::into);
-    match claude_sync_core::migrate::migrate_v0(&home, &claude_home) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("claude-sync: could not move the v0 setup: {e}");
-            None
+#[cfg(not(unix))]
+fn link_cli() {}
+
+/// Held for the life of the app: `daemon.lock` and `daemon.owner` say who syncs on this machine.
+#[derive(Default)]
+struct Owner(Mutex<Option<Instance>>);
+
+fn start(app: &AppHandle, background: bool) -> Result<(), String> {
+    let ctx = ctx();
+    let home = std::env::home_dir().ok_or("cannot find the home directory")?;
+    let state = claude_sync_fs::Home::from_env(&home).state;
+    let secrets = Secrets(Arc::new(claude_sync_github::secrets::Keychain));
+    let env = claude_sync_cli::env_with(&ctx, secrets)?;
+    let h = tauri::async_runtime::block_on(claude_sync_actions::spawn(env, Duration::from_secs(1)))
+        .map_err(|e| e.0)?;
+    // shortcut: takes the daemon lock when it is free and goes on without it when another
+    // daemon holds it (sync.lock keeps passes apart); stopping a v1 daemon is steps 10 to 12.
+    match single_instance(&state, ctx.version) {
+        Ok(Some(i)) => {
+            let owner = app.state::<Owner>();
+            let mut o = owner.0.lock().map_err(|e| e.to_string())?;
+            *o = Some(i);
         }
+        Ok(None) => eprintln!("claude-sync: another daemon holds daemon.lock"),
+        Err(e) => eprintln!("claude-sync: {e}"),
     }
+    app.manage(h.clone());
+    first_run_autostart(app, &h);
+    link_cli();
+    let s = h.snapshot();
+    tray::build(app, &s, now()).map_err(|e| e.to_string())?;
+    pump(app.clone(), h);
+    if !background || s.login.is_none() {
+        window::open(app, None);
+    }
+    Ok(())
 }
 
 fn main() {
-    guard::install_panic_hook();
-    let migrated = migrate_v0();
-    let paths = match Paths::from_env() {
-        Ok(p) => p,
+    let args: Vec<String> = std::env::args().collect();
+    if !is_app_launch(&args[1..]) {
+        std::process::exit(claude_sync_cli::run_status(args, &ctx()) as i32);
+    }
+    let background = args.iter().any(|a| a == BACKGROUND);
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // `--refresh`: another program changed the state; reload the screens, open nothing.
+            if args.iter().any(|a| a == REFRESH) {
+                if let Some(h) = app.try_state::<Handle>() {
+                    let h = h.inner().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = h.send(Command::Refresh).await;
+                    });
+                }
+            } else {
+                window::open(app, None);
+            }
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![BACKGROUND]),
+        ))
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
+        // shortcut: no updater plugin yet, step 9 adds it (tauri.conf.json keeps the pubkey).
+        .manage(Owner::default())
+        .manage(tray::Shown::default())
+        .invoke_handler(tauri::generate_handler![send, snapshot, open_target])
+        .setup(move |app| start(app.handle(), background).map_err(Into::into))
+        .build(tauri::generate_context!());
+    let app = match app {
+        Ok(a) => a,
         Err(e) => {
             eprintln!("claude-sync: {e}");
             std::process::exit(1);
         }
     };
-    let log_guard = init_logging(&paths);
-    if let Some(code) = headless(&paths) {
-        drop(log_guard);
-        std::process::exit(code);
-    }
-    // The guard must live as long as the app.
-    std::mem::forget(log_guard);
-    let ctx = Arc::new(Ctx::load(paths));
-    tracing::info!(version = config::VERSION, state = %ctx.paths.state_dir.display(), "claude-sync starting");
-    let background_start = std::env::args().any(|a| a == config::BACKGROUND_ARG);
-
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // A CLI change (`claude-sync personal enable`): reload, do not open the window.
-            if args.iter().any(|a| a == cli::REFRESH_ARG) {
-                cli::refresh(app);
-            } else {
-                window::open(app, None)
-            }
-        }))
-        .plugin(tauri_plugin_autostart::init(
-            MacosLauncher::LaunchAgent,
-            Some(vec![config::BACKGROUND_ARG]),
-        ))
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_opener::init())
-        .manage(ctx.clone())
-        .manage(updates::UpdateSlot::default())
-        .invoke_handler(tauri::generate_handler![
-            commands::app_info,
-            commands::auth_status,
-            commands::app_coverage,
-            commands::open_app_install,
-            commands::start_sign_in,
-            commands::cancel_sign_in,
-            commands::sign_out,
-            commands::status,
-            commands::groups,
-            commands::create_group,
-            commands::invitations,
-            commands::accept_invitation,
-            commands::discover,
-            commands::join,
-            commands::add_member,
-            commands::remove_member,
-            commands::transfer_group,
-            commands::leave_group,
-            commands::set_group_enabled,
-            commands::reorder_groups,
-            commands::local_edits,
-            commands::resolve_edit,
-            commands::group_contents,
-            commands::local_skills,
-            commands::share_skill,
-            commands::claude_md_preview,
-            commands::share_claude_md,
-            commands::recent_commits,
-            commands::change_notes,
-            commands::revert_preview,
-            commands::revert_commit,
-            commands::claude_md_review,
-            commands::decide_claude_md,
-            commands::set_claude_md_review,
-            commands::set_group_auto_accept_claude_md,
-            commands::set_group_proposal_mode,
-            commands::list_proposals,
-            commands::approve_proposal,
-            commands::decline_proposal,
-            commands::use_group_claude_md,
-            commands::conflicts,
-            commands::claude_md_check,
-            commands::drop_claude_md_line,
-            commands::edit_claude_md_line,
-            commands::copy_preview,
-            commands::copy_to_group,
-            commands::sync_now,
-            commands::get_activity,
-            commands::set_activity,
-            commands::get_settings,
-            commands::set_settings,
-            commands::notifications,
-            commands::mark_notification_read,
-            commands::mark_all_notifications_read,
-            commands::clear_notifications,
-            commands::test_notification,
-            commands::notification_permission,
-            commands::open_notification_settings,
-            commands::feedback_logs,
-            commands::feedback_capture_screen,
-            commands::feedback_attach_file,
-            commands::feedback_paste_image,
-            commands::feedback_submit,
-            commands::check_update,
-            commands::update_status,
-            commands::install_update,
-            commands::open_url,
-            commands::open_path,
-            personal::personal_status,
-            personal::personal_enable,
-            personal::personal_disable,
-            personal::personal_set_kinds,
-            personal::personal_set_new_devices_join,
-            personal::personal_remove_device,
-            personal::personal_dismiss_offer,
-            commands::jobs,
-            commands::accept_job,
-            commands::set_job_enabled,
-            commands::set_jobs_auto_accept,
-            commands::run_job_now,
-            commands::open_job_file,
-            commands::plugin_warnings,
-            commands::retry_plugins,
-            commands::helper_status,
-            commands::helper_explain,
-            packs::list_packs,
-            packs::start_pack_setup,
-            packs::check_pack,
-            packs::turn_on_pack,
-            packs::turn_off_pack,
-        ])
-        .setup(move |app| {
-            let handle = app.handle().clone();
-            auth::init(&handle);
-            // An older version kept a pasted API key; the helper uses the Claude login now.
-            if let Err(e) = claude_sync_core::helper::remove_legacy_key(
-                &claude_sync_core::github::token_store::Keychain,
-            ) {
-                tracing::warn!("could not remove the old helper key: {e}");
-            }
-            first_run_autostart(&handle, &ctx);
-            cli::install_shim();
-            #[cfg(debug_assertions)]
-            if let Some(token) = auth::dev_token() {
-                auth::sign_in_with_dev_token(&handle, token);
-            }
-            tray::build(&handle)?;
-            notify::init(&handle);
-            if let Some(m) = &migrated {
-                notify::show(&handle, Kind::Other, None, "Old setup moved", &m.message());
-            }
-            background::refresh_status(&handle);
-            background::start(&handle);
-            jobs::reconcile_soon(&handle, true);
-            packs::recheck_soon(&handle, true);
-            if !background_start || ctx.auth().is_none() {
-                window::open(&handle, None);
-            } else {
-                window::closed(&handle);
-            }
-            Ok(())
-        })
-        .build(tauri::generate_context!())
-        .expect("error while building the app");
-
     app.run(|app, event| match event {
-        // Closing the window must not quit: the app lives in the tray. Quit calls exit(0).
+        // Closing the window never quits: the app lives in the tray. Quit calls exit(0).
         RunEvent::ExitRequested {
             api, code: None, ..
         } => api.prevent_exit(),
-        RunEvent::WindowEvent {
-            label,
-            event: WindowEvent::Destroyed,
-            ..
-        } if label == window::LABEL => {
-            updates::mark_shown();
-            window::closed(app)
+        RunEvent::Exit => {
+            // removes daemon.owner
+            let owner = app.state::<Owner>();
+            let taken = owner.0.lock().map(|mut o| o.take());
+            drop(taken);
         }
-        // System quit or logout: install a downloaded update too.
-        RunEvent::Exit => updates::install_pending(app),
-        // Dock icon clicked (macOS) while no window is showing.
+        // Dock icon clicked (macOS) while no window shows.
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => window::open(app, None),
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn only_no_words_and_the_two_flags_start_the_app() {
+        assert!(is_app_launch(&v(&[])));
+        assert!(is_app_launch(&v(&["--background"])));
+        assert!(is_app_launch(&v(&["--refresh"])));
+        assert!(!is_app_launch(&v(&["status"])));
+        assert!(!is_app_launch(&v(&["run-job", "acme/a", "x"])));
+        assert!(!is_app_launch(&v(&["remove-jobs"])));
+        assert!(!is_app_launch(&v(&["--json", "status"])));
+    }
 }

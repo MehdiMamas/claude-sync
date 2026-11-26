@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 macro_rules! ts {
     ($($i:item)*) => {$(
-        #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+        #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
         $i
     )*};
 }
@@ -138,6 +138,10 @@ ts! {
         pub ssh_on: bool,
         pub activity_on: bool,
         pub update: String,
+        /// Desktop notifications switch (Settings); on until turned off.
+        pub desktop_notifications: bool,
+        /// `None` until the first start decided it.
+        pub start_at_login: Option<bool>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,7 +279,9 @@ ts! {
 }
 
 /// What the helper is asked to explain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum ExplainTask {
     Collision,
     ClaudeMdReview,
@@ -283,14 +289,18 @@ pub enum ExplainTask {
 }
 
 /// One user action.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", content = "data", rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum Command {
     // account
     SignInStart {
         app: bool,
     },
     SignInCancel,
-    /// Sent by the sign-in waiter itself.
+    /// Sent by the sign-in waiter itself, never by the window.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ts", ts(skip))]
     SignInDone(crate::signin::Outcome),
     SignOut,
     // groups
@@ -521,10 +531,22 @@ pub enum Command {
     },
     /// The window opened: look for invitations now.
     WindowOpened,
+    /// Settings: desktop notifications on or off.
+    DesktopNotifications {
+        on: bool,
+    },
+    /// Settings: start at login (the shell turns the OS entry on or off).
+    StartAtLogin {
+        on: bool,
+    },
+    /// Publish a fresh snapshot (the shell got `--refresh`: another program changed the state).
+    Refresh,
 }
 
 /// A feedback report as the window collects it; the logs are redacted and cut here.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct FeedbackInput {
     /// `bug` or `idea`.
     pub kind: String,
@@ -538,7 +560,9 @@ pub struct FeedbackInput {
 }
 
 /// What the person picked in the copy preview.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct CopyRequest {
     /// CLAUDE.md lines to append, as the person left them; redacted again.
     pub claude_md: String,
@@ -547,7 +571,9 @@ pub struct CopyRequest {
     pub agents: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "data", rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum Event {
     /// The change went out as proposal #n, not as a commit.
     Proposed(u64),
@@ -596,7 +622,9 @@ pub enum Event {
     Conflicts(Vec<ConflictView>),
     /// A file the window opens (a job's log or report); `None`: there is none yet.
     Path(Option<String>),
-    Clashes(Vec<claude_sync_engine::clashes::Clash>),
+    Clashes(
+        #[cfg_attr(feature = "ts", ts(type = "unknown[]"))] Vec<claude_sync_engine::clashes::Clash>,
+    ),
     Synced {
         files: usize,
         failed: usize,

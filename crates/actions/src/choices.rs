@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const KEY: &str = "choices";
 
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ReviewChoice {
@@ -47,6 +47,7 @@ pub struct AppChoice {
     pub paused: bool,
     pub interval_secs: Option<u64>,
     pub start_at_login: Option<bool>,
+    pub desktop_notifications: Option<bool>,
     pub ts: u64,
     #[serde(flatten)]
     pub rest: Map<String, Value>,

@@ -222,6 +222,9 @@ impl Core {
             Contents { repo } => self.contents(&repo),
             Pause => self.set_app(|a| a.paused = true),
             Resume => self.set_app(|a| a.paused = false),
+            DesktopNotifications { on } => self.set_app(|a| a.desktop_notifications = Some(on)),
+            StartAtLogin { on } => self.set_app(|a| a.start_at_login = Some(on)),
+            Refresh => Ok(Event::Done),
             SetInterval { secs } => self.set_app(|a| a.interval_secs = Some(secs)),
             WindowOpened => {
                 self.schedule.invites_now();
@@ -416,6 +419,8 @@ impl Core {
                 .and_then(|o| o.as_bool())
                 .unwrap_or(false),
             update: self.update_state(),
+            desktop_notifications: c.app.desktop_notifications.unwrap_or(true),
+            start_at_login: c.app.start_at_login,
         }
     }
 }

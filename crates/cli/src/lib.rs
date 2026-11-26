@@ -17,7 +17,7 @@ use claude_sync_github::Config;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-pub use run::{status_json, Out};
+pub use run::{env_with, status_json, Out};
 pub use tree::{command_names, Cli, Cmd};
 
 /// What differs between the binaries that embed the tree, and between a person and a test.

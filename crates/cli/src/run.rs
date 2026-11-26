@@ -84,6 +84,15 @@ pub(crate) fn env(ctx: &Ctx) -> Result<Env, Fail> {
     })
 }
 
+/// The core's environment for a shell that keeps the sign-in elsewhere (the app: the OS keychain).
+pub fn env_with(ctx: &Ctx, secrets: claude_sync_actions::Secrets) -> Result<Env, String> {
+    let mut e = env(ctx).map_err(|f| match f {
+        Fail::Usage(m) | Fail::Run(m) => m,
+    })?;
+    e.secrets = secrets;
+    Ok(e)
+}
+
 fn open_plain(ctx: &Ctx) -> Result<Core, Fail> {
     Ok(Core::open(env(ctx)?)?)
 }
