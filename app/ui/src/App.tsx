@@ -110,8 +110,7 @@ export function App() {
         toast: "ev" in r && r.ev.kind === "joined" && r.ev.data.warning ? r.ev.data.warning : null,
       });
     },
-    // shortcut: the shell has no decline command yet, so Decline hides the invitation in this
-    // window only; upgrade when a decline command exists.
+    // v1 never declined through GitHub either: Decline hides the invitation in this window only.
     decline: (id: number) => setHidden((h) => [...h, id]),
     join: async (repo: string) => {
       patch({ joining: repo, joinError: null });
