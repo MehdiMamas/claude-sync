@@ -180,6 +180,7 @@ impl Core {
             ReviewList { repo } => self.review_list(&repo),
             ReviewDecide { repo, ids, accept } => self.review_decide(&repo, ids, accept),
             DropLine { repo, line } => self.drop_line(&repo, &line),
+            EditLine { repo, line, text } => self.edit_line(&repo, &line, &text),
             UseGroupVersion { repo } => self.use_group_version(&repo),
             Clashes => self.clashes(),
             JobAccept { repo, id } => self.job_accept(&repo, &id),

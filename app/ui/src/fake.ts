@@ -6,7 +6,9 @@ import type { EditView } from "./generated/EditView";
 import type { Event } from "./generated/Event";
 import type { GroupStatus } from "./generated/GroupStatus";
 import type { GroupView } from "./generated/GroupView";
+import type { HistoryItem } from "./generated/HistoryItem";
 import type { JobView } from "./generated/JobView";
+import type { ProposalView } from "./generated/ProposalView";
 import type { ReviewLine } from "./generated/ReviewLine";
 import type { Snapshot } from "./generated/Snapshot";
 
@@ -162,6 +164,11 @@ function scenario(name: string): Snapshot {
         "plugins/mods/big-pack.bin is over the 1 MiB limit and was not placed",
       ]);
       return s;
+    case "history":
+    case "helper":
+    case "helper-unavailable":
+    case "proposals":
+    case "proposals-one":
     case "group":
       s.jobs = [job(s.groups[0]?.repo ?? "")];
       setProblems(0, ["couldn't install big-pack@mods: registry unreachable"]);
@@ -185,6 +192,14 @@ function scenario(name: string): Snapshot {
         pendingReview: 1,
       });
       return s;
+    case "no-history":
+      setStatus(0, "synced", { members: ["alex-host"], pendingReview: 0 });
+      return s;
+    case "propose":
+      setStatus(1, "synced", { host: "sam-member", pendingReview: 1, proposalMode: true });
+      return s;
+    case "proposals-guest":
+    case "proposals-guest-one":
     case "group-member":
       setStatus(1, "synced", { host: "sam-member", pendingReview: 1 });
       s.jobs = [job(s.groups[1]?.repo ?? "")];
@@ -218,7 +233,7 @@ export function fakeBackend(search: string): Backend {
   let name = q.get("scenario") ?? "groups-invite";
   if (q.has("signedOut")) name = "signed-out";
   if (q.has("empty")) name = "groups-empty";
-  // `?noHistory` has no screen in this part: the groups list is the same.
+  if (q.has("noHistory")) name = "no-history";
   let snap = scenario(name);
   const subs = new Set<(s: Snapshot) => void>();
   const emit = () => {
@@ -273,7 +288,12 @@ export function fakeBackend(search: string): Backend {
       { path: "skills/release-notes/SKILL.md", kept: false },
       { path: "settings.json", kept: false },
     ],
-    "sample-org/dev-rules": [{ path: "skills/release-notes/SKILL.md", kept: false }],
+    "sample-org/dev-rules": [
+      {
+        path: `skills/${name === "propose" ? "test-runner" : "release-notes"}/SKILL.md`,
+        kept: false,
+      },
+    ],
   };
   // The lines waiting for review per group: the host's three, a member's one.
   const line = (
@@ -307,6 +327,55 @@ export function fakeBackend(search: string): Backend {
           : [];
   }
   let clash = q.has("clash");
+  // Open proposals per group: the host's list and the member's list, as the scenario names them.
+  const prop = (number: number, author: string, title: string, path: string, over = {}) => ({
+    number,
+    branch: `proposal/${author}-20261126100000`,
+    author,
+    title,
+    url: `https://github.com/sample-org/dev-rules/pull/${number}`,
+    files: [{ path, patch: "" }],
+    approvals: [] as string[],
+    needsUpdate: false,
+    mine: author === "alex-host",
+    approvedByMe: false,
+    head: "abc1234",
+    ...over,
+  });
+  const props: Record<string, ProposalView[]> = {};
+  if (name.startsWith("proposals")) {
+    props["alex-host/claude-group"] = [
+      prop(12, "sam-member", "Add test-runner skill", "skills/test-runner/SKILL.md", {
+        approvals: ["kim-dev"],
+      }),
+      prop(13, "kim-dev", "Shorter commit rule", "CLAUDE.md", { needsUpdate: true }),
+      prop(14, "alex-host", "Add lint agent", "agents/lint.md"),
+    ].slice(0, name === "proposals-one" ? 1 : 3);
+    props["sample-org/dev-rules"] = [
+      prop(13, "kim-dev", "Shorter commit rule", "CLAUDE.md"),
+      prop(12, "alex-host", "Add test-runner skill", "skills/test-runner/SKILL.md"),
+    ].slice(0, name === "proposals-guest-one" ? 1 : 2);
+  } else {
+    props["alex-host/claude-group"] = [
+      prop(12, "sam-member", "Add test-runner skill", "skills/test-runner/SKILL.md"),
+    ];
+    props["sample-org/dev-rules"] = [
+      prop(13, "kim-dev", "Shorter commit rule", "CLAUDE.md"),
+      prop(12, "alex-host", "Add test-runner skill", "skills/test-runner/SKILL.md"),
+    ];
+  }
+  /** Approve (a member approves, the host merges) or decline one proposal, or every other's. */
+  const decideProposals = (repo: string, approve: boolean, number?: number): Event => {
+    const host = snap.groups.find((g) => g.repo === repo)?.isHost;
+    props[repo] = (props[repo] ?? []).flatMap((p) => {
+      if (!approve) return number === undefined || p.number === number ? [] : [p];
+      if ((number !== undefined && p.number !== number) || p.mine) return [p];
+      if (p.needsUpdate && number === undefined) return [p];
+      if (host) return [];
+      return [{ ...p, approvals: [...p.approvals, snap.login ?? ""], approvedByMe: true }];
+    });
+    return done;
+  };
   const patchGroup = (repo: string, p: Partial<GroupView>) =>
     set({ groups: snap.groups.map((g) => (g.repo === repo ? { ...g, ...p } : g)) });
   const secret = "secret found in settings.json:12 (API key); nothing was committed";
@@ -470,63 +539,68 @@ export function fakeBackend(search: string): Backend {
             : [],
         };
       case "dropLine":
+      case "editLine":
         clash = false;
         return done;
       case "useGroupVersion":
         return done;
       case "explain":
-        if (q.has("noClaude"))
+        if (q.has("noClaude") || name === "helper-unavailable")
           throw "Claude is not signed in on this machine. Run claude, sign in, then try again.";
         return {
           kind: "text",
-          data: "Adds two working rules and removes the tabs rule. Safe to accept.",
+          data:
+            cmd.data.task === "activity"
+              ? "sam-member added two working rules: keep pull requests small and run the tests before committing. The tabs rule was removed."
+              : "Adds two working rules and removes the tabs rule. Safe to accept.",
         };
-      case "proposals": {
-        const host = cmd.data.repo === "alex-host/claude-group";
-        const p = (author: string, mine: boolean) => ({
-          number: 12,
-          branch: `proposal/${author}-20261126100000`,
+      case "proposals":
+        return { kind: "proposals", data: structuredClone(props[cmd.data.repo] ?? []) };
+      case "proposalApprove":
+      case "proposalDecline":
+        return decideProposals(cmd.data.repo, cmd.kind === "proposalApprove", cmd.data.number);
+      case "proposalsAcceptAll":
+      case "proposalsDeclineAll":
+        return decideProposals(cmd.data.repo, cmd.kind === "proposalsAcceptAll");
+      case "history": {
+        const t = (ago: number) => new Date((sec() - ago) * 1000).toISOString();
+        const item = (sha: string, summary: string, author: string, ago: number): HistoryItem => ({
+          sha,
+          summary,
           author,
-          title: "Add test-runner skill",
-          url: "https://github.com/sample-org/dev-rules/pull/12",
-          files: [],
-          approvals: [],
-          needsUpdate: false,
-          mine,
-          approvedByMe: false,
-          head: "abc1234",
+          at: t(ago),
+          issues: [],
+          before: null,
+          now: null,
         });
-        return {
-          kind: "proposals",
-          data: host
-            ? [p("sam-member", false)]
-            : [{ ...p("kim-dev", false), number: 13 }, p("alex-host", true)],
-        };
-      }
-      case "history":
+        const all: HistoryItem[] = [
+          {
+            ...item("a1", "Prefer small pull requests", "sam-member", 3600),
+            issues: name === "helper-unavailable" ? [] : [12],
+            before: name === "helper-unavailable" ? null : "no rule on pull request size.",
+            now: name === "helper-unavailable" ? null : "keep pull requests small.",
+          },
+          item("b2", "Add release-notes skill", snap.login ?? "", 86400),
+          item("c3", "Create group", snap.login ?? "", 3 * 86400),
+          item("d4", "Initial commit", snap.login ?? "", 4 * 86400),
+        ];
+        const some = name === "helper-unavailable" ? all.slice(0, 1) : all;
         return {
           kind: "history",
-          data: [
-            {
-              sha: "a1",
-              summary: "sam-member changed CLAUDE.md",
-              author: "sam-member",
-              at: new Date((sec() - 3600) * 1000).toISOString(),
-              issues: [],
-              before: null,
-              now: null,
-            },
-            {
-              sha: "b2",
-              summary: "you added skill release-notes",
-              author: snap.login ?? "",
-              at: new Date((sec() - 86400) * 1000).toISOString(),
-              issues: [],
-              before: null,
-              now: null,
-            },
-          ],
+          data: name === "no-history" ? [] : some.slice(0, cmd.data.limit),
         };
+      }
+      case "revertPreview":
+        return {
+          kind: "revertPlan",
+          data: {
+            sha: cmd.data.sha,
+            summary: "Prefer small pull requests",
+            files: [{ path: "CLAUDE.md", action: "restore", blocked: null }],
+          },
+        };
+      case "revert":
+        return done;
       case "editsList":
         return { kind: "edits", data: structuredClone(edits[cmd.data.repo] ?? []) };
       case "keepMine":
@@ -552,7 +626,9 @@ export function fakeBackend(search: string): Backend {
         if (cmd.data.path === "settings.json") throw secret;
         await gate();
         edits[cmd.data.repo] = (edits[cmd.data.repo] ?? []).filter((e) => e.path !== cmd.data.path);
-        return done;
+        return snap.groups.find((g) => g.repo === cmd.data.repo)?.proposalMode
+          ? { kind: "proposed", data: 14 }
+          : done;
       case "contents": {
         const it = (kind: string, name: string) => ({ kind, name });
         return {

@@ -43,6 +43,7 @@ export function Review(c: Ctx) {
   const [said, setSaid] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [gone, setGone] = useState<string[]>([]);
+  const [edit, setEdit] = useState<{ line: string; text: string } | null>(null);
 
   const mine = (all ?? []).filter(
     (x) => x.a.source === null && x.b.source === g.repo && !gone.includes(x.b.text),
@@ -80,6 +81,20 @@ export function Review(c: Ctx) {
     reload();
   };
 
+  const saveEdit = async () => {
+    if (!edit) return;
+    const r = await call({
+      kind: "editLine",
+      data: { repo: g.repo, line: edit.line, text: edit.text },
+    });
+    if ("err" in r) return c.toast(r.err);
+    c.toast("Saved. The edited line is now your own, in ~/.claude/CLAUDE.md.");
+    setGone((l) => [...l, edit.line]);
+    setEdit(null);
+    reloadClashes();
+    reload();
+  };
+
   if (!items) return <p className="muted">Loading…</p>;
 
   if (mine.length > 0)
@@ -97,23 +112,50 @@ export function Review(c: Ctx) {
             <p style={{ margin: 0 }}>
               Yours: <span className="mono">{x.a.text}</span>
             </p>
-            <div className="acts" style={{ marginTop: 10 }}>
-              <button type="button" className="b p" onClick={() => resolve(x, true)}>
-                Keep mine
-              </button>
-              <button type="button" className="b" onClick={() => resolve(x, false)}>
-                Use the group line
-              </button>
-              <button
-                type="button"
-                className="b"
-                onClick={() =>
-                  c.toast("Open ~/.claude/CLAUDE.md in your editor and change your line.")
-                }
-              >
-                Edit line
-              </button>
-            </div>
+            {edit?.line === x.b.text ? (
+              <>
+                <label className="fld" style={{ marginTop: 10 }}>
+                  <span>Your version of the group line</span>
+                  <textarea
+                    className="in mono"
+                    rows={2}
+                    spellCheck={false}
+                    // biome-ignore lint/a11y/noAutofocus: the person just asked to edit this line
+                    autoFocus
+                    value={edit.text}
+                    onChange={(e) => setEdit({ ...edit, text: e.target.value })}
+                  />
+                </label>
+                <p className="sm muted">
+                  The group's line leaves your copy; this text is added to your own CLAUDE.md. Leave
+                  it empty to just drop the group line.
+                </p>
+                <div className="acts">
+                  <button type="button" className="b p" onClick={saveEdit}>
+                    Save
+                  </button>
+                  <button type="button" className="b" onClick={() => setEdit(null)}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="acts" style={{ marginTop: 10 }}>
+                <button type="button" className="b p" onClick={() => resolve(x, true)}>
+                  Keep mine
+                </button>
+                <button type="button" className="b" onClick={() => resolve(x, false)}>
+                  Use the group line
+                </button>
+                <button
+                  type="button"
+                  className="b"
+                  onClick={() => setEdit({ line: x.b.text, text: x.b.text })}
+                >
+                  Edit line
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </>

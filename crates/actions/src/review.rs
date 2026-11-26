@@ -192,6 +192,12 @@ impl Core {
         Ok(Event::Done)
     }
 
+    pub(crate) fn edit_line(&mut self, repo: &str, line: &str, text: &str) -> Result<Event> {
+        self.drop_line(repo, line)?;
+        claude_sync_fs::apply::append_own_line(&self.home, text, self.now())?;
+        Ok(Event::Done)
+    }
+
     pub(crate) fn use_group_version(&mut self, repo: &str) -> Result<Event> {
         let mut st = self.state(repo)?;
         st.reset();

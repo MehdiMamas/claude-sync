@@ -6,7 +6,9 @@ import type { Snapshot } from "../generated/Snapshot";
 import { ago } from "../time";
 import { Banner, Chip, go, Spin, useLoad } from "../ui";
 import { Contents, Copy, Edits, Share } from "./GroupEdits";
+import { History, Notes, titleOf } from "./GroupHistory";
 import { Members } from "./GroupMembers";
+import { Proposals, Propose } from "./GroupProposals";
 import { Review } from "./GroupReview";
 import type { Flash } from "./Groups";
 import { Later } from "./Shell";
@@ -57,11 +59,16 @@ export const pages: Record<string, ComponentType<Ctx>> = {
   copy: Copy,
   review: Review,
   members: Members,
+  proposals: Proposals,
+  propose: Propose,
+  history: History,
 };
 export const tabOf: Record<string, string> = {
   edits: "contents",
   share: "contents",
   copy: "contents",
+  proposals: "",
+  propose: "",
 };
 
 const chip = (g: GroupView): [string, "ok" | "warn" | "err" | "n"] => {
@@ -367,11 +374,15 @@ function Overview(c: Ctx) {
           {(recent ?? []).map((h) => (
             <div className="row" key={h.sha}>
               <div>
-                {h.summary}
+                {titleOf(h.summary)}
                 {when(h.at, c.now)}
+                <Notes h={h} />
               </div>
               <div className="acts">
-                <a className="b g" href={open(h.author === snap.login ? "history" : "helper")}>
+                <a
+                  className="b g"
+                  href={open(h.author === snap.login ? "history" : `history/explain/${h.sha}`)}
+                >
                   {h.author === snap.login ? "History" : "Explain"}
                 </a>
               </div>

@@ -25,6 +25,7 @@ const members = `${base}/members`;
 const host = (p: Page) => p.getByLabel("GitHub name");
 const room = "/?scenario=members";
 const review = `${base}/review`;
+const guest = "/group/sample-org/dev-rules";
 
 export const frames: FrameCase[] = [
   { frame: "SignIn", url: "/?scenario=signed-out" },
@@ -251,5 +252,58 @@ export const frames: FrameCase[] = [
   {
     frame: "GroupReviewGuest",
     url: `/?scenario=review-guest#/group/sample-org/dev-rules/review`,
+  },
+  { frame: "GroupProposals", url: `/?scenario=proposals#${base}/proposals` },
+  { frame: "GroupProposalsGuest", url: `/?scenario=proposals-guest#${guest}/proposals` },
+  { frame: "GroupProposeForm", url: `/?scenario=propose#${guest}/propose` },
+  {
+    frame: "GroupProposalApproved",
+    url: `/?scenario=proposals-one#${base}/proposals`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Merge" }).click();
+      await p.getByText("No open proposals.").waitFor();
+    },
+  },
+  {
+    frame: "GroupProposalApprovedGuest",
+    url: `/?scenario=proposals-guest-one#${guest}/proposals`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Approve" }).click();
+      await p.getByText("Approved by you").waitFor();
+    },
+  },
+  {
+    frame: "GroupProposalDeclined",
+    url: `/?scenario=proposals-one#${base}/proposals`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Decline", exact: true }).click();
+      await p.getByText("No open proposals.").waitFor();
+    },
+  },
+  { frame: "GroupHistory", url: `/?scenario=history#${base}/history` },
+  { frame: "GroupNoHistory", url: `/?scenario=no-history#${base}/history` },
+  {
+    frame: "GroupRevert",
+    url: `/?scenario=history#${base}/history`,
+    steps: async (p) => {
+      await p.getByRole("link", { name: "Revert" }).first().click();
+      await p.getByRole("dialog").getByText("Makes a new commit").waitFor();
+    },
+  },
+  {
+    frame: "GroupHelper",
+    url: `/?scenario=history#${base}/history`,
+    steps: async (p) => {
+      await p.getByRole("link", { name: "Explain" }).click();
+      await p.getByText("The tabs rule was removed.").waitFor();
+    },
+  },
+  {
+    frame: "GroupHelperUnavailable",
+    url: `/?scenario=helper-unavailable#${base}/history`,
+    steps: async (p) => {
+      await p.getByRole("link", { name: "Explain" }).click();
+      await p.getByText("so it cannot explain changes.").waitFor();
+    },
   },
 ];

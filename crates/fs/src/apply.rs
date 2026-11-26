@@ -82,6 +82,35 @@ pub fn update_block(home: &Home, groups: &[(String, bool)], now: i64) -> std::io
     Ok(true)
 }
 
+/// Add `line` to the person's own text in `~/.claude/CLAUDE.md` (after the managed block, never
+/// through a link). A line that is already there is not added twice. Returns whether it wrote.
+pub fn append_own_line(home: &Home, line: &str, now: i64) -> std::io::Result<bool> {
+    let path = home.claude.join("CLAUDE.md");
+    let line = line.trim();
+    if line.is_empty()
+        || blocked(&home.claude, &path)
+        || std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink())
+    {
+        return Ok(false);
+    }
+    let existing = read_file(&path)?.unwrap_or_default();
+    let text = String::from_utf8_lossy(&existing).into_owned();
+    if text.lines().any(|l| l.trim() == line) {
+        return Ok(false);
+    }
+    if !existing.is_empty() {
+        backup(home, now, "CLAUDE.md", &existing)?;
+    }
+    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let lead = if text.is_empty() || text.ends_with('\n') {
+        ""
+    } else {
+        eol
+    };
+    write_atomic(&path, format!("{text}{lead}{line}{eol}").as_bytes())?;
+    Ok(true)
+}
+
 fn owned_key(repo: &str) -> String {
     format!("owned/{repo}")
 }

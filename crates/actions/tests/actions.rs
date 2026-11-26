@@ -785,6 +785,35 @@ async fn clashes_between_own_text_and_a_group_are_listed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn edit_line_drops_the_group_line_and_keeps_the_edit_as_my_own() {
+    let t = T::new().await;
+    std::fs::create_dir_all(t.dir.path().join(".claude")).unwrap();
+    std::fs::write(t.file("CLAUDE.md"), md(&["- Always use tabs"])).unwrap();
+    let h = t
+        .group_with("h1", &[("CLAUDE.md", &md(&["- Never use tabs"]))])
+        .await;
+    h.send(Command::SyncNow).await.unwrap();
+    let cmd = || Command::EditLine {
+        repo: "zed/team".into(),
+        line: "- Never use tabs".into(),
+        text: "- Use tabs in Makefiles only".into(),
+    };
+    h.send(cmd()).await.unwrap();
+    let own = std::fs::read_to_string(t.file("CLAUDE.md")).unwrap();
+    assert!(
+        own.ends_with("- Always use tabs\n- Use tabs in Makefiles only\n"),
+        "{own}"
+    );
+    let Event::Clashes(c) = h.send(Command::Clashes).await.unwrap() else {
+        panic!()
+    };
+    assert!(c.is_empty());
+    // the group line is gone for me, so a second edit of it is refused and writes nothing more
+    assert!(h.send(cmd()).await.is_err());
+    assert_eq!(std::fs::read_to_string(t.file("CLAUDE.md")).unwrap(), own);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn commit_marker_bytes_and_leave_removes_delivered_files() {
     let t = T::new().await;
     let h = t

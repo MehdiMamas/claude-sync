@@ -408,6 +408,13 @@ pub enum Command {
     UseGroupVersion {
         repo: String,
     },
+    /// Edit a clashing group line (Parity 38): the group's line leaves this user's copy and the
+    /// edited `text` becomes the person's own line in `~/.claude/CLAUDE.md`. Empty text only drops.
+    EditLine {
+        repo: String,
+        line: String,
+        text: String,
+    },
     Clashes,
     /// This person's choice for a group's CLAUDE.md lines (follows them to every machine).
     SetReviewChoice {
