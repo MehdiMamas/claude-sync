@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 impl Core {
-    fn show(&self) {
+    pub(crate) fn show(&self) {
         if let Some(tx) = &self.publish {
             let _ = tx.send(self.snapshot());
         }
@@ -23,6 +23,7 @@ impl Core {
         if self.expired.is_some() {
             return Err(Error::new(msg::SESSION_EXPIRED));
         }
+        let _ = self.retry_feedback();
         self.personal_discover();
         let repos: Vec<String> = self.db.groups()?.into_iter().map(|g| g.repo).collect();
         for r in repos {

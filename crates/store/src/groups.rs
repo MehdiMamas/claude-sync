@@ -153,6 +153,45 @@ impl Db {
         )? > 0)
     }
 
+    pub fn mark_read(&self, id: i64) -> Result<()> {
+        self.lock()
+            .execute("UPDATE notifications SET read = 1 WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn mark_all_read(&self) -> Result<()> {
+        self.lock()
+            .execute("UPDATE notifications SET read = 1 WHERE read = 0", [])?;
+        Ok(())
+    }
+
+    pub fn clear_notifications(&self) -> Result<()> {
+        self.lock().execute("DELETE FROM notifications", [])?;
+        Ok(())
+    }
+
+    /// Reports saved while offline, oldest first, as (id, JSON body).
+    pub fn feedback_queue(&self) -> Result<Vec<(i64, String)>> {
+        let conn = self.lock();
+        let mut st = conn.prepare("SELECT id, body FROM feedback_queue ORDER BY id")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    pub fn queue_feedback(&self, body: &str) -> Result<()> {
+        self.lock().execute(
+            "INSERT INTO feedback_queue (body, tries) VALUES (?1, 0)",
+            [body],
+        )?;
+        Ok(())
+    }
+
+    pub fn drop_feedback(&self, id: i64) -> Result<()> {
+        self.lock()
+            .execute("DELETE FROM feedback_queue WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
     pub fn last_synced(&self, repo: &str) -> Result<Option<i64>> {
         use rusqlite::OptionalExtension;
         Ok(self

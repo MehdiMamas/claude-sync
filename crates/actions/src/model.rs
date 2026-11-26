@@ -425,6 +425,14 @@ pub enum Command {
         to: String,
         req: CopyRequest,
     },
+    MarkRead {
+        id: i64,
+    },
+    MarkAllRead,
+    ClearNotifications,
+    SendFeedback(FeedbackInput),
+    /// Send the saved reports once the relay answers `/api/health`.
+    RetryFeedback,
     /// Host only; writes nothing.
     RevertPreview {
         repo: String,
@@ -451,6 +459,20 @@ pub enum Command {
     WindowOpened,
 }
 
+/// A feedback report as the window collects it; the logs are redacted and cut here.
+#[derive(Debug, Clone, Default)]
+pub struct FeedbackInput {
+    /// `bug` or `idea`.
+    pub kind: String,
+    pub title: String,
+    pub description: String,
+    pub app_version: String,
+    pub os: String,
+    pub logs: String,
+    /// PNG or JPEG bytes as base64, at most 3 MiB once decoded.
+    pub screenshot: Option<String>,
+}
+
 /// What the person picked in the copy preview.
 #[derive(Debug, Clone, Default)]
 pub struct CopyRequest {
@@ -465,6 +487,12 @@ pub struct CopyRequest {
 pub enum Event {
     /// The change went out as proposal #n, not as a commit.
     Proposed(u64),
+    /// Feedback was filed (`number`, `url`) or saved to send later (`queued`).
+    Feedback {
+        queued: bool,
+        number: Option<u64>,
+        url: Option<String>,
+    },
     Proposals(Vec<ProposalView>),
     CopyPreview(CopyPreviewView),
     Copied {

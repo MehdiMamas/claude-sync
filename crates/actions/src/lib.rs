@@ -23,6 +23,7 @@ mod copy;
 mod core;
 mod edits;
 mod error;
+mod feedback;
 mod groups;
 mod history;
 pub mod jobs;

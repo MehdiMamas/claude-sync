@@ -153,3 +153,9 @@ pub fn nothing_to_revert(sha: &str) -> String {
 pub fn changed_again(path: &str) -> String {
     format!("{path} changed again after this commit; revert that first.")
 }
+
+pub const TITLE_NEEDED: &str = "a title is needed";
+pub const BAD_KIND: &str = "kind must be bug or idea";
+pub const FEEDBACK_SIGN_IN: &str = "sign in to send feedback";
+pub const SHOT_TOO_LARGE: &str = "screenshot is larger than 3 MB";
+pub const SHOT_BAD: &str = "only PNG and JPEG images can be attached";

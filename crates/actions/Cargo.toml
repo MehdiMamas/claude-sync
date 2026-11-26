@@ -13,6 +13,7 @@ name = "claude_sync_actions"
 ts = ["dep:ts-rs"]
 
 [dependencies]
+base64 = "0.22"
 claude-sync-engine = { path = "../engine" }
 claude-sync-github = { path = "../github", default-features = false }
 claude-sync-store = { path = "../store" }
@@ -30,5 +31,4 @@ libc = "0.2"
 [dev-dependencies]
 wiremock = "0.6"
 tempfile = "3"
-base64 = "0.22"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync"] }

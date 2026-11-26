@@ -1,4 +1,5 @@
 //! Each command against a fake GitHub (wiremock) and a temp home; the loop with a fake clock.
+use base64::Engine as _;
 use claude_sync_actions::*;
 use claude_sync_github::secrets::SecretStore;
 use claude_sync_github::{Config, Result as GhResult};
@@ -2753,5 +2754,176 @@ mod copy_revert_history {
             got,
             [("claudeMd", "CLAUDE.md"), ("agent", "a.md"), ("skill", "s")]
         );
+    }
+}
+
+mod feedback {
+    use super::*;
+
+    fn input(title: &str) -> FeedbackInput {
+        FeedbackInput {
+            kind: "bug".into(),
+            title: title.into(),
+            description: "it broke".into(),
+            app_version: "2.0.0".into(),
+            os: "TestOS".into(),
+            logs: "line one\nAuthorization: Bearer abc123secret\nlast".into(),
+            screenshot: None,
+        }
+    }
+    async fn relay(t: &T, status: u16, body: serde_json::Value) {
+        t.mock("POST", "/api/feedback", status, body).await;
+    }
+    async fn posts(t: &T) -> Vec<serde_json::Value> {
+        t.server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path() == "/api/feedback")
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_report_is_checked_redacted_and_filed() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        relay(
+            &t,
+            201,
+            json!({"number": 7, "url": "https://example.test/i/7"}),
+        )
+        .await;
+        for (f, text) in [
+            (input("  "), "a title is needed"),
+            (
+                FeedbackInput {
+                    kind: "x".into(),
+                    ..input("t")
+                },
+                "kind must be bug or idea",
+            ),
+            (
+                FeedbackInput {
+                    screenshot: Some("aGVsbG8=".into()),
+                    ..input("t")
+                },
+                "only PNG and JPEG images can be attached",
+            ),
+            (
+                FeedbackInput {
+                    screenshot: Some(base64::engine::general_purpose::STANDARD.encode(vec![
+                        0x89u8;
+                        3 * 1024 * 1024
+                            + 1
+                    ])),
+                    ..input("t")
+                },
+                "screenshot is larger than 3 MB",
+            ),
+        ] {
+            assert_eq!(h.send(Command::SendFeedback(f)).await.unwrap_err().0, text);
+        }
+        assert!(posts(&t).await.is_empty());
+        let e = h
+            .send(Command::SendFeedback(input(" Crash ")))
+            .await
+            .unwrap();
+        assert_eq!(
+            e,
+            Event::Feedback {
+                queued: false,
+                number: Some(7),
+                url: Some("https://example.test/i/7".into())
+            }
+        );
+        let p = &posts(&t).await[0];
+        assert_eq!(
+            (p["title"].as_str(), p["kind"].as_str()),
+            (Some("Crash"), Some("bug"))
+        );
+        let logs = p["logs"].as_str().unwrap();
+        assert!(
+            logs.contains("Authorization:***")
+                && !logs.contains("abc123secret")
+                && logs.contains("last")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refused_and_too_large_show_the_relay_text_and_are_not_kept() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        relay(
+            &t,
+            403,
+            json!({"error": "GitHub did not let your account open an issue"}),
+        )
+        .await;
+        let e = h.send(Command::SendFeedback(input("a"))).await.unwrap_err();
+        assert_eq!(e.0, "GitHub did not let your account open an issue");
+        t.server.reset().await;
+        t.mock("GET", "/user", 200, json!({"login": "ann", "id": 1}))
+            .await;
+        relay(&t, 413, json!({"error": "request body is too large"})).await;
+        let e = h.send(Command::SendFeedback(input("b"))).await.unwrap_err();
+        assert_eq!(e.0, "request body is too large");
+        t.mock("GET", "/api/health", 200, json!({"ok": true})).await;
+        h.send(Command::RetryFeedback).await.unwrap();
+        assert_eq!(
+            posts(&t).await.len(),
+            1,
+            "nothing was queued: no retry post"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn offline_or_rate_limited_reports_wait_and_go_when_the_relay_answers() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        relay(
+            &t,
+            429,
+            json!({"error": "too many feedback posts, try again later"}),
+        )
+        .await;
+        let e = h.send(Command::SendFeedback(input("Slow"))).await.unwrap();
+        assert!(matches!(
+            e,
+            Event::Feedback {
+                queued: true,
+                number: None,
+                ..
+            }
+        ));
+        // still unhealthy: it waits
+        h.send(Command::RetryFeedback).await.unwrap();
+        assert_eq!(posts(&t).await.len(), 1);
+        t.server.reset().await;
+        t.mock("GET", "/user", 200, json!({"login": "ann", "id": 1}))
+            .await;
+        t.mock("GET", "/api/health", 200, json!({"ok": true})).await;
+        relay(
+            &t,
+            201,
+            json!({"number": 9, "url": "https://example.test/i/9"}),
+        )
+        .await;
+        h.send(Command::RetryFeedback).await.unwrap();
+        assert_eq!(posts(&t).await.len(), 1, "sent once, the queue is empty");
+        let s = h.snapshot();
+        assert_eq!(s.unread, 1);
+        assert_eq!(s.notifications[0].text, "\"Slow\" was filed as #9.");
+        h.send(Command::RetryFeedback).await.unwrap();
+        assert_eq!(posts(&t).await.len(), 1);
+
+        let id = s.notifications[0].id;
+        h.send(Command::MarkRead { id }).await.unwrap();
+        assert_eq!(h.snapshot().unread, 0);
+        assert!(h.snapshot().notifications[0].read);
+        h.send(Command::MarkAllRead).await.unwrap();
+        h.send(Command::ClearNotifications).await.unwrap();
+        assert!(h.snapshot().notifications.is_empty());
     }
 }
