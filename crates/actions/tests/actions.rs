@@ -726,3 +726,101 @@ async fn commit_marker_bytes_and_leave_removes_delivered_files() {
     assert!(!t.file("skills/s/SKILL.md").exists());
     assert!(!marker.exists());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn keep_mine_undo_and_a_secret_blocks_sharing() {
+    let t = T::new().await;
+    let orig = "---\nname: s\n---\nhello\n";
+    let h = t.group_with("h1", &[("skills/s/SKILL.md", orig)]).await;
+    h.send(Command::SyncNow).await.unwrap();
+    let repo = "zed/team".to_string();
+    let edits = || async {
+        let Event::Edits(e) = h
+            .send(Command::EditsList {
+                repo: "zed/team".into(),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        e
+    };
+    assert!(edits().await.is_empty());
+    let f = t.file("skills/s/SKILL.md");
+    std::fs::write(&f, "mine\n").unwrap();
+    // a later pass keeps my edit (nothing is pushed by a pass)
+    h.send(Command::SyncNow).await.unwrap();
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), "mine\n");
+    assert_eq!(
+        edits().await,
+        vec![EditView {
+            path: "skills/s/SKILL.md".into(),
+            kept: false
+        }]
+    );
+    h.send(Command::KeepMine {
+        repo: repo.clone(),
+        path: "skills/s/SKILL.md".into(),
+    })
+    .await
+    .unwrap();
+    assert!(edits().await[0].kept);
+    // a secret in the edit stops the share before anything is sent
+    let token = format!("ghp_{}", "a".repeat(36));
+    std::fs::write(&f, format!("key {token}\n")).unwrap();
+    let e = h
+        .send(Command::ShareEdit {
+            repo: repo.clone(),
+            path: "skills/s/SKILL.md".into(),
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        e.0.starts_with("secret found in skills/s/SKILL.md:1 (")
+            && e.0.ends_with("); nothing was committed"),
+        "{}",
+        e.0
+    );
+    assert!(!edits().await[0].kept, "changed again, so not kept");
+    // undo brings the group's version back and saves mine
+    h.send(Command::UndoEdit {
+        repo,
+        path: "skills/s/SKILL.md".into(),
+    })
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), orig);
+    assert!(edits().await.is_empty());
+    let backups = t.dir.path().join(".claude-sync/backups/zed__team");
+    let stamp = std::fs::read_dir(backups)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert!(std::fs::read_to_string(stamp.join("skills/s/SKILL.md"))
+        .unwrap()
+        .contains("key ghp_"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_changed_on_both_sides_is_listed_as_a_conflict() {
+    let t = T::new().await;
+    let h = t.group_with("h1", &[("skills/s/SKILL.md", "a\n")]).await;
+    h.send(Command::SyncNow).await.unwrap();
+    std::fs::write(t.file("skills/s/SKILL.md"), "mine\n").unwrap();
+    t.serve("h2", &[("skills/s/SKILL.md", "theirs\n")]).await;
+    h.send(Command::SyncNow).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(t.file("skills/s/SKILL.md")).unwrap(),
+        "theirs\n"
+    );
+    let Event::Conflicts(c) = h.send(Command::Conflicts).await.unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        (c[0].repo.as_str(), c[0].path.as_str()),
+        ("zed/team", "skills/s/SKILL.md")
+    );
+}

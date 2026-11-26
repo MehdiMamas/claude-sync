@@ -20,6 +20,7 @@
 mod actor;
 mod choices;
 mod core;
+mod edits;
 mod error;
 mod groups;
 pub mod model;

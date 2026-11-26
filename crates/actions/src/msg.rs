@@ -66,3 +66,27 @@ pub fn own_line_gone() -> &'static str {
 pub fn group_line_gone(id: &str) -> String {
     format!("{id}'s CLAUDE.md no longer has that line")
 }
+pub fn secret_found(path: &str, line: usize, pattern: &str) -> String {
+    format!("secret found in {path}:{line} ({pattern}); nothing was committed")
+}
+pub fn not_a_skill_name(name: &str) -> String {
+    format!("{name:?} is not a skill name")
+}
+pub fn no_skill_md(name: &str) -> String {
+    format!("{name} has no SKILL.md, so it is not a skill")
+}
+pub fn no_files_to_share(name: &str) -> String {
+    format!("{name} has no files to share")
+}
+pub fn does_not_sync(id: &str, what: &str) -> String {
+    format!("{id} does not sync {what}")
+}
+pub fn skill_exists(id: &str, name: &str) -> String {
+    format!("{id} already has a skill named {name}")
+}
+pub fn no_text_to_share() -> &'static str {
+    "there is no text to share"
+}
+pub fn not_an_edit(path: &str) -> String {
+    format!("{path} has no local edit")
+}

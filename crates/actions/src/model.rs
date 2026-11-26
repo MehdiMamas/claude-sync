@@ -114,6 +114,14 @@ ts! {
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
+    pub struct ConflictView {
+        pub repo: String,
+        pub path: String,
+        pub saved_at: i64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct EditView {
         pub path: String,
         pub kept: bool,
@@ -195,6 +203,32 @@ pub enum Command {
         repo: String,
     },
     Clashes,
+    // local edits to delivered files (Parity 39, 40, 41, 42)
+    EditsList {
+        repo: String,
+    },
+    /// Keep my version: it is not shown as an edit again until it changes.
+    KeepMine {
+        repo: String,
+        path: String,
+    },
+    /// Put the group's version back (mine is saved under backups first).
+    UndoEdit {
+        repo: String,
+        path: String,
+    },
+    ShareEdit {
+        repo: String,
+        path: String,
+    },
+    ShareSkill {
+        repo: String,
+        name: String,
+    },
+    ShareClaudeMd {
+        repo: String,
+    },
+    Conflicts,
     // sync loop switches
     Pause,
     Resume,
@@ -229,6 +263,8 @@ pub enum Event {
     Discovered(Vec<String>),
     /// A pass ran: files written or removed, groups that failed.
     Review(Vec<ReviewLine>),
+    Edits(Vec<EditView>),
+    Conflicts(Vec<ConflictView>),
     Clashes(Vec<claude_sync_engine::clashes::Clash>),
     Synced {
         files: usize,
