@@ -216,6 +216,7 @@ impl Core {
             }
             Ok(format!("add {login}"))
         })?;
+        let _ = self.refresh_pending(repo);
         Ok(Event::Message(msg::invited(login)))
     }
 
@@ -243,6 +244,7 @@ impl Core {
             Err(e) if e.status() == Some(404) => {}
             Err(e) => return Err(e.into()),
         }
+        let _ = self.refresh_pending(repo);
         Ok(Event::Done)
     }
 

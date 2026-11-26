@@ -59,6 +59,8 @@ pub struct Core {
     pub(crate) schedule: Schedule,
     pub(crate) invitations: Vec<InvitationView>,
     pub(crate) discoverable: Vec<crate::model::DiscoverView>,
+    /// Host groups: logins whose invitation GitHub still holds (read with the invitations).
+    pub(crate) pending_invites: std::collections::HashMap<String, Vec<String>>,
     /// The group the pass is syncing now.
     pub(crate) current: std::sync::Mutex<Option<String>>,
     pub(crate) syncing: bool,
@@ -102,6 +104,7 @@ impl Core {
             schedule: Schedule::default(),
             invitations: vec![],
             discoverable: vec![],
+            pending_invites: Default::default(),
             current: Default::default(),
             syncing: false,
             plugin_backoff: Default::default(),
@@ -265,6 +268,7 @@ impl Core {
         let due = self.schedule.due(&facts);
         if due.invites {
             self.load_invitations();
+            self.load_pending_invites();
         }
         for r in due.renames {
             self.follow_rename(&r);
@@ -301,6 +305,36 @@ impl Core {
                 })
                 .collect();
         }
+    }
+
+    /// Host groups: who GitHub still lists as invited.
+    fn load_pending_invites(&mut self) {
+        let hosted: Vec<String> = self
+            .db
+            .groups()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|g| g.host)
+            .map(|g| g.repo)
+            .collect();
+        for repo in hosted {
+            if self.refresh_pending(&repo).is_err() {
+                break;
+            }
+        }
+    }
+
+    /// Re-read one host group's pending invitations.
+    pub(crate) fn refresh_pending(&mut self, repo: &str) -> Result<()> {
+        let (o, n) = crate::groups::split(repo)?;
+        let list =
+            claude_sync_github::with_caller("invitations", || self.client.repo_invitations(o, n))?;
+        let logins = list
+            .into_iter()
+            .filter_map(|i| i.invitee.map(|x| x.login))
+            .collect();
+        self.pending_invites.insert(repo.to_string(), logins);
+        Ok(())
     }
 
     /// Parity 16: one repo GET a day; a new `full_name` moves the group's rows.
@@ -398,6 +432,11 @@ impl Core {
                     pending_review: crate::review::load(&self.db, &g.repo)
                         .map_or(0, |r| r.pending.len() as u32),
                     off: g.off,
+                    pending_invites: self
+                        .pending_invites
+                        .get(&g.repo)
+                        .cloned()
+                        .unwrap_or_default(),
                     repo: g.repo,
                 }
             })

@@ -288,6 +288,7 @@ mod tests {
             syncing: false,
             failed_at: None,
             off,
+            pending_invites: vec![],
         }
     }
 

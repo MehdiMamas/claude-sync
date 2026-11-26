@@ -62,6 +62,8 @@ ts! {
         /// When the last pass failed for this group; `last_sync` is untouched.
         pub failed_at: Option<i64>,
         pub off: bool,
+        /// Logins invited to this group that GitHub has not seen accepted (host only).
+        pub pending_invites: Vec<String>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,6 +277,24 @@ ts! {
     pub struct ContentItem {
         pub kind: String,
         pub name: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ClashSide {
+        /// The group repo; `None` for the person's own CLAUDE.md.
+        pub source: Option<String>,
+        pub name: String,
+        pub text: String,
+    }
+
+    /// Two lines of CLAUDE.md that say the same thing (`duplicate`) or the opposite (`contradiction`).
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ClashView {
+        pub kind: String,
+        pub a: ClashSide,
+        pub b: ClashSide,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -663,9 +683,7 @@ pub enum Event {
     Conflicts(Vec<ConflictView>),
     /// A file the window opens (a job's log or report); `None`: there is none yet.
     Path(Option<String>),
-    Clashes(
-        #[cfg_attr(feature = "ts", ts(type = "unknown[]"))] Vec<claude_sync_engine::clashes::Clash>,
-    ),
+    Clashes(Vec<ClashView>),
     Synced {
         files: usize,
         failed: usize,

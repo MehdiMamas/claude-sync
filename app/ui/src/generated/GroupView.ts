@@ -22,4 +22,8 @@ syncing: boolean,
 /**
  * When the last pass failed for this group; `last_sync` is untouched.
  */
-failedAt: number | null, off: boolean, };
+failedAt: number | null, off: boolean, 
+/**
+ * Logins invited to this group that GitHub has not seen accepted (host only).
+ */
+pendingInvites: Array<string>, };

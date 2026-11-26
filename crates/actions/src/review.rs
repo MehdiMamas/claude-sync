@@ -6,7 +6,7 @@
 //! between two passes therefore arrive as one step by the newest author.
 use crate::core::Core;
 use crate::error::{Error, Result};
-use crate::model::{Event, ReviewLine};
+use crate::model::{ClashSide, ClashView, Event, ReviewLine};
 use crate::msg;
 use claude_sync_engine::clashes::{clashes, Text};
 use claude_sync_engine::claude_md::strip;
@@ -209,6 +209,20 @@ impl Core {
                 });
             }
         }
-        Ok(Event::Clashes(clashes(&texts)))
+        let side = |s: claude_sync_engine::clashes::Side| ClashSide {
+            source: s.source,
+            name: s.name,
+            text: s.text,
+        };
+        Ok(Event::Clashes(
+            clashes(&texts)
+                .into_iter()
+                .map(|c| ClashView {
+                    kind: format!("{:?}", c.kind).to_lowercase(),
+                    a: side(c.a),
+                    b: side(c.b),
+                })
+                .collect(),
+        ))
     }
 }
