@@ -192,6 +192,13 @@ impl Pass<'_> {
             if let Some(b) = all.get(FILE) {
                 let _ = Store::write(self.db, &format!("group-file/{}", g.repo), b);
             }
+            // repo-only, never applied: the jobs of the group are read from this copy
+            let sched = all.get("schedules.json").map(|b| b.as_slice());
+            let _ = Store::write(
+                self.db,
+                &format!("schedules/{}", g.repo),
+                sched.unwrap_or_default(),
+            );
             let md = if g.flags.claude_md {
                 all.get("CLAUDE.md").map(|b| b.as_slice())
             } else {

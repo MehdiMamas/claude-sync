@@ -24,6 +24,9 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 ts-rs = { version = "12", optional = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 wiremock = "0.6"
 tempfile = "3"

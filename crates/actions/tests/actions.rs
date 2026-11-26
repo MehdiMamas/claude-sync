@@ -31,6 +31,7 @@ struct T {
     dir: tempfile::TempDir,
     clock: Arc<AtomicI64>,
     secrets: Arc<Map>,
+    jobs: Mutex<Option<claude_sync_actions::jobs::JobsEnv>>,
 }
 
 impl T {
@@ -40,6 +41,7 @@ impl T {
             dir: tempfile::tempdir().unwrap(),
             clock: Arc::new(AtomicI64::new(1_000_000)),
             secrets: Arc::default(),
+            jobs: Mutex::new(None),
         }
     }
     fn env(&self, client_id: &str) -> Env {
@@ -78,7 +80,8 @@ impl T {
             .set("ann", &claude_sync_github::Tokens::plain("tok").to_secret())
             .unwrap();
         self.secrets.set("@current", "ann").unwrap();
-        spawn(self.env("cid"), tick).await.unwrap()
+        let jobs = self.jobs.lock().unwrap().clone();
+        spawn_with(self.env("cid"), tick, jobs).await.unwrap()
     }
     /// The Git Data calls of one push to `o/r` on `main`.
     async fn push_chain(&self, repo: &str) {
@@ -931,4 +934,372 @@ async fn sharing_an_edit_a_skill_and_claude_md_pushes_the_expected_bytes() {
         t.pushed_blobs().await.last().unwrap(),
         "# Team\n\n## ann\n\nmy rule\n"
     );
+}
+
+// ---- jobs (Parity 41, 42, 64, 73, 74, 75) ----
+
+#[cfg(unix)]
+mod jobs {
+    use super::*;
+    use claude_sync_actions::jobs::{remove_jobs, JobsEnv};
+    use claude_sync_fs::tasks::{Kind, Out, Runner};
+    use std::sync::atomic::AtomicBool;
+
+    #[derive(Default)]
+    struct Fake {
+        calls: Mutex<Vec<String>>,
+    }
+    impl Runner for Fake {
+        fn run(&self, p: &str, a: &[String], _: Option<&[u8]>) -> std::io::Result<Out> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("{p} {}", a.join(" ")));
+            Ok(Out {
+                ok: true,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    struct Rig {
+        t: T,
+        fake: Arc<Fake>,
+        online: Arc<AtomicBool>,
+        spawned: Arc<Mutex<Vec<Vec<String>>>>,
+        env: JobsEnv,
+        agents: std::path::PathBuf,
+        args_file: std::path::PathBuf,
+    }
+
+    fn job(prompt: &str) -> String {
+        json!({"jobs": [{"id": "nightly", "title": "Night", "cron": "17 10 * * 1,4",
+            "prompt": prompt, "cwd": "~", "permissionMode": "plan", "timeoutMinutes": 5,
+            "args": ["--chrome"]}]})
+        .to_string()
+    }
+
+    async fn rig() -> (Rig, Handle) {
+        use std::os::unix::fs::PermissionsExt;
+        let t = T::new().await;
+        let bin = t.dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let args_file = t.dir.path().join("args.txt");
+        let claude = bin.join("claude");
+        std::fs::write(
+            &claude,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\necho ran\n",
+                args_file.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let agents = t.dir.path().join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        let fake = Arc::new(Fake::default());
+        let online = Arc::new(AtomicBool::new(true));
+        let spawned: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
+        let (o, s) = (online.clone(), spawned.clone());
+        let env = JobsEnv {
+            exe: "/app/claude-sync".into(),
+            kind: Kind::Launchd {
+                agents_dir: agents.clone(),
+                uid: "501".into(),
+            },
+            runner: fake.clone(),
+            claude: Arc::new(move || Some(claude.clone())),
+            login_path: Arc::new(|| Some("/login/bin".into())),
+            online: Arc::new(move || o.load(Ordering::SeqCst)),
+            spawn: Arc::new(move |a| {
+                s.lock().unwrap().push(a.to_vec());
+                Ok(())
+            }),
+        };
+        *t.jobs.lock().unwrap() = Some(env.clone());
+        let h = t
+            .group_with("h1", &[("schedules.json", &job("hello world"))])
+            .await;
+        h.send(Command::SyncNow).await.unwrap();
+        (
+            Rig {
+                t,
+                fake,
+                online,
+                spawned,
+                env,
+                agents,
+                args_file,
+            },
+            h,
+        )
+    }
+
+    impl Rig {
+        fn plist(&self) -> std::path::PathBuf {
+            self.agents.join("dev.claude-sync.job.nightly.plist")
+        }
+        fn logs(&self) -> std::path::PathBuf {
+            self.t.dir.path().join(".claude-sync/logs/jobs/nightly")
+        }
+        /// Run the job the way the hidden `run-job` subcommand does: a fresh core on the same state.
+        async fn run(&self, manual: bool) -> Result<String> {
+            let (env, jobs) = (self.t.env("cid"), self.env.clone());
+            tokio::task::spawn_blocking(move || {
+                let mut c = Core::open(env)?;
+                c.set_jobs_env(jobs);
+                c.run_job("nightly", manual)
+            })
+            .await
+            .unwrap()
+        }
+    }
+
+    fn acc(id: &str) -> Command {
+        Command::JobAccept {
+            repo: "zed/team".into(),
+            id: id.into(),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_job_is_registered_only_after_it_is_accepted_and_never_twice() {
+        let (r, h) = rig().await;
+        let j = &h.snapshot().jobs[0];
+        assert_eq!(
+            (j.id.as_str(), j.accepted, j.enabled),
+            ("nightly", false, true)
+        );
+        assert!(!r.plist().exists(), "not accepted: nothing registered");
+        assert!(r.fake.calls.lock().unwrap().is_empty());
+
+        h.send(acc("nightly")).await.unwrap();
+        let plist = std::fs::read_to_string(r.plist()).unwrap();
+        assert!(
+            plist.contains("/app/claude-sync")
+                && plist.contains("run-job")
+                && plist.contains("nightly")
+        );
+        assert!(h.snapshot().jobs[0].accepted);
+
+        // the same job on the next pass and the same accept: the task is left alone
+        let n = r.fake.calls.lock().unwrap().len();
+        h.send(Command::SyncNow).await.unwrap();
+        h.send(acc("nightly")).await.unwrap();
+        assert_eq!(r.fake.calls.lock().unwrap().len(), n);
+
+        // a moved exe re-registers once, and the old registration is replaced, not added to
+        let mut moved = r.env.clone();
+        moved.exe = "/elsewhere/claude-sync".into();
+        let h2 = {
+            let h = spawn_with(r.t.env("cid"), Duration::from_secs(3600), Some(moved))
+                .await
+                .unwrap();
+            h.send(Command::SyncNow).await.unwrap();
+            h
+        };
+        assert!(std::fs::read_to_string(r.plist())
+            .unwrap()
+            .contains("/elsewhere/claude-sync"));
+        let n = r.fake.calls.lock().unwrap().len();
+        h2.send(Command::SyncNow).await.unwrap();
+        assert_eq!(r.fake.calls.lock().unwrap().len(), n);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn off_and_a_changed_job_unregister_and_auto_accept_takes_the_change() {
+        let (r, h) = rig().await;
+        h.send(acc("nightly")).await.unwrap();
+        h.send(Command::JobEnable {
+            repo: "zed/team".into(),
+            id: "nightly".into(),
+            on: false,
+        })
+        .await
+        .unwrap();
+        assert!(!r.plist().exists());
+        assert!(!h.snapshot().jobs[0].enabled && h.snapshot().jobs[0].accepted);
+        assert!(r
+            .run(false)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("turned off"));
+        assert_eq!(
+            r.run(true).await.unwrap(),
+            "ok",
+            "Run now runs a job that is off"
+        );
+        h.send(Command::JobEnable {
+            repo: "zed/team".into(),
+            id: "nightly".into(),
+            on: true,
+        })
+        .await
+        .unwrap();
+        assert!(r.plist().exists());
+
+        // the group changes the prompt: the acceptance no longer holds
+        r.t.serve("h2", &[("schedules.json", &job("do more"))])
+            .await;
+        r.t.push_chain("zed/team").await;
+        h.send(Command::SyncNow).await.unwrap();
+        assert!(!h.snapshot().jobs[0].accepted);
+        assert!(!r.plist().exists());
+        assert!(r
+            .run(false)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("not accepted"));
+
+        // with auto-accept the next change is taken and registered
+        h.send(Command::JobsAutoAccept {
+            repo: "zed/team".into(),
+            on: true,
+        })
+        .await
+        .unwrap();
+        assert!(h.snapshot().jobs[0].accepted && r.plist().exists());
+        r.t.serve("h3", &[("schedules.json", &job("third"))]).await;
+        r.t.push_chain("zed/team").await;
+        h.send(Command::SyncNow).await.unwrap();
+        assert!(h.snapshot().jobs[0].accepted && r.plist().exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_run_uses_the_schedule_args_logs_and_locks() {
+        let (r, h) = rig().await;
+        h.send(acc("nightly")).await.unwrap();
+
+        // offline: recorded, claude not run, no log
+        r.online.store(false, Ordering::SeqCst);
+        assert_eq!(r.run(false).await.unwrap(), "skipped: offline");
+        assert!(!r.args_file.exists() && !r.logs().exists());
+        r.online.store(true, Ordering::SeqCst);
+
+        // the 20 newest logs stay
+        std::fs::create_dir_all(r.logs()).unwrap();
+        for i in 0..25 {
+            std::fs::write(r.logs().join(format!("19700101T0000{i:02}Z.log")), "old").unwrap();
+        }
+        assert_eq!(r.run(false).await.unwrap(), "ok");
+        assert_eq!(
+            std::fs::read_to_string(&r.args_file).unwrap(),
+            "-p\nhello world\n--chrome\n--permission-mode\nplan\n"
+        );
+        let mut logs: Vec<_> = std::fs::read_dir(r.logs())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        logs.sort();
+        assert_eq!(logs.len(), 20);
+        let newest = std::fs::read_to_string(r.logs().join(logs.last().unwrap())).unwrap();
+        assert!(
+            newest.contains("PATH: /login/bin") && newest.contains("ran"),
+            "{newest}"
+        );
+        assert_eq!(h.snapshot().jobs.len(), 1);
+        let Event::Path(p) = h
+            .send(Command::JobFile {
+                repo: "zed/team".into(),
+                id: "nightly".into(),
+                report: false,
+            })
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(p.unwrap().ends_with(logs.last().unwrap()));
+        assert_eq!(h.snapshot().jobs[0].last_result, "ok");
+
+        // a fresh lock means a run is going; a stale one is broken
+        let lock = r.t.dir.path().join(".claude-sync/jobs/nightly/lock");
+        let now = r.t.clock.load(Ordering::SeqCst);
+        std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        std::fs::write(&lock, format!("1 {}", now - 60)).unwrap();
+        assert_eq!(r.run(false).await.unwrap(), "already running");
+        std::fs::write(&lock, format!("1 {}", now - 5 * 60 - 300 - 1)).unwrap();
+        assert_eq!(r.run(false).await.unwrap(), "ok");
+        assert!(!lock.exists(), "the lock is released");
+
+        // Run now starts its own process
+        h.send(Command::JobRunNow {
+            repo: "zed/team".into(),
+            id: "nightly".into(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            r.spawned.lock().unwrap()[0],
+            ["run-job", "nightly", "--now"]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn remove_jobs_removes_the_tasks_keeps_the_acceptances_and_fails_loudly() {
+        let (r, h) = rig().await;
+        h.send(acc("nightly")).await.unwrap();
+        assert!(r.plist().exists());
+        drop(h);
+        let home = r.t.dir.path().to_path_buf();
+        // an OS task that cannot be removed is an error, so remove-jobs exits 1
+        std::fs::remove_file(r.plist()).unwrap();
+        std::fs::create_dir_all(r.plist().join("stuck")).unwrap();
+        assert!(remove_jobs(&home, &r.env).is_err());
+        std::fs::remove_dir(r.plist().join("stuck")).unwrap();
+        std::fs::remove_dir(r.plist()).unwrap();
+        std::fs::write(r.plist(), "x").unwrap();
+        assert_eq!(remove_jobs(&home, &r.env).unwrap(), 1);
+        assert!(!r.plist().exists());
+        // accepted stays: back on the next pass without asking again
+        let h = spawn_with(
+            r.t.env("cid"),
+            Duration::from_secs(3600),
+            Some(r.env.clone()),
+        )
+        .await
+        .unwrap();
+        assert!(h.snapshot().jobs[0].accepted);
+        h.send(Command::SyncNow).await.unwrap();
+        assert!(r.plist().exists());
+    }
+
+    #[test]
+    fn without_a_store_the_v1_jobs_file_names_the_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join(".claude-sync");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(
+            state.join("jobs.json"),
+            r#"{"jobs":{"nightly":{"group":"zed/team"}}}"#,
+        )
+        .unwrap();
+        let fake = Arc::new(Fake::default());
+        let env = JobsEnv {
+            exe: "/app".into(),
+            kind: Kind::Launchd {
+                agents_dir: dir.path().join("a"),
+                uid: "501".into(),
+            },
+            runner: fake.clone(),
+            claude: Arc::new(|| None),
+            login_path: Arc::new(|| None),
+            online: Arc::new(|| true),
+            spawn: Arc::new(|_| Ok(())),
+        };
+        assert_eq!(remove_jobs(dir.path(), &env).unwrap(), 1);
+        assert!(fake
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.contains("nightly")));
+        assert!(
+            !state.join("claude-sync.db").exists(),
+            "no store is created"
+        );
+    }
 }

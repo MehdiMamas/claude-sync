@@ -59,6 +59,7 @@ pub struct Core {
     pub(crate) invitations: Vec<InvitationView>,
     pub(crate) discoverable: Vec<String>,
     pub(crate) syncing: bool,
+    pub(crate) jobs_env: crate::jobs::JobsEnv,
     /// Lets a long command show its state before it ends (the actor sets it).
     pub(crate) publish: Option<tokio::sync::watch::Sender<Snapshot>>,
 }
@@ -66,6 +67,7 @@ pub struct Core {
 impl Core {
     pub fn open(env: Env) -> Result<Core> {
         let home = Home::under(&env.home);
+        let home_path = env.home.clone();
         std::fs::create_dir_all(&home.state)?;
         let db = Db::open(&home.state.join("claude-sync.db"))?;
         let client = Client::new(env.cfg.clone())?;
@@ -85,6 +87,7 @@ impl Core {
             invitations: vec![],
             discoverable: vec![],
             syncing: false,
+            jobs_env: crate::jobs::JobsEnv::system(&home_path),
             publish: None,
         };
         c.restore_session();
@@ -137,6 +140,11 @@ impl Core {
             DropLine { repo, line } => self.drop_line(&repo, &line),
             UseGroupVersion { repo } => self.use_group_version(&repo),
             Clashes => self.clashes(),
+            JobAccept { repo, id } => self.job_accept(&repo, &id),
+            JobEnable { repo, id, on } => self.job_enable(&repo, &id, on),
+            JobsAutoAccept { repo, on } => self.jobs_auto_accept(&repo, on),
+            JobRunNow { repo, id } => self.job_run_now(&repo, &id),
+            JobFile { repo, id, report } => self.job_file(&repo, &id, report),
             EditsList { repo } => self.edits_list(&repo),
             KeepMine { repo, path } => self.keep_mine(&repo, &path),
             UndoEdit { repo, path } => self.undo_edit(&repo, &path),
@@ -320,7 +328,7 @@ impl Core {
                     repo: n.repo,
                 })
                 .collect(),
-            jobs: vec![],
+            jobs: self.job_views(),
             ssh_on: c
                 .rest
                 .get("sshPeers")

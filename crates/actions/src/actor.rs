@@ -44,10 +44,26 @@ impl Handle {
 
 /// Open the state and start the actor. `tick` is how often the loop checks the schedule.
 pub async fn spawn(env: Env, tick: Duration) -> Result<Handle> {
+    spawn_with(env, tick, None).await
+}
+
+/// [`spawn`] with the machine side of the jobs replaced (tests).
+pub async fn spawn_with(
+    env: Env,
+    tick: Duration,
+    jobs: Option<crate::jobs::JobsEnv>,
+) -> Result<Handle> {
     // the blocking GitHub client must be built and dropped off the async threads
-    let mut core = tokio::task::spawn_blocking(move || Core::open(env))
-        .await
-        .map_err(|_| Error::new("could not start"))??;
+    let mut core = tokio::task::spawn_blocking(move || {
+        Core::open(env).map(|mut c| {
+            if let Some(j) = jobs {
+                c.set_jobs_env(j);
+            }
+            c
+        })
+    })
+    .await
+    .map_err(|_| Error::new("could not start"))??;
     let (tx, mut rx) = mpsc::channel::<Msg>(32);
     core.tx = Some(tx.downgrade());
     let (stx, srx) = watch::channel(core.snapshot());

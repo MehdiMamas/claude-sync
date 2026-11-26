@@ -26,6 +26,7 @@ impl Core {
         self.syncing = true;
         self.show();
         let r = self.run_pass();
+        self.jobs_after_pass();
         self.syncing = false;
         self.note_expired();
         r

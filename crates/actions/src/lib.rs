@@ -8,7 +8,7 @@
 //! [`Command`] and returns its [`Event`]; the background loop (tick, invitations, renames,
 //! rate-limit waits, session expiry) runs in the same task.
 //!
-//! Built so far: sign-in (device flow with cancel, App mode, sign out, 401 stop), the
+//! Built so far: jobs (accept, on/off, auto-accept, run now, OS tasks, run-job, remove-jobs), sign-in (device flow with cancel, App mode, sign out, 401 stop), the
 //! background schedule, the snapshot, and groups with members (create, discover, join, accept,
 //! add, remove, transfer, leave, reorder, off/on). Sync, local edits, review, jobs, personal
 //! memory, proposals, notifications, feedback, packs, ssh and activity come in later blocks.
@@ -23,6 +23,7 @@ mod core;
 mod edits;
 mod error;
 mod groups;
+pub mod jobs;
 pub mod model;
 pub mod msg;
 mod review;
@@ -30,7 +31,7 @@ mod schedule;
 mod signin;
 mod sync;
 
-pub use actor::{spawn, Handle};
+pub use actor::{spawn, spawn_with, Handle};
 pub use choices::{Choices, ReviewChoice};
 pub use core::{Core, Env, Secrets};
 pub use error::{Error, Result};

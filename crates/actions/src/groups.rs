@@ -248,6 +248,7 @@ impl Core {
         if self.db.groups()?.iter().any(|g| g.repo == repo && g.host) {
             return Err(Error::new(msg::host_cannot_leave(repo)));
         }
+        self.unregister_group_jobs(repo)?;
         let now = self.now();
         let _ = claude_sync_fs::apply::unapply_settings(&self.home, &self.db, repo, now);
         let pass = claude_sync_fs::pass::Pass {

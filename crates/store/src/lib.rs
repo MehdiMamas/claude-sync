@@ -10,9 +10,11 @@
 mod bases;
 mod groups;
 mod import;
+mod jobs;
 pub use bases::{blob_sha, BaseRec, PERSONAL};
 pub use groups::{GroupRec, NotificationRec};
 pub use import::{classify, import_v1, Class, DaemonLockHeld, Outcome, Report, Skipped};
+pub use jobs::JobRec;
 
 use claude_sync_engine::traits::{IoError, IoResult, Store};
 use rusqlite::{params, Connection, OptionalExtension};

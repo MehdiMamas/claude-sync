@@ -229,6 +229,30 @@ pub enum Command {
         repo: String,
     },
     Conflicts,
+    // jobs (Parity 64, 73, 74, 75)
+    JobAccept {
+        repo: String,
+        id: String,
+    },
+    JobEnable {
+        repo: String,
+        id: String,
+        on: bool,
+    },
+    JobsAutoAccept {
+        repo: String,
+        on: bool,
+    },
+    JobRunNow {
+        repo: String,
+        id: String,
+    },
+    /// The newest log, or the report the last run wrote.
+    JobFile {
+        repo: String,
+        id: String,
+        report: bool,
+    },
     // sync loop switches
     Pause,
     Resume,
@@ -265,6 +289,8 @@ pub enum Event {
     Review(Vec<ReviewLine>),
     Edits(Vec<EditView>),
     Conflicts(Vec<ConflictView>),
+    /// A file the window opens (a job's log or report); `None`: there is none yet.
+    Path(Option<String>),
     Clashes(Vec<claude_sync_engine::clashes::Clash>),
     Synced {
         files: usize,
