@@ -73,7 +73,18 @@ impl Remote for GithubRemote {
     ) -> IoResult<String> {
         let (o, r) = (&self.owner, &self.repo);
         if parent.is_empty() {
-            return Err(IoError("the repo has no commits yet".into()));
+            // an empty repo takes only the contents API: one commit per file
+            let mut last = String::new();
+            for (path, bytes) in pushes {
+                if let Some(b) = bytes {
+                    last = self.client.put_file(o, r, path, b, message).map_err(io)?;
+                }
+            }
+            return if last.is_empty() {
+                Err(IoError("nothing to put in the empty repo".into()))
+            } else {
+                Ok(last)
+            };
         }
         let base = self.client.tree(o, r, parent, false).map_err(io)?.sha;
         let mut entries = Vec::new();

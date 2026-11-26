@@ -120,6 +120,7 @@ pub struct CommitAuthor {
 pub struct CommitInfo {
     pub message: String,
     pub author: Option<CommitAuthor>,
+    pub committer: Option<CommitAuthor>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -275,6 +276,45 @@ impl Client {
         });
         self.send(Method::POST, &rp(o, r, "/rulesets"), Some(&body))
             .map(drop)
+    }
+
+    /// Names of the rulesets on a repo (to create ours once).
+    pub fn rulesets(&self, o: &str, r: &str) -> Result<Vec<String>> {
+        #[derive(Deserialize)]
+        struct R {
+            name: String,
+        }
+        let v: Vec<R> = self.get(&rp(o, r, "/rulesets"))?.json()?;
+        Ok(v.into_iter().map(|r| r.name).collect())
+    }
+
+    /// Create `path` through the contents API: the only write an empty repo accepts. Returns
+    /// the new commit sha.
+    pub fn put_file(
+        &self,
+        o: &str,
+        r: &str,
+        path: &str,
+        bytes: &[u8],
+        message: &str,
+    ) -> Result<String> {
+        #[derive(Deserialize)]
+        struct C {
+            sha: String,
+        }
+        #[derive(Deserialize)]
+        struct R {
+            commit: C,
+        }
+        let body = json!({"message": message, "content": STANDARD.encode(bytes)});
+        let r: R = self
+            .send(
+                Method::PUT,
+                &rp(o, r, &format!("/contents/{path}")),
+                Some(&body),
+            )?
+            .json()?;
+        Ok(r.commit.sha)
     }
 
     pub fn transfer(&self, o: &str, r: &str, new_owner: &str) -> Result<()> {

@@ -1,0 +1,31 @@
+[package]
+name = "claude-sync-actions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "claude_sync_actions"
+
+[features]
+# Derive TypeScript types for the window's generated client (v2-EngRules: ts-rs).
+ts = ["dep:ts-rs"]
+
+[dependencies]
+claude-sync-engine = { path = "../engine" }
+claude-sync-github = { path = "../github", default-features = false }
+claude-sync-store = { path = "../store" }
+claude-sync-fs = { path = "../fs" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+ts-rs = { version = "12", optional = true }
+
+[dev-dependencies]
+wiremock = "0.6"
+tempfile = "3"
+base64 = "0.22"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync"] }

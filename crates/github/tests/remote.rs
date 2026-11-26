@@ -161,3 +161,24 @@ fn push_that_lost_the_race_says_so() {
     let e = r.push("c1", &BTreeMap::new(), "m").unwrap_err();
     assert_eq!(e.0, "someone else pushed first");
 }
+
+#[test]
+fn push_to_an_empty_repo_uses_the_contents_api() {
+    use std::collections::BTreeMap;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
+    let s = Srv::new();
+    s.mount(
+        Mock::given(method("PUT"))
+            .and(path("/repos/o/r/contents/claude-sync.json"))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_json(serde_json::json!({"commit": {"sha": "c1"}})),
+            )
+            .expect(1),
+    );
+    let r = GithubRemote::new(s.client(), "o", "r", "main");
+    let mut p = BTreeMap::new();
+    p.insert("claude-sync.json".to_string(), Some(b"{}".to_vec()));
+    assert_eq!(r.push("", &p, "create group").unwrap(), "c1");
+}

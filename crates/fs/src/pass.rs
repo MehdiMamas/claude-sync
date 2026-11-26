@@ -59,6 +59,11 @@ impl Drop for SyncLock {
     }
 }
 
+/// Review gate: gets the remote CLAUDE.md text, returns what may be imported.
+pub type Gate = dyn Fn(Option<&[u8]>) -> Option<Vec<u8>>;
+/// Committer date for a head sha (the `COMMIT` marker's second line).
+pub type CommitDate = dyn Fn(&str) -> Option<String>;
+
 pub struct GroupIn<'a> {
     pub repo: &'a str,
     /// This device hosts the group: it pushes.
@@ -67,6 +72,11 @@ pub struct GroupIn<'a> {
     /// The member switched the group off here.
     pub off: bool,
     pub remote: &'a dyn Remote,
+    /// Review gating: gets the group's CLAUDE.md text as the remote has it and returns the text
+    /// to place in the copy that is imported (the accepted text). `None`: copy as is.
+    pub gate: Option<&'a Gate>,
+    /// Committer date of a head sha, for the marketplace `COMMIT` file (`None`: sha only).
+    pub commit_date: Option<&'a CommitDate>,
 }
 
 pub struct Pass<'a> {
@@ -183,10 +193,17 @@ impl Pass<'_> {
             } else {
                 None
             };
+            let gated = g.gate.and_then(|f| f(md));
+            let md = if g.gate.is_some() {
+                gated.as_deref()
+            } else {
+                md
+            };
             apply::write_claude_md_copy(self.home, g.repo, md).map_err(|e| e.to_string())?;
             if let Ok(Some(b)) = self.db.load_base(g.repo, &self.home.state) {
                 let paths: BTreeSet<&String> = p.new_base.keys().collect();
-                apply::write_commit_markers(self.home, &paths, &b.head_sha, None)
+                let date = g.commit_date.and_then(|f| f(&b.head_sha));
+                apply::write_commit_markers(self.home, &paths, &b.head_sha, date.as_deref())
                     .map_err(|e| e.to_string())?;
             }
         }

@@ -27,6 +27,8 @@ pub enum DevicePoll {
     Token(Tokens),
     Expired,
     Denied,
+    /// The caller stopped waiting (Cancel on the sign-in screen).
+    Cancelled,
 }
 
 /// POST a form to the OAuth host; the answer must be a JSON object.
@@ -95,10 +97,27 @@ pub fn poll(c: &Client, device_code: &str) -> Result<DevicePoll> {
 /// Poll until approved, denied or expired. Sleeps `interval` before each poll; `slow_down`
 /// takes the server's interval or adds 5 s; a network error waits and tries again; any other
 /// error ends the wait. `sleep` is injected so tests do not wait.
-pub fn wait(c: &Client, code: &DeviceCode, mut sleep: impl FnMut(Duration)) -> Result<DevicePoll> {
+pub fn wait(c: &Client, code: &DeviceCode, sleep: impl FnMut(Duration)) -> Result<DevicePoll> {
+    wait_with(c, code, sleep, || false)
+}
+
+/// [`wait`] that ends with `Cancelled` as soon as `cancelled()` is true (checked before each
+/// sleep and each poll; the injected `sleep` should return early too).
+pub fn wait_with(
+    c: &Client,
+    code: &DeviceCode,
+    mut sleep: impl FnMut(Duration),
+    cancelled: impl Fn() -> bool,
+) -> Result<DevicePoll> {
     let (mut interval, mut elapsed) = (code.interval.max(1), 0u64);
     loop {
+        if cancelled() {
+            return Ok(DevicePoll::Cancelled);
+        }
         sleep(Duration::from_secs(interval));
+        if cancelled() {
+            return Ok(DevicePoll::Cancelled);
+        }
         elapsed += interval;
         if elapsed > code.expires_in {
             return Ok(DevicePoll::Expired);

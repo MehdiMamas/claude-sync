@@ -952,3 +952,18 @@ fn row40_transfer() {
     );
     s.client().transfer("o", "r", "new").unwrap();
 }
+
+#[test]
+fn device_wait_stops_when_cancelled() {
+    let s = Srv::new();
+    let code = device::DeviceCode {
+        device_code: "dc".into(),
+        user_code: "X".into(),
+        verification_uri: "u".into(),
+        expires_in: 900,
+        interval: 5,
+    };
+    let r = device::wait_with(&s.client(), &code, |_| {}, || true).unwrap();
+    assert_eq!(r, device::DevicePoll::Cancelled);
+    assert!(s.requests().is_empty());
+}
