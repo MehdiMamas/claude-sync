@@ -7,7 +7,9 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo)
 )]
 
+mod bases;
 mod import;
+pub use bases::{blob_sha, BaseRec, PERSONAL};
 pub use import::{classify, import_v1, Class, DaemonLockHeld, Outcome, Report, Skipped};
 
 use claude_sync_engine::traits::{IoError, IoResult, Store};
@@ -27,7 +29,8 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Each entry moves the schema one version up; `user_version` says how many ran.
-const MIGRATIONS: &[&str] = &["
+const MIGRATIONS: &[&str] = &[
+    "
 CREATE TABLE groups (
   repo TEXT PRIMARY KEY, role TEXT NOT NULL CHECK (role IN ('host','member')),
   state TEXT NOT NULL, order_idx INTEGER NOT NULL, off INTEGER NOT NULL DEFAULT 0,
@@ -60,7 +63,12 @@ CREATE TABLE requests (
 CREATE TABLE feedback_queue (
   id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE settings (key TEXT PRIMARY KEY, value BLOB NOT NULL);
-"];
+",
+    "
+ALTER TABLE base_files ADD COLUMN bytes BLOB;
+CREATE TABLE personal_base_files (path TEXT PRIMARY KEY, bytes BLOB NOT NULL);
+",
+];
 
 /// One counted line of GitHub requests (the shell turns the github client's counts into these).
 #[derive(Debug, Clone, PartialEq, Eq)]

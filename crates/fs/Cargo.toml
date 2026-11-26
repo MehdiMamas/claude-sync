@@ -1,0 +1,24 @@
+[package]
+name = "claude-sync-fs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "claude_sync_fs"
+
+[dependencies]
+claude-sync-engine = { path = "../engine" }
+claude-sync-github = { path = "../github", default-features = false }
+claude-sync-store = { path = "../store" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+sha2 = "0.10"
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+notify-debouncer-mini = { version = "0.7", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"

@@ -12,4 +12,5 @@ pub mod plan;
 pub mod review;
 pub mod secrets;
 pub mod settings;
+pub mod settings_edits;
 pub mod traits;

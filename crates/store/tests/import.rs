@@ -426,7 +426,7 @@ fn a_machine_with_no_v1_files_imports_nothing_and_records_it() {
 fn the_file_is_private_wal_and_versioned_with_exactly_the_er_tables() {
     let h = Home::new();
     let db = h.db();
-    assert_eq!(db.schema_version().unwrap(), 1);
+    assert_eq!(db.schema_version().unwrap(), 2);
     assert_eq!(one(&h, "PRAGMA journal_mode"), "wal");
     let tables: Vec<String> = rows(
         &h,
@@ -445,6 +445,7 @@ fn the_file_is_private_wal_and_versioned_with_exactly_the_er_tables() {
             "groups",
             "jobs",
             "notifications",
+            "personal_base_files",
             "requests",
             "review_items",
             "settings"

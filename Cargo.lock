@@ -828,6 +828,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "claude-sync-fs"
+version = "0.1.27"
+dependencies = [
+ "chrono",
+ "claude-sync-engine",
+ "claude-sync-github",
+ "claude-sync-store",
+ "notify",
+ "notify-debouncer-mini",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "claude-sync-github"
 version = "0.1.27"
 dependencies = [

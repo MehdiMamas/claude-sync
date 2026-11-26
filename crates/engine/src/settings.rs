@@ -127,7 +127,7 @@ pub fn machine_specific(settings: &Value) -> Value {
     v
 }
 
-fn set_at(root: &mut Value, ptr: &str, val: Value) {
+pub(crate) fn set_at(root: &mut Value, ptr: &str, val: Value) {
     let keys: Vec<String> = ptr
         .split('/')
         .skip(1)
@@ -149,7 +149,7 @@ fn set_at(root: &mut Value, ptr: &str, val: Value) {
     }
 }
 
-fn remove_at(root: &mut Value, ptr: &str) {
+pub(crate) fn remove_at(root: &mut Value, ptr: &str) {
     if let Some((parent, key)) = ptr.rsplit_once('/') {
         let key = key.replace("~1", "/").replace("~0", "~");
         let gone = match root.pointer_mut(parent) {
