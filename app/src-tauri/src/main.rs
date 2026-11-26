@@ -26,6 +26,7 @@ fn ctx() -> Ctx {
     Ctx {
         name: "claude-sync",
         remove_jobs: true,
+        refresh: std::env::current_exe().ok(),
         ..Ctx::cli()
     }
 }

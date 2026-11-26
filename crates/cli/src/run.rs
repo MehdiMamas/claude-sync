@@ -436,6 +436,12 @@ fn status(ctx: &Ctx) -> Res {
     Ok(Out::new(text, json))
 }
 
+fn refresh(ctx: &Ctx) {
+    if let Some(exe) = &ctx.refresh {
+        crate::refresh::refresh_running_app(exe);
+    }
+}
+
 fn personal(ctx: &Ctx, cmd: OnOff) -> Res {
     let mut core = open(ctx)?;
     need_sign_in(&core)?;
@@ -444,10 +450,12 @@ fn personal(ctx: &Ctx, cmd: OnOff) -> Res {
         OnOff::Enable => {
             need_sign_in(&core)?;
             core.handle(Command::PersonalOn)?;
+            refresh(ctx);
         }
         OnOff::Disable => {
             need_sign_in(&core)?;
             core.handle(Command::PersonalOff)?;
+            refresh(ctx);
         }
     }
     let p = core.snapshot().personal;

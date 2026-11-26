@@ -7,6 +7,7 @@
 //! 0 done, 1 failed, 2 wrong usage. Everything goes through `claude-sync-actions`.
 pub mod adopt;
 pub mod daemon;
+mod refresh;
 mod run;
 pub mod service;
 pub mod token;
@@ -32,6 +33,8 @@ pub struct Ctx {
     pub cfg: Option<Config>,
     /// The app sets this: it alone answers the hidden `remove-jobs`.
     pub remove_jobs: bool,
+    /// The app binary, for `--refresh` after a change the window shows; the app sets this.
+    pub refresh: Option<PathBuf>,
 }
 
 impl Ctx {
@@ -42,6 +45,7 @@ impl Ctx {
             home: None,
             cfg: None,
             remove_jobs: false,
+            refresh: None,
         }
     }
 }
