@@ -250,14 +250,23 @@ impl Core {
         }
         let now = self.now();
         let _ = claude_sync_fs::apply::unapply_settings(&self.home, &self.db, repo, now);
+        let pass = claude_sync_fs::pass::Pass {
+            home: &self.home,
+            db: &self.db,
+            now,
+            pinned: Default::default(),
+            crash_at: None,
+        };
+        // delivered files go; a file the person changed stays (as a local file)
+        pass.leave(repo).map_err(Error::new)?;
+        crate::review::clear(&self.db, repo);
         claude_sync_fs::apply::write_claude_md_copy(&self.home, repo, None)?;
         self.db.remove_group(repo)?;
         let rest: Vec<(String, bool)> = self
             .db
             .groups()?
             .into_iter()
-            .filter(|g| !g.off)
-            .map(|g| (g.repo, true))
+            .map(|g| (g.repo, g.off))
             .collect();
         claude_sync_fs::apply::update_block(&self.home, &rest, now)?;
         let mut c = self.choices();

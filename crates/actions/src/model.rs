@@ -175,6 +175,26 @@ pub enum Command {
     // sync
     /// Sync every group now (the tray's and the window's Sync now).
     SyncNow,
+    // CLAUDE.md review (Parity 37, 38, 82)
+    ReviewList {
+        repo: String,
+    },
+    /// `ids` None: all pending. Accept applies the lines, decline remembers them.
+    ReviewDecide {
+        repo: String,
+        ids: Option<Vec<String>>,
+        accept: bool,
+    },
+    /// Take one line out of a group's text for this user only.
+    DropLine {
+        repo: String,
+        line: String,
+    },
+    /// Bring every dropped or declined line back.
+    UseGroupVersion {
+        repo: String,
+    },
+    Clashes,
     // sync loop switches
     Pause,
     Resume,
@@ -208,6 +228,8 @@ pub enum Event {
     },
     Discovered(Vec<String>),
     /// A pass ran: files written or removed, groups that failed.
+    Review(Vec<ReviewLine>),
+    Clashes(Vec<claude_sync_engine::clashes::Clash>),
     Synced {
         files: usize,
         failed: usize,

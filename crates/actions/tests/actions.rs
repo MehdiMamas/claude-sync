@@ -544,9 +544,12 @@ impl T {
             json!({"sha": head}),
         )
         .await;
-        let gf =
-            serde_json::to_string_pretty(&json!({"schema": 1, "name": "Team", "members": ["ann"]}))
-                .unwrap();
+        let who = json!({"name": "Zed", "date": "2026-01-02T03:04:05Z"});
+        self.mock("GET", &format!("{r}/commits"), 200, json!([{"sha": head, "commit": {"message": "edit\n\nmore", "author": who, "committer": who}, "author": {"login": "zed"}}])).await;
+        let gf = serde_json::to_string_pretty(
+            &json!({"schema": 1, "name": "Team", "members": ["ann"], "autoAcceptClaudeMd": false}),
+        )
+        .unwrap();
         let mut tree = vec![
             json!({"path": "claude-sync.json", "mode": "100644", "type": "blob", "sha": "gf"}),
         ];
@@ -626,4 +629,100 @@ async fn the_tick_syncs_when_due_and_pause_stops_it() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(t.file("skills/a/SKILL.md").exists());
+}
+
+fn md(lines: &[&str]) -> String {
+    lines.iter().map(|l| format!("{l}\n")).collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_md_changes_are_held_for_review_then_accepted() {
+    let t = T::new().await;
+    let h = t
+        .group_with("h1", &[("CLAUDE.md", &md(&["- Be kind"]))])
+        .await;
+    h.send(Command::SyncNow).await.unwrap(); // first sight: accepted as is
+    let copy = t.dir.path().join(".claude-sync/groups");
+    let read_copy = || {
+        let d = std::fs::read_dir(&copy)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        std::fs::read_to_string(d.join("CLAUDE.md")).unwrap()
+    };
+    assert_eq!(read_copy(), md(&["- Be kind"]));
+    t.serve("h2", &[("CLAUDE.md", &md(&["- Be kind", "- Use tabs"]))])
+        .await;
+    h.send(Command::SyncNow).await.unwrap();
+    assert_eq!(read_copy(), md(&["- Be kind"]), "held back");
+    assert_eq!(h.snapshot().groups[0].pending_review, 1);
+    assert!(h.snapshot().notifications.iter().any(|n| n
+        .text
+        .contains("zed changed zed/team's CLAUDE.md: 1 addition to review")));
+    let Event::Review(l) = h
+        .send(Command::ReviewList {
+            repo: "zed/team".into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(l[0].add && l[0].author == "zed" && l[0].lines == vec!["- Use tabs".to_string()]);
+    h.send(Command::ReviewDecide {
+        repo: "zed/team".into(),
+        ids: None,
+        accept: true,
+    })
+    .await
+    .unwrap();
+    assert_eq!(read_copy(), md(&["- Be kind", "- Use tabs"]));
+    assert_eq!(h.snapshot().groups[0].pending_review, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn clashes_between_own_text_and_a_group_are_listed() {
+    let t = T::new().await;
+    std::fs::create_dir_all(t.dir.path().join(".claude")).unwrap();
+    std::fs::write(t.file("CLAUDE.md"), md(&["- Always use tabs"])).unwrap();
+    let h = t
+        .group_with("h1", &[("CLAUDE.md", &md(&["- Never use tabs"]))])
+        .await;
+    h.send(Command::SyncNow).await.unwrap();
+    let Event::Clashes(c) = h.send(Command::Clashes).await.unwrap() else {
+        panic!()
+    };
+    assert_eq!(c.len(), 1);
+    assert_eq!(c[0].a.name, "Your CLAUDE.md");
+    assert_eq!(c[0].b.source.as_deref(), Some("zed/team"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn commit_marker_bytes_and_leave_removes_delivered_files() {
+    let t = T::new().await;
+    let h = t
+        .group_with(
+            "h1",
+            &[
+                ("plugins/mp/a.txt", "x"),
+                ("skills/s/SKILL.md", "---\nname: s\n---\n"),
+            ],
+        )
+        .await;
+    h.send(Command::SyncNow).await.unwrap();
+    let marker = t.dir.path().join(".claude-sync/marketplaces/mp/COMMIT");
+    assert_eq!(
+        std::fs::read_to_string(&marker).unwrap(),
+        "h1\n2026-01-02T03:04:05Z\n"
+    );
+    assert!(t.file("skills/s/SKILL.md").exists());
+    h.send(Command::Leave {
+        repo: "zed/team".into(),
+    })
+    .await
+    .unwrap();
+    assert!(!t.file("skills/s/SKILL.md").exists());
+    assert!(!marker.exists());
 }

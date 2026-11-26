@@ -57,3 +57,12 @@ pub fn secret_blocked(path: &str, pattern: &str) -> String {
 pub fn push_retries() -> &'static str {
     "someone else pushed first and the retries ran out"
 }
+pub fn no_claude_md_to_review(id: &str) -> String {
+    format!("{id} has no CLAUDE.md on this device to review")
+}
+pub fn own_line_gone() -> &'static str {
+    "your CLAUDE.md no longer has that line"
+}
+pub fn group_line_gone(id: &str) -> String {
+    format!("{id}'s CLAUDE.md no longer has that line")
+}

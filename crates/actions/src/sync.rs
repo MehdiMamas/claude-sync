@@ -46,18 +46,37 @@ impl Core {
                     .unwrap_or_default()
             })
             .collect();
+        let gates: Vec<_> = recs.iter().map(|g| self.gate(&g.repo)).collect();
+        let dates: Vec<Box<dyn Fn(&str) -> Option<String>>> = recs
+            .iter()
+            .map(|g| {
+                let repo = g.repo.clone();
+                Box::new(move |sha: &str| {
+                    let (o, n) = repo.split_once('/')?;
+                    let c = self
+                        .client
+                        .commits(o, n, "main", 1)
+                        .ok()?
+                        .into_iter()
+                        .next()?;
+                    (c.sha == sha).then(|| c.commit.committer?.date).flatten()
+                }) as Box<dyn Fn(&str) -> Option<String>>
+            })
+            .collect();
         let groups: Vec<GroupIn> = recs
             .iter()
             .zip(&remotes)
             .zip(flags)
-            .map(|((g, r), flags)| GroupIn {
+            .zip(&gates)
+            .zip(&dates)
+            .map(|((((g, r), flags), gate), date)| GroupIn {
                 repo: &g.repo,
                 host: false,
                 flags,
                 off: g.off || c.groups.get(&g.repo).is_some_and(|x| x.off),
                 remote: r,
-                gate: None,
-                commit_date: None,
+                gate: Some(&**gate),
+                commit_date: Some(&**date),
             })
             .collect();
         let pass = Pass {
