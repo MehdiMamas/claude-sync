@@ -1,0 +1,282 @@
+[
+ {
+  "id": "r01",
+  "area": "ui",
+  "question": "On the sign-in screen, what are the three headings/buttons shown depending on state, and what text appears when the build has no GitHub client ID?",
+  "answer": "Normal: heading and button 'Sign in with GitHub'. Expired login: heading 'Your GitHub sign-in expired' and button 'Sign in again' (text says GitHub no longer accepts the sign-in of <login>; groups and files are kept). No client ID: 'Sign-in is not available', naming CLAUDE_SYNC_GITHUB_CLIENT_ID.",
+  "evidence": "app/ui/src/screens/signin.ts:43"
+ },
+ {
+  "id": "r02",
+  "area": "ui",
+  "question": "During the device flow, what does the button say after the click, and which controls and wait text does the code screen show?",
+  "answer": "Button reads 'Asking GitHub for a code…'. The code screen 'Enter this code on GitHub' shows the user code, 'Copy code' (toast 'Code copied'), 'Open GitHub', 'Cancel' (cancels, then restarts the screen) and 'Waiting for you to approve on GitHub…'.",
+  "evidence": "app/ui/src/screens/signin.ts:43"
+ },
+ {
+  "id": "r03",
+  "area": "ui",
+  "question": "What happens in the UI when sign-in fails versus when the user cancels?",
+  "answer": "A 'sign-in-failed' event shows 'Sign-in did not finish' with a 'Try again' button. A failure whose message is 'cancelled' is ignored (nothing shown).",
+  "evidence": "app/ui/src/screens/signin.ts:84"
+ },
+ {
+  "id": "r04",
+  "area": "ui",
+  "question": "What does the notifications screen show for each kind, how are unread items marked, and when are items marked read?",
+  "answer": "Kinds with glyph and label: update ↑ Update, group ◉ Group, plugins ⧉ Plugins, local-edit ✎ Local change, job ▶ Job, personal ● Personal sync, other • Other. Unread items carry a 'New' tag and stay highlighted until the screen is left. Opening the screen marks all read only when the window has focus. Buttons: 'Mark all as read' and 'Clear' (first click asks 'Click again to clear', then toast 'Notifications cleared').",
+  "evidence": "app/ui/src/screens/notifications.ts:63"
+ },
+ {
+  "id": "r05",
+  "area": "ui",
+  "question": "What is the empty state of the notifications screen, and where does a group notification link to?",
+  "answer": "'No notifications yet.' plus 'Updates, invitations, conflicts and other news show up here, even if you missed the desktop notification.' A group notification links to #/group/<owner>/<repo>, or to #/groups if that group is not joined.",
+  "evidence": "app/ui/src/screens/notifications.ts:95"
+ },
+ {
+  "id": "r06",
+  "area": "ui",
+  "question": "What does the groups list show when the user has no groups, and what note and controls appear with two or more groups?",
+  "answer": "Empty: 'You are not in a group yet.' with 'Create one and add your friends by GitHub login, or ask a friend to add you. Their invitation shows up here.' With two or more groups: the note 'Groups higher in the list win when two groups set the same thing.' and up/down arrow buttons to reorder.",
+  "evidence": "app/ui/src/screens/groups.ts:168"
+ },
+ {
+  "id": "r07",
+  "area": "ui",
+  "question": "Which row tags can a group show in the list?",
+  "answer": "'you host'; 'N CLAUDE.md change(s) to review'; 'N to review' (conflicts plus collisions); 'Group off — not applied'; 'Synced <relative time>'.",
+  "evidence": "app/ui/src/screens/groups.ts:168"
+ },
+ {
+  "id": "r08",
+  "area": "ui",
+  "question": "Describe the feedback form's screenshot options and size handling in the UI.",
+  "answer": "Buttons: Capture screen (becomes Retake), Attach image (png or jpeg), Paste image (or Ctrl+V in the form) and 'No screenshot'. UI limit is 20 MB, over which a toast 'That image is too big (over 20 MB)' appears. A preview caption shows 'W×H · size'. The logs checkbox is off by default, with a 'See what is sent' details element.",
+  "evidence": "app/ui/src/screens/feedback.ts:68"
+ },
+ {
+  "id": "r09",
+  "area": "ui",
+  "question": "What does the Share-my-CLAUDE.md card say and do, including defaults, empty-text handling and result toasts?",
+  "answer": "It warns that everyone in the group will see the text so personal details should be removed; text goes under a heading with the user's GitHub login. The 'Remove it from my own CLAUDE.md' checkbox is checked by default (hint: Claude would read it twice; the file is backed up first). Empty text gives toast 'There is no text to share'; a file with no own text shows 'Your CLAUDE.md has no text of your own yet.' Success toasts: 'Added your text to the CLAUDE.md of <owner/repo>.' or 'The group's CLAUDE.md already has this text.', with the suffix ' It was taken out of your own CLAUDE.md.' when removed.",
+  "evidence": "app/ui/src/screens/claude-md.ts:54"
+ },
+ {
+  "id": "r10",
+  "area": "ui",
+  "question": "What does the local-edit banner offer for a host versus a guest?",
+  "answer": "Text '<path> was changed on this device' or 'was deleted on this device. It is shared by <group>.' Host: buttons 'Share with group' (toast 'Shared with the group') and 'Undo' (toast 'Restored the group's version'). A guest gets no Share button and the text 'Only the host can change the group, so your edit stays on this device.'",
+  "evidence": "app/ui/src/screens/banners.ts:28"
+ },
+ {
+  "id": "r11",
+  "area": "flow",
+  "question": "In the feedback app side, how is a screenshot prepared and what are the size caps?",
+  "answer": "The image is scaled to a maximum width of 1920 px and kept as PNG if it fits in 3 MiB; otherwise it is encoded as JPEG at quality 85, then 70, 55, 40. If still too big the error is 'the image is too large even as a JPEG'. The relay separately rejects decoded screenshots over 3 MB with 413 'screenshot is larger than 3 MB'.",
+  "evidence": "app/src-tauri/src/feedback.rs:159"
+ },
+ {
+  "id": "r12",
+  "area": "flow",
+  "question": "When capturing the screen for feedback, what does the app do with its own window?",
+  "answer": "It hides the window, waits 300 ms, grabs the primary monitor, then shows and focuses the window again.",
+  "evidence": "app/src-tauri/src/feedback.rs:17"
+ },
+ {
+  "id": "r13",
+  "area": "flow",
+  "question": "How does the app treat the relay's answers to a feedback POST: which become queued retries and which are final?",
+  "answer": "5xx and 429 mean Offline: the report is saved in the outbox as <unix>-<pid>.json and retried in the tick (stops at the first network failure). Other errors are Rejected and the relay's error text (max 600 chars) is shown; a retried report that is rejected is renamed .rejected with notification 'Feedback not sent'. A corrupt outbox file is renamed .bad. Success notifies 'Feedback sent'.",
+  "evidence": "app/src-tauri/src/feedback.rs:343"
+ },
+ {
+  "id": "r14",
+  "area": "flow",
+  "question": "What requests does the relay make on POST /api/feedback, and in what order, and whose account opens the issue?",
+  "answer": "It authenticates the caller, validates and redacts the body, takes a per-login rate slot, creates the issue with the caller's own token (so GitHub shows them as author), then with the relay token commits the screenshot, logs and report privately under issues/<number>/, picks the nearest sprint milestone, and finally adds labels feedback and type:<kind> (and the milestone). It returns 201 {number,url}.",
+  "evidence": "relay/api/feedback.ts:12"
+ },
+ {
+  "id": "r15",
+  "area": "flow",
+  "question": "How are GitHub refusals of the issue-create mapped by the relay?",
+  "answer": "A 429, or a 403 carrying retry-after or x-ratelimit-remaining 0, answers 429 'GitHub is rate-limiting your account, try again later'. A GitHub 5xx answers 502. Other refusals answer 403, or 422 when GitHub said 422, with a reason (401 sign-in no longer accepted; 403 blocked or lacking repo scope; 404 repo not visible; 410 issues turned off; 422 rejected), cut to 200 chars.",
+  "evidence": "relay/api/feedback.ts:15"
+ },
+ {
+  "id": "r16",
+  "area": "flow",
+  "question": "What happens during group creation in the engine, including defaults and the first commit?",
+  "answer": "An empty repo name defaults to claude-sync-data and an empty group name defaults to the repo name; a public repo is refused. The first commit 'create group' holds claude-sync.json, README.md, CLAUDE.md (the shared text or '# <name>') and settings.shared.json ('{}'). It runs the secret scan, joins, records choices (member true plus order), and optionally removes the shared text from the user's own CLAUDE.md, only warning if that fails.",
+  "evidence": "crates/core/src/engine.rs:766"
+ },
+ {
+  "id": "r17",
+  "area": "flow",
+  "question": "How does approving a proposal differ for the host and for a member, and what are the failure messages?",
+  "answer": "You cannot approve your own proposal ('you cannot approve your own proposal; another member has to'). The host approving another's proposal squash-merges it, pinning the head sha; 405 or 409 gives 'proposal #N needs an update before it can be merged'. A member's approval creates a GitHub APPROVE review. The host's own proposals merge on the next sync once another listed member approved and it is not stale.",
+  "evidence": "crates/core/src/engine.rs:1243"
+ },
+ {
+  "id": "r18",
+  "area": "flow",
+  "question": "What does declining a proposal do?",
+  "answer": "It posts the comment 'Declined by <login> in claude-sync.' and closes the PR; a missing one errors 'proposal #N is not open'. The UI toasts 'Declined: the proposal is closed'.",
+  "evidence": "crates/core/src/engine.rs:1266"
+ },
+ {
+  "id": "r19",
+  "area": "rules",
+  "question": "What are the rules for removing a member and for who may change membership?",
+  "answer": "Only the host can add or remove members; commit summaries are 'add member X' and 'remove member X'. The host cannot be removed: '<login> hosts <id> and cannot be removed'. Logins must be 1 to 39 characters, alphanumeric or '-', with no leading or trailing '-' and no '--'.",
+  "evidence": "crates/core/src/engine.rs:2391"
+ },
+ {
+  "id": "r20",
+  "area": "rules",
+  "question": "What does it mean for a group to be turned off, and what changes in the list and in pushing?",
+  "answer": "Off is saved in choices (personal). The group row shows 'Group off — not applied' and nothing is pushed while off. Leaving a group forgets it and records member false plus order.",
+  "evidence": "crates/core/src/engine.rs:782"
+ },
+ {
+  "id": "r21",
+  "area": "rules",
+  "question": "What can a revert not do, and what are the refusal messages?",
+  "answer": "Merge commits and commits touching 300 or more files cannot be reverted ('<sha> is a merge commit and cannot be reverted here', '<sha> changed too many files to revert here'); the first commit cannot ('<sha7> is the first commit and cannot be reverted'). If a later commit changed a file, the whole revert is refused with 'Nothing was reverted.' plus '<path> changed again after this commit, in <sha7> by <login>; revert that first.' If nothing differs: 'Nothing to revert: the files of <sha7> already match what they were before it'.",
+  "evidence": "crates/core/src/remote.rs:975"
+ },
+ {
+  "id": "r22",
+  "area": "rules",
+  "question": "What is the commit message and gating of a revert?",
+  "answer": "Message 'revert <sha7> (<summary>)' where the summary drops the 'login@device: ' prefix and is cut to 72 chars plus an ellipsis. Host only; it runs the secret scan, rechecks for a race ('Nothing was reverted: <path> changed again while reverting. Try again.') and then syncs.",
+  "evidence": "crates/core/src/engine/revert.rs:100"
+ },
+ {
+  "id": "r23",
+  "area": "rules",
+  "question": "Which plugin files are not synced because of size, and what does the user see?",
+  "answer": "A plugin file over 1 MiB (MAX_PLUGIN_FILE) is not synced; the note reads '<path>: larger than 1 MiB, so it is not synced', and sharing it from a local edit errors '<file> is N bytes; plugin files over 1 MiB are not shared'.",
+  "evidence": "crates/core/src/group.rs:20"
+ },
+ {
+  "id": "r24",
+  "area": "rules",
+  "question": "What does the CLAUDE.md review store limit and what happens to authors it cannot find?",
+  "answer": "Declined lines are capped at 500 (MAX_DECLINED) in claude-md-review.json (format 2); diff context is 2 lines and the diff size is capped at 4,000,000 cells. If history is unreadable the author shows as 'Someone'.",
+  "evidence": "crates/core/src/review.rs:26"
+ },
+ {
+  "id": "r25",
+  "area": "data",
+  "question": "What per-login limits does the relay enforce, and how does the window work?",
+  "answer": "API calls 120 per hour per login; feedback posts 5 per hour per login; sliding window in memory per function instance. Feedback over the limit gives 429 with a retry-after header.",
+  "evidence": "relay/lib/ratelimit.ts:8"
+ },
+ {
+  "id": "r26",
+  "area": "data",
+  "question": "What are the size limits of a feedback request body at the relay?",
+  "answer": "Title max 200 chars, description 20,000 chars, appVersion 64, os 200, screenshot 3 MB decoded (PNG or JPEG by magic bytes), logs redacted then cut to the last 200 KB, whole body 4,500,000 bytes (413 'request body is too large').",
+  "evidence": "relay/api/feedback.ts:12"
+ },
+ {
+  "id": "r27",
+  "area": "data",
+  "question": "What files does the relay write to the private attachments repo for an issue, and what if that fails?",
+  "answer": "Under issues/<number>/: screenshot.png or .jpg, logs.txt and a report.json, committed in one commit (3 attempts on a 422 non-fast-forward). If storing fails, the public issue body is rewritten to say the screenshot/logs 'could not be stored'.",
+  "evidence": "relay/lib/feedback.ts:109"
+ },
+ {
+  "id": "r28",
+  "area": "data",
+  "question": "What does the public issue body of a feedback report contain?",
+  "answer": "The description, then a table with Kind, App version and OS (each in inline code, with backticks, pipes and angle brackets removed, or _unknown_), and a note: _No screenshot or logs attached._, _The ... went privately to the maintainer._, or _... could not be stored._",
+  "evidence": "relay/lib/feedback.ts:109"
+ },
+ {
+  "id": "r29",
+  "area": "data",
+  "question": "Which milestone does a new feedback issue get?",
+  "answer": "Among open milestones titled 'Sprint N' with a due date, the earliest due today (UTC) or later; if none upcoming, the one with the latest due date; else none.",
+  "evidence": "relay/lib/milestone.ts:10"
+ },
+ {
+  "id": "r30",
+  "area": "data",
+  "question": "What goes in the COMMIT file of a delivered marketplace folder?",
+  "answer": "The group main commit sha, newline, then the committer date when known. It is rewritten only when content changes, removed with the marketplace, never counted as a local edit, and not part of a mod fingerprint.",
+  "evidence": "crates/core/src/apply/marketplaces.rs:225"
+ },
+ {
+  "id": "r31",
+  "area": "edge",
+  "question": "What does the GitHub request counter do when the GraphQL snapshot call fails?",
+  "answer": "The remote logs 'GraphQL check failed, using REST' and returns nothing, so the engine falls back to per-repo REST checks. A repo that is null in the answer is left out; a repo with no branch yields an empty head; an answer without data is an error. The GraphQL answer is reused for 60 seconds for the personal check.",
+  "evidence": "crates/core/src/remote.rs:292"
+ },
+ {
+  "id": "r32",
+  "area": "edge",
+  "question": "What are the conflict and history caps in the engine?",
+  "answer": "At most 50 recorded conflicts per group (oldest dropped), 3 push retries, a 60 s snapshot reuse, 600 s for the slow rename and member checks, and 20 commits walked for CLAUDE.md attribution.",
+  "evidence": "crates/core/src/engine.rs:200"
+ },
+ {
+  "id": "r33",
+  "area": "edge",
+  "question": "What does the file watcher debounce and which trees does it watch?",
+  "answer": "A 2 s debounce over skills, agents, commands and output-styles; a CLAUDE.md copy is compared against the manifest sha; a path can be settings.shared.json#/pointer.",
+  "evidence": "crates/core/src/watch.rs:126"
+ },
+ {
+  "id": "r34",
+  "area": "edge",
+  "question": "How does the app handle a stale proposal?",
+  "answer": "Stale means GitHub reports not mergeable. The screen says 'The group changed since. The author sends it again before it can be approved.'",
+  "evidence": "crates/core/src/engine.rs:1351"
+ },
+ {
+  "id": "r35",
+  "area": "edge",
+  "question": "What does the settings canary override mean?",
+  "answer": "A mod is a canary on this device when enabledPlugins['<name>@claude-mods'] is false and env.CLAUDE_CODE_PLUGIN_DIRS (split on ':' or ';') has a path ending in mods/<name>. Such pointers keep the local value after a merge, so the group's value never replaces the trial.",
+  "evidence": "crates/core/src/settings.rs:152"
+ },
+ {
+  "id": "r36",
+  "area": "bugs",
+  "question": "What does the v0 migration do to old hooks and files, and what does it say?",
+  "answer": "If ~/.claude-sync/.git exists, everything moves (nothing deleted) to ~/.claude-sync-v0-backup-<UTC stamp>/ (number suffix on collision, .migrating marker, a rerun reuses the unfinished backup). v0 hooks with both 'claude-sync' and '--hook' are removed from ~/.claude/settings.json (other hooks kept, empty hooks object removed) and a copy is saved as settings.json.before-migration. Message: 'Moved your old claude-sync setup to <backup>. Turn on Personal memory in Settings to sync your CLAUDE.md and memories.'",
+  "evidence": "crates/core/src/migrate.rs:22"
+ },
+ {
+  "id": "r37",
+  "area": "bugs",
+  "question": "When access to a group ends, what does the user see?",
+  "answer": "A notification 'Group access ended': 'You no longer have access to <group>. Its files were removed from this machine (a backup was kept).'",
+  "evidence": "app/src-tauri/src/notify.rs:6"
+ },
+ {
+  "id": "r38",
+  "area": "platform",
+  "question": "What does the relay triage bot do before and while processing issues?",
+  "answer": "It skips issues whose feedback label was not added by a trusted login (the relay), waits when the newest issue is under 10 minutes old, handles 5 issues per Claude batch via 'claude -p --model <model>' with Bash, Edit, Write and web tools disallowed and only the local login env (no GitHub token), then labels triaged or, for abusive ones, needs-moderation (closed and locked).",
+  "evidence": "relay/triage/lib.ts:12"
+ },
+ {
+  "id": "r39",
+  "area": "platform",
+  "question": "What does templates/user-repo say about Cursor files and what does its .gitignore refuse?",
+  "answer": "Cursor skills, rules, agents and commands sync under cursor/ only when claude-sync.conf contains cursor=1 ('#' starts a comment). The .gitignore repeats never-synced entries: .credentials.json, *.credentials*, .env*, settings.json, settings.local.json, history*, projects/, todos/, statsig/, shell-snapshots/, plugins/, ide/, skills/synced/.",
+  "evidence": "templates/user-repo/README.md:20"
+ },
+ {
+  "id": "r40",
+  "area": "platform",
+  "question": "What does the settings screen footer and the Updates card show?",
+  "answer": "Footer: 'claude-sync <ver> · <os> · data in <stateDir>'. Updates card: 'You have version X.', 'Version X is downloading.', 'Version X is ready. It installs when you quit claude-sync.', toast 'claude-sync is up to date'. The update banner reads 'claude-sync <v> is ready. It installs when you quit, or now:' with 'Restart to update'.",
+  "evidence": "app/ui/src/screens/banners.ts:28"
+ }
+]

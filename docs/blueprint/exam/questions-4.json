@@ -1,0 +1,282 @@
+[
+  {
+    "id": "t01",
+    "area": "ui",
+    "question": "How does the sync error line read when GitHub's rate limit is active versus when a plain error exists?",
+    "answer": "While a rate-limit-until time is set, it shows 'GitHub limit reached, resumes <time>' with the time as hour and two-digit minute in the viewer's own zone (e.g. 5:24 PM), replacing the last error; otherwise it shows the last error text (or nothing).",
+    "evidence": "app/ui/src/limit.ts:5-13"
+  },
+  {
+    "id": "t02",
+    "area": "ui",
+    "question": "How does the relative-time label read for never, under 45 s, under an hour, under a day, and older?",
+    "answer": "Missing/0 -> 'never'; under 45 s -> 'just now'; under 3600 s -> 'N min ago' (rounded); under 86400 s -> 'N h ago' (rounded); older -> the full local date and time string.",
+    "evidence": "app/ui/src/dom.ts:46-53"
+  },
+  {
+    "id": "t03",
+    "area": "ui",
+    "question": "How long does a toast stay, and how does a two-step danger button (e.g. Remove, Leave group) behave?",
+    "answer": "A toast shows for 3500 ms (kind ok or error, one toast element reused). A confirm button's first click changes its label to the confirm text and arms it; if not clicked again within 4000 ms it reverts; a second click inside the window runs the action.",
+    "evidence": "app/ui/src/dom.ts:84,103-123"
+  },
+  {
+    "id": "t04",
+    "area": "ui",
+    "question": "What does the sign-in screen say when GitHub stopped accepting the saved sign-in, versus a first sign-in?",
+    "answer": "Expired: heading 'Your GitHub sign-in expired', text naming the expired login ('GitHub no longer accepts the sign-in of <login>, so syncing stopped... your groups and files on this computer are kept'), button 'Sign in again'. Otherwise heading 'Sign in with GitHub', button 'Sign in with GitHub', text that settings live in a private GitHub repo and nothing is stored outside GitHub and this computer.",
+    "evidence": "app/ui/src/signin-copy.ts:12-25"
+  },
+  {
+    "id": "t05",
+    "area": "ui",
+    "question": "A host-less (guest) member edits a shared file locally. What does the local-edit notice show?",
+    "answer": "The notice names the path and says it 'was changed on this device' (or 'was deleted on this device'), shared by owner/repo. For a guest it adds 'Only the host can change the group, so your edit stays on this device.' and hides the 'Share with group' button, leaving only 'Undo' (toast 'Restored the group's version'). A host also sees 'Share with group' (toast 'Shared with the group').",
+    "evidence": "app/ui/src/screens/banners.ts:10-46"
+  },
+  {
+    "id": "t06",
+    "area": "ui",
+    "question": "How many history entries show at first, how many per 'Show more', how many commits are fetched first and at most, and what end-of-list texts exist?",
+    "answer": "Eight entries at first and eight more per click; first fetch is 30 commits, 'Show more' past what is loaded refetches 100; at the end it says 'That's everything.' or, when 100 were fetched, \"That's the latest 100 changes.\" Empty history: 'Nothing has changed yet.' plus a hint that sharing a skill, changing a mod or adding a member shows up there.",
+    "evidence": "app/ui/src/screens/history.ts:9-13,262-308"
+  },
+  {
+    "id": "t07",
+    "area": "rules",
+    "question": "When are consecutive activity entries folded into one in the history feed?",
+    "answer": "When the same login (case-insensitive), kind, title and chips repeat and the gap between the older entry's time and the newer one's first time is at most 600 seconds (10 minutes); the folded entry keeps all shas, the earliest time, and the union of distinct detail lines.",
+    "evidence": "app/ui/src/activity.ts:260-278"
+  },
+  {
+    "id": "t08",
+    "area": "data",
+    "question": "How does the activity feed read a commit message's author and device, and how is a device host name normalised?",
+    "answer": "Messages look like '<login>@<host>: <text>'; login is 1-39 alnum/hyphen chars starting alnum, host is non-space/colon text. Without the prefix the login falls back to the commit author or 'someone' and device is null. Host is lower-cased and a trailing .local, .lan or .home is removed. The signed-in login (case-insensitive) is shown as You.",
+    "evidence": "app/ui/src/activity.ts:58,67-70,184-200"
+  },
+  {
+    "id": "t09",
+    "area": "rules",
+    "question": "How does the history feed word a sync summary such as 'update CLAUDE.md, skills/review; remove agents/old.md' or 'update 5 items'?",
+    "answer": "It is parsed per ';' clause of update/remove/share + comma list of paths or 'N items'. Titles use 'Updated/Removed/Shared' plus a noun ('a skill' for one, 'N skills' for several; CLAUDE.md and settings keep singular wording). Mixed kinds fall to 'other'; a single unclassified file reads 'Updated <file>'. Free text ('update the docs') is not a summary because each unit must look like a path with / or a dot.",
+    "evidence": "app/ui/src/activity.ts:143-185"
+  },
+  {
+    "id": "t10",
+    "area": "flow",
+    "question": "In the Members card, what does the add-member form do with the typed login, and how are rows removed?",
+    "answer": "The login is trimmed and a leading '@' is dropped; empty does nothing; on success the toast reads 'Invited <login>. They get an invitation from GitHub.' and the field clears. Remove buttons exist only for the host and never for the host's own row, and need a second click ('Remove <m>?') before removing.",
+    "evidence": "app/ui/src/screens/group.ts:31-62"
+  },
+  {
+    "id": "t11",
+    "area": "rules",
+    "question": "What GitHub login format does the backend accept when adding a member?",
+    "answer": "After trimming and stripping a leading '@': 1-39 characters, only ASCII letters, digits and hyphens, not starting or ending with '-'. Otherwise the error is '\"<input>\" is not a GitHub login'.",
+    "evidence": "app/src-tauri/src/commands.rs:189-198"
+  },
+  {
+    "id": "t12",
+    "area": "rules",
+    "question": "What are the limits on a device name and its error?",
+    "answer": "At most 64 bytes and no '/', '\\', ':' or '@' (the name goes into commit messages as login@host). Error: \"device names can't contain / \\ : @ and are at most 64 characters\".",
+    "evidence": "app/src-tauri/src/commands.rs:777-782"
+  },
+  {
+    "id": "t13",
+    "area": "rules",
+    "question": "What may the 'open link' and 'open file' commands open?",
+    "answer": "Links: only those starting with 'https://github.com/' (else 'only github.com links can be opened'). Files: the path is canonicalised and must lie inside the app's state dir ('only files saved by claude-sync can be opened'); a missing path says '<path> no longer exists'. A reveal flag shows the file in its folder instead of opening it.",
+    "evidence": "app/src-tauri/src/commands.rs:967-995"
+  },
+  {
+    "id": "t14",
+    "area": "flow",
+    "question": "How does the GitHub device-flow poll behave over time, on slow-down, expiry, denial and success?",
+    "answer": "It sleeps the server interval (at least 5 s) before every poll; deadline is expires_in but at least 60 s. A newer sign-in or cancel stops it silently ('cancelled'). Pending keeps waiting; slow_down sets the wait to the larger of the server's value and the current wait + 5 s; expired (or past the deadline) gives 'The code expired. Start again.'; denied gives 'Sign-in was cancelled on GitHub.'; success fetches the user, saves tokens to the keychain, stores the login in state.json and notifies 'Signed in' / 'claude-sync is signed in as <login>.'.",
+    "evidence": "app/src-tauri/src/auth.rs:157-205,134-146"
+  },
+  {
+    "id": "t15",
+    "area": "edge",
+    "question": "What happens when the app is built without a GitHub client ID and the user tries to sign in?",
+    "answer": "Starting sign-in fails with 'This copy of claude-sync was built without a GitHub client ID (CLAUDE_SYNC_GITHUB_CLIENT_ID), so it cannot sign in.' Nothing is opened.",
+    "evidence": "app/src-tauri/src/auth.rs:95-100"
+  },
+  {
+    "id": "t16",
+    "area": "bugs",
+    "question": "When GitHub stops accepting the token and it cannot be refreshed, what does the app do?",
+    "answer": "It clears the in-memory sign-in, deletes the keychain tokens (logging a warning if that fails), keeps the login in state.json (so the expiry is marked at next start), stops background GitHub calls, emits sign-in-expired, and notifies 'GitHub sign-in expired' / 'Open claude-sync and sign in again to keep syncing. Your groups on this computer are kept.'.",
+    "evidence": "app/src-tauri/src/auth.rs:66-92"
+  },
+  {
+    "id": "t17",
+    "area": "data",
+    "question": "How early is a GitHub access token refreshed, and what OAuth scopes does the OAuth sign-in ask for?",
+    "answer": "A token is refreshed once now + 5 minutes reaches its expiry. Scopes asked: 'repo read:user'.",
+    "evidence": "crates/core/src/github/session.rs:16,98; crates/core/src/github.rs:26"
+  },
+  {
+    "id": "t18",
+    "area": "rules",
+    "question": "How do the request counters bucket results and age out?",
+    "answer": "Each GitHub response is counted per caller (default 'other'), method plus normalised endpoint, and result: '304' for 304, '200' for any 2xx, 'other' for everything else. Per-minute buckets are kept and dropped once they are 10 minutes old; totals since start are kept separately, plus a 'since' unix time.",
+    "evidence": "crates/core/src/github/requests.rs:9,38-45,74-100,135-142"
+  },
+  {
+    "id": "t19",
+    "area": "rules",
+    "question": "How does the one-call GraphQL snapshot treat repos GitHub cannot show?",
+    "answer": "One aliased repository query per id (r0, r1, ...) fetches database id, name with owner and the default branch's commit oid, committed date and tree oid. A repo that is null (gone or no access), lacks id or name, or whose commit lacks oid/tree is left out of the answer; a repo with no default branch ref gets an empty head. A reply with no data object is an error 'GraphQL answered without data'.",
+    "evidence": "crates/core/src/github/graphql.rs:19-69,78-96"
+  },
+  {
+    "id": "t20",
+    "area": "rules",
+    "question": "How does the membership plan decide whom to invite, remove or un-invite?",
+    "answer": "Logins compare case-insensitively. The host is always wanted and never removed. Each wanted login that is neither a collaborator nor already invited (and not already queued) is invited; a collaborator not wanted is removed; a pending invitation not wanted is cancelled by id; a pending invitation for a wanted login is not re-sent.",
+    "evidence": "crates/core/src/members.rs:17-51"
+  },
+  {
+    "id": "t21",
+    "area": "flow",
+    "question": "What does migrating a renamed or transferred group repo move, in what order, and what if the destination already exists?",
+    "answer": "If old equals new nothing happens. In order: the group folder, the conflicts folder, the applied-files records, the jobs state, choices, plugin install state, notifications, and state.json last. A folder move is skipped when the old one is gone or the new one exists (except when only letter case differs on a case-insensitive disk); nothing is deleted. If the new name is already joined, the old entry is dropped; otherwise the group keeps its place in the list. Each step is safe to rerun.",
+    "evidence": "crates/core/src/rename.rs:1-62"
+  },
+  {
+    "id": "t22",
+    "area": "rules",
+    "question": "How are clauses of a CLAUDE.md read as rules for the cross-group clash check, and when do two clash?",
+    "answer": "Lines inside code fences, empty, headings (#), imports (@), HTML comments, table rows (|) and quotes (>) are skipped; list markers (-, *, +, 1. 1) and [ ] [x]) are stripped; apostrophes are removed; lines of fewer than two words are skipped. Filler words (always, do, must, should, please, you, will, can, make, sure, be, to, ever, remember, ensure...) and negation words (never, not, dont, cannot, avoid, no...) are removed to make a key; negated means an odd count of negation words. Same word list = duplicate; same non-empty key with equal negation parity = duplicate; different parity = contradiction. Lines in one source never clash. At most 200 clashes are reported.",
+    "evidence": "crates/core/src/conflicts.rs:77-195"
+  },
+  {
+    "id": "t23",
+    "area": "ui",
+    "question": "How does the UI word a clash and a copied-line warning?",
+    "answer": "Contradiction warning: '\"<line>\" contradicts <other>: \"<other line>\"'; duplicate: '\"<line>\" is already in <other>: \"<other line>\"'. Title: settings 'A and B set <pointer or a setting> differently'; duplicate 'B says the same thing'; contradiction 'B says the opposite'. App coverage lines: 'The App is not installed on any account yet...' or 'Not covered: owner/repo — the host must install the App there'.",
+    "evidence": "app/ui/src/copy.ts:73-89"
+  },
+  {
+    "id": "t24",
+    "area": "data",
+    "question": "How does the copy-to-another-group picker cut a CLAUDE.md into pickable blocks?",
+    "answer": "Line endings are normalised; text splits at headings (# to ###### followed by space); each non-blank line is one block and a fenced block (``` or ~~~, closed by the same style of fence) is one block; text before the first heading is a section with no heading; an unclosed fence is still one block. Composing joins picked blocks under their heading, sections separated by a blank line, ending with a newline, and empty if nothing is picked.",
+    "evidence": "app/ui/src/copy.ts:17-55"
+  },
+  {
+    "id": "t25",
+    "area": "edge",
+    "question": "What does a missing or odd asset id do on the relay's download route, and who may call it?",
+    "answer": "The id must be 1-20 digits (else 400 'asset id must be a number'). Callers need either a valid bearer token or the install page's signed session cookie (401 'missing GitHub token' with www-authenticate Bearer; a blocked login gets 403 '<login> is not allowed to use this relay'). The asset is looked up only under the releases repo (other ids give 404 'asset not found'); success is a 302 with no-store to GitHub's signed URL, the bytes never pass through the relay; other GitHub statuses become 502.",
+    "evidence": "relay/api/download/[id].ts:9-44"
+  },
+  {
+    "id": "t26",
+    "area": "platform",
+    "question": "How does the relay name the update bundle assets per platform, and how does it find one?",
+    "answer": "Windows: claude-sync_<v>_windows_<arch>-setup.exe; Linux: claude-sync_<v>_linux_<arch>.AppImage; macOS: first darwin_<arch>.app.tar.gz, then darwin_universal.app.tar.gz. Each needs a matching '.sig' asset; a bundle without its signature counts as missing. The install page lists Windows x86_64 setup.exe, macOS universal .dmg, Linux x86_64 AppImage and .deb.",
+    "evidence": "relay/lib/assets.ts:1-52"
+  },
+  {
+    "id": "t27",
+    "area": "rules",
+    "question": "How does the relay compare versions and pick the feedback sprint milestone?",
+    "answer": "Semver 2.0.0 with an optional leading v; build metadata is ignored; a release outranks its prereleases; numeric prerelease identifiers rank below alphanumeric ones and compare numerically; a longer prerelease list wins when equal so far. The sprint: among open milestones titled exactly 'Sprint N' with a due date, the earliest due today (UTC) or later; if none, the one with the latest due date; else none.",
+    "evidence": "relay/lib/semver.ts:10-51; relay/lib/milestone.ts:3-19"
+  },
+  {
+    "id": "t28",
+    "area": "rules",
+    "question": "Which relay environment settings are required, and what are the defaults?",
+    "answer": "RELAY_GITHUB_TOKEN and RELEASES_REPO are required (missing gives a logged config error and 500 'relay is not configured'); repos must match owner/repo. FEEDBACK_REPO defaults to the releases repo; the private attachments repo defaults to '<feedback repo>-feedback'. Blocked logins come from a comma list, case-insensitive. The install page is configured only when OAuth client id, client secret and session secret are all set; the public URL has trailing slashes stripped.",
+    "evidence": "relay/lib/env.ts:3-50"
+  },
+  {
+    "id": "t29",
+    "area": "flow",
+    "question": "How does the relay write feedback attachments to the private repo?",
+    "answer": "After the issue exists, blobs are uploaded once (base64) and committed in a single commit onto the default branch via the Git Data API; if moving the branch ref returns 422 (not a fast-forward) it re-reads the head and retries, at most 3 attempts, then fails with a 502 'update attachments ref'. No files means nothing is done.",
+    "evidence": "relay/lib/attachments.ts:12-55"
+  },
+  {
+    "id": "t30",
+    "area": "rules",
+    "question": "What must the triage bot's private key file and App token satisfy?",
+    "answer": "The key path must be a file; on non-Windows systems a file readable by group or others (mode & 077) is refused with a chmod 600 hint. The App JWT is RS256, issued 60 s in the past and valid 9 minutes. The installation token call must return ok and a non-empty token. With any of the three TRIAGE_APP_* variables missing the bot is not configured and there is no fallback to a personal token.",
+    "evidence": "relay/triage/bot.ts:14-77"
+  },
+  {
+    "id": "t31",
+    "area": "rules",
+    "question": "Which issues does the triage pick up, and how is Claude's answer read?",
+    "answer": "Only open, non-PR issues labelled 'feedback' by a trusted login that carry neither 'triaged' nor 'needs-moderation' labels and have no comment with the triage marker (unless forced). Work waits until the newest waiting report is 10 minutes old; batches are 5 issues. Claude's answer must begin 'VERDICT: ok|abusive' then 'REASON:'; an 'ok' needs a write-up body. Abusive reports get a moderation note, the needs-moderation label, then are closed and locked.",
+    "evidence": "relay/triage/lib.ts:7-12,53-62,134-150; relay/triage/run.ts:252-259"
+  },
+  {
+    "id": "t32",
+    "area": "rules",
+    "question": "What is stripped or changed in a triage comment before posting on a public issue?",
+    "answer": "Secrets are redacted (also gh*_ tokens and JWTs), user folder names become [user], emails become [email]; @mentions and 'fixes/closes/resolves #n' keywords are broken with a zero-width space; images, HTML comments and links outside the repo are dropped or turned to code; code blocks longer than 15 lines are cut with a '… N more lines cut' line; the comment is capped at 20,000 characters; an odd number of code fences gets a closing fence. The footer says it was written by Claude and can be wrong and holds a version marker with the commit sha.",
+    "evidence": "relay/triage/lib.ts:9,66-110,112-132"
+  },
+  {
+    "id": "t33",
+    "area": "platform",
+    "question": "On macOS and elsewhere, how does a desktop notification get shown, and what does a click do?",
+    "answer": "Every notification is first saved to the history, then shown as a desktop notification only if the user has them on, then the tray unread count and window are updated (history kept either way). macOS goes through the system notification center with a fallback to the plugin when that fails; other systems use the plugin. A click on a desktop toast opens the window on the Notifications screen.",
+    "evidence": "app/src-tauri/src/notify.rs:1-93"
+  },
+  {
+    "id": "t34",
+    "area": "edge",
+    "question": "What happens when a panic occurs inside a core call from the background loop or UI command?",
+    "answer": "The panic is caught, logged, and turned into the error text '<what>: internal error (<message>)' (message 'panic' if not text) so the loop and watcher keep running; ordinary core errors pass through as their own text, e.g. 'not signed in'. Release builds keep panic unwinding for this; the default panic hook prints only in debug builds.",
+    "evidence": "app/src-tauri/src/guard.rs:1-70"
+  },
+  {
+    "id": "t35",
+    "area": "platform",
+    "question": "How big is the app window, and what is special about Windows after it closes?",
+    "answer": "880x640 centred, minimum 640x480, titled 'claude-sync'; it exists only while open (closing destroys the webview). A second open request just shows, unminimises and focuses it, navigating to the route if one was given. On Windows, 5 s after close, if no window exists, the process working set is trimmed; other systems do nothing.",
+    "evidence": "app/src-tauri/src/window.rs:3-57"
+  },
+  {
+    "id": "t36",
+    "area": "flow",
+    "question": "What are the first-run notices of personal memory after a sync?",
+    "answer": "Once per sign-in (per login in this session) the app checks whether the account's other devices share personal memory. If this device joined automatically: notification 'Personal memory is on' with 'Personal memory from your other devices is on. Turn off in Settings.'; if only an offer: 'Personal memory' with 'Your other devices share personal memory. Open claude-sync to turn it on here too.'; nothing otherwise. Offline or rate-limited checks are retried after the next sync.",
+    "evidence": "app/src-tauri/src/personal.rs:11-52; crates/core/src/personal.rs:51-55"
+  },
+  {
+    "id": "t37",
+    "area": "platform",
+    "question": "How does a plugin install handle a missing Claude Code, and how long may one command run?",
+    "answer": "Each `claude plugin` command has a 120 second timeout. Without a found claude command the message is 'Claude Code not found (the claude command), so the group's plugins were not installed'. The group screen shows failed plugins with a Retry button ('Installing…'); when none are left it toasts 'The group's plugins are installed'.",
+    "evidence": "crates/core/src/plugin_install.rs:24-28; app/ui/src/screens/group.ts:285-302"
+  },
+  {
+    "id": "t38",
+    "area": "platform",
+    "question": "How is the claude command found and how are child processes treated on Windows?",
+    "answer": "Resolved without a login shell PATH: Windows uses where.exe and prefers an .exe over a .cmd; other systems take the first match among the usual install locations, then the login shell. Children run without a console window (CREATE_NO_WINDOW) and are killed with their process tree on timeout; output is still read for 2 s after the child ends because daemons can hold pipes open. Job sessions get a PATH of login shell entries, current entries, claude's own folder and usual user bin folders.",
+    "evidence": "crates/core/src/claude_cli.rs:1-60,233-235"
+  },
+  {
+    "id": "t39",
+    "area": "flow",
+    "question": "What does 'Run now' of a scheduled job do, and what does the finished-job toast do on Windows?",
+    "answer": "It refuses if the job is already running ('the job is running already'); otherwise it starts the app binary again as the job runner with a run-job argument and --now, with stdin/stdout/stderr closed (on Windows no console window and a new process group), waits 500 ms so the screen shows it running, then returns the overview. On Windows a finished job shows a toast that opens the report when clicked, waiting up to 10 minutes for the click.",
+    "evidence": "app/src-tauri/src/jobs.rs:181-186,370-396"
+  },
+  {
+    "id": "t40",
+    "area": "edge",
+    "question": "On the group screen, how do Members and the host-only switches behave for a guest versus host, and what does turning a group off say?",
+    "answer": "Guests get the switches disabled (proposal mode, auto-accept for the group's CLAUDE.md) and cannot remove members. Turning a group off toasts '<name> is off. Nothing from it applies on your devices.' and the row shows 'Group off — not applied'; turning on says '<name> is on again.'. Leaving needs a second click 'Click again to leave' and toasts 'Left <name>. Its files were removed from this device.'",
+    "evidence": "app/ui/src/screens/group.ts:645-660,740-755,846-872"
+  }
+]

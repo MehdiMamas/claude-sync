@@ -1,0 +1,1 @@
+{"set":4,"round":1,"date":"2026-11-26","full":36,"partial":4,"partial_ids":["t09","t13","t14","t35"],"miss":0,"conflicts":["t01 resumes vs resumes at (SpecUi2 vs SpecTauri5/EngSyncPull/GithubClient)","t14 device-flow min interval and deadline (SpecGithub4 vs SpecTauri2)"],"score":"36/40 full (90%)"}

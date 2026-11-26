@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Screen Sign in: code</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#f6f7f9;--surface:#ffffff;--ink:#1c1f24;--muted:#5f6672;--accent:#2f6fde;--on-accent:#ffffff;--error:#c4312b;--error-bg:#fdecea;--accent-bg:#e6eefc;--warn-bg:#fff4dc;--ok:#1f8a4c;--ok-bg:#e3f4ea;--warn:#9a5b00;--dg-bg:#17191d;--dg-lane:#212429;--dg-node:#353a42;--dg-line:#9aa1ad;--dg-ink:#e7e9ec;--dg-muted:#9aa1ad;--rule:color-mix(in srgb,var(--muted) 35%,transparent);--font-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent)}
+:root { --bg: #f6f7f9; --panel: #ffffff; --text: #1c1f24; --muted: #5f6672; --line: #dde1e6; --accent: #2f6fde; --accent-text: #ffffff; --accent-soft: #e6eefc; --danger: #c4312b; --danger-soft: #fdecea; --warn: #9a5b00; --warn-soft: #fff4dc; --ok: #1f8a4c; --focus: #2f6fde; --radius: 8px; color-scheme: light; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 14px; line-height: 1.45; color: var(--text); background: var(--bg); }
+* { box-sizing: border-box; }
+body { margin: 0px; background: var(--bg); }
+h1 { font-size: 1.45rem; margin: 0px; }
+p { margin: 0.4rem 0px; }
+code { font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace; font-size: 0.92em; overflow-wrap: anywhere; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button { font: inherit; padding: 0.4rem 0.85rem; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; white-space: nowrap; }
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: 0.6; cursor: progress; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button.link { border-width: medium; border-style: none; border-color: currentcolor; border-image: none; background: none; color: var(--accent); padding: 0.2rem 0.3rem; text-decoration: underline; }
+.brand { display: flex; align-items: center; gap: 0.45rem; font-weight: 700; font-size: 1.05rem; padding: 0px 0.4rem; }
+.brand.big { font-size: 1.5rem; justify-content: center; margin-bottom: 1rem; }
+.logo { display: inline-grid; place-items: center; width: 1.6em; height: 1.6em; border-radius: 50%; background: var(--accent); color: var(--accent-text); font-size: 0.9em; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.center-row { justify-content: center; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem 1.1rem; margin-bottom: 1rem; }
+.muted { color: var(--muted); }
+.loading { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); padding: 0.75rem 0px; }
+.spin { width: 1rem; height: 1rem; border-top-style: ; border-top-width: ; border-right-color: ; border-right-style: ; border-right-width: ; border-bottom-color: ; border-bottom-style: ; border-bottom-width: ; border-left-color: ; border-left-style: ; border-left-width: ; border-image-source: ; border-image-slice: ; border-image-width: ; border-image-outset: ; border-image-repeat: ; border-top-color: var(--accent); border-radius: 50%; animation: 0.8s linear 0s infinite normal none running spin; }
+.center { min-height:640px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 1.5rem; }
+.signin { max-width: 440px; width: 100%; text-align: center; display: flex; flex-direction: column; gap: 0.75rem; align-items: center; }
+.user-code { display: block; font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace; font-size: 2rem; font-weight: 700; letter-spacing: 0.15em; padding: 0.5rem 1rem; border-radius: var(--radius); background: var(--bg); border: 1px solid var(--line); user-select: all; }
+.x-details{display:flow-root;margin-top:.2rem}.x-details>.x-summary:first-child{margin-top:0}
+:where(.x-summary){display:list-item;list-style:disclosure-closed inside;cursor:pointer}.x-details[open]>.x-summary{list-style-type:disclosure-open}
+@keyframes pulse { 
+  100% { opacity: 0.3; }
+}
+@keyframes spin { 
+  100% { transform: rotate(360deg); }
+}
+</style>
+</helmet>
+<div data-page="v2" data-created="2026-11-26" data-updated="2026-11-26" data-status="current" data-screen="SignInCode" data-state="waiting for code" style="position:relative;width:880px;height:680px;overflow:hidden;background:var(--bg)"><div style="position:relative;width:880px;height:640px;overflow:hidden"><div class="center"><div class="brand big"><span class="logo" aria-hidden="true">⟳</span>claude-sync</div><div class="card signin"><h1>Enter this code on GitHub</h1><p class="muted">Your browser opened <code>https://github.com/login/device</code>. Paste the code there and approve claude-sync.</p><output class="user-code" aria-label="Device code" aria-live="polite">WDJB-MJHT</output><div class="actions center-row"><button>Copy code</button><button class="primary">Open GitHub</button></div><div class="loading" role="status"><span class="spin" aria-hidden="true"></span>Waiting for you to approve on GitHub…</div><button class="link" data-sx="1">Cancel</button></div></div></div><a href="v2-ScreenSignIn.dc.html" aria-label="Cancel" style="position:absolute;left:414px;top:455px;width:53px;height:26px;display:block;z-index:3;opacity:0"></a><p style="position:absolute;left:12px;top:650px;margin:0;font:12px/1.4 var(--font-body);color:var(--muted)">Rebuilt from the live app at commit 5ea0f8d (fake backend, sample data, light theme). Pixel diff vs the app: 0.008%. Same screen, other states: <a href="v2-ScreenSignIn.dc.html">Sign in</a> · <a href="v2-ScreenSignInExpired.dc.html">Sign in: expired</a>.</p></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":880,"height":680}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

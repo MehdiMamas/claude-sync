@@ -1,0 +1,282 @@
+[
+  {
+    "id": "s01",
+    "area": "ui",
+    "question": "What are the poll-interval choices in Settings, and what shows when the saved value is not one of them?",
+    "answer": "30s, 1m, 2m, 5m, 15m. A saved value outside the list is added at the top and selected as \"Every N seconds\".",
+    "evidence": "app/ui/src/screens/settings.ts:150-156"
+  },
+  {
+    "id": "s02",
+    "area": "ui",
+    "question": "What are the limits and toasts of the Device name field, and what does its hint say?",
+    "answer": "Input maxlength 64; saving shows the toast \"Device name saved\"; hint \"Shown in the group's history next to your changes.\"",
+    "evidence": "app/ui/src/screens/settings.ts:132,145"
+  },
+  {
+    "id": "s03",
+    "area": "ui",
+    "question": "What toasts do the pause switch and the update check show?",
+    "answer": "Pause on: \"Sync paused\", off: \"Sync resumed\". An update check that finds nothing: \"claude-sync is up to date\".",
+    "evidence": "app/ui/src/screens/settings.ts:165,42"
+  },
+  {
+    "id": "s04",
+    "area": "ui",
+    "question": "What does the Update card say in each state and when is the \"Restart to update\" button shown?",
+    "answer": "Downloaded: \"Version X is ready. It installs when you quit claude-sync.\"; downloading: \"Version X is downloading.\"; none: \"You have version X.\" The button \"Restart to update\" is shown only once the update is downloaded.",
+    "evidence": "app/ui/src/screens/settings.ts:22-42"
+  },
+  {
+    "id": "s05",
+    "area": "ui",
+    "question": "What does Settings show for the GitHub App option when the build has no GitHub App client id, and when macOS denies notification permission?",
+    "answer": "Text \"This build has no GitHub App.\" (the toggle is disabled). For macOS denial: \"macOS is blocking notifications from claude-sync.\" with an \"Open notification settings\" button.",
+    "evidence": "app/ui/src/screens/settings.ts:113,176"
+  },
+  {
+    "id": "s06",
+    "area": "ui",
+    "question": "How does the activity feed name a device and which commit-message prefixes are not treated as a change area?",
+    "answer": "The device name is lowercased with a trailing .local, .lan or .home removed, so DESKTOP-SAMPLE and desktop-sample are one device. Conventional prefixes fix, feat, chore, docs, refactor, ci, test, tests, build, perf, style, wip are not areas.",
+    "evidence": "app/ui/src/activity.ts:60-67"
+  },
+  {
+    "id": "s07",
+    "area": "flow",
+    "question": "What status text and state does the tray/window show after a sync pass that ended with errors in some groups, and with no errors?",
+    "answer": "No errors: state ok, \"Up to date\". Errors: state error, \"N group(s) had an error\" (or the rate-limit text if GitHub limited us), with the per-group errors joined by newlines as the detail. The tray text is prefixed \"claude-sync: \" and gets \" · N CLAUDE.md change(s) to review\" when reviews are pending.",
+    "evidence": "app/src-tauri/src/background.rs:211-233,236-250"
+  },
+  {
+    "id": "s08",
+    "area": "flow",
+    "question": "Which notifications does a sync pass raise, with their titles?",
+    "answer": "\"Group moved\" (renamed/moved repo followed), \"Conflict in a shared file\" (group version won, yours saved), \"CLAUDE.md changes to review\", \"Back in step with the group\", \"Group access ended\" (files removed, backup kept), and \"Plugins changed\" (reload hint) when plugin files changed.",
+    "evidence": "app/src-tauri/src/background.rs:145-200"
+  },
+  {
+    "id": "s09",
+    "area": "flow",
+    "question": "When does an update that has been downloaded install by itself?",
+    "answer": "Only at a quiet moment: no sync running, the window hidden, and the window last shown at least 10 minutes ago (or never). The check runs once a minute; otherwise it installs on Quit or via Restart to update. The first update check runs 20 s after start, then every 6 h.",
+    "evidence": "app/src-tauri/src/updates.rs:16,34-48; app/src-tauri/src/background.rs:430-440"
+  },
+  {
+    "id": "s10",
+    "area": "flow",
+    "question": "How does the app tell the user about a hand edit of a managed file?",
+    "answer": "A watcher (and every tick) compares edits; only edits not already known raise the notification \"Local change to a shared file\": one edit reads \"<path> was changed on this machine. Share it with <group>?\", several read \"N shared files were changed on this machine.\" It links the group only when all new edits are in one group.",
+    "evidence": "app/src-tauri/src/background.rs:303-355"
+  },
+  {
+    "id": "s11",
+    "area": "flow",
+    "question": "What does the app do at startup regarding autostart and the v0 migration, and what does --background do?",
+    "answer": "Autostart is enabled once on first run (never in debug builds or when CLAUDE_SYNC_NO_AUTOSTART is set), then it is the user's choice. The v0 migration is skipped when CLAUDE_SYNC_HOME is set; a done migration shows \"Old setup moved\". With --background and a signed-in user no window opens.",
+    "evidence": "app/src-tauri/src/main.rs:59,79-83,239"
+  },
+  {
+    "id": "s12",
+    "area": "flow",
+    "question": "How is a helper (Claude) request run: model, limits, tools, environment?",
+    "answer": "Runs `claude -p --model sonnet --output-format json --max-turns 1` with disallowedTools (Bash, Edit, Write, NotebookEdit, WebFetch, WebSearch, Task, Agent, Read, Grep, Glob), from the temp dir with DISABLE_AUTOUPDATER=1 and nonessential traffic off, timeout 120 s, input cut at 40 KiB with a note.",
+    "evidence": "crates/core/src/helper.rs:14,82,110-112"
+  },
+  {
+    "id": "s13",
+    "area": "data",
+    "question": "What are the exact file and folder names under the state dir for logs, notifications, request counts, preferences and per-group data, and when does the state dir move?",
+    "answer": "logs/, notifications.json, requests.json, app.json (autostartInitialized, desktopNotifications default true), groups/<owner>__<repo>, conflicts/<group>, backups, marketplaces. The state dir becomes ~/.claude-sync/app when ~/.claude-sync/.git exists (an old v0 clone); empty env overrides are ignored; no home gives \"cannot find the home directory\".",
+    "evidence": "crates/core/src/paths.rs:8-41; app/src-tauri/src/ctx.rs:52-90"
+  },
+  {
+    "id": "s14",
+    "area": "data",
+    "question": "How are log files named, how many are kept, and how is the level set?",
+    "answer": "claude-sync.YYYY-MM-DD.log, one per UTC day, 7 kept; level from env CLAUDE_SYNC_LOG (error..trace, default info); no ANSI colours; every event passes the secret redaction.",
+    "evidence": "crates/core/src/logging.rs:3-5,17,22,42"
+  },
+  {
+    "id": "s15",
+    "area": "data",
+    "question": "What are the fixed names and constants of a group repo?",
+    "answer": "Config file claude-sync.json (schema 1), topic claude-sync-group, default repo name claude-sync-data. A group file with a schema newer than 1 makes the group read-only; a missing schema gives \"claude-sync.json has no schema number\". Install link in the README: https://claude-sync-relay.vercel.app/install.",
+    "evidence": "crates/core/src/group.rs:10-24,112; crates/core/src/error.rs:30"
+  },
+  {
+    "id": "s16",
+    "area": "data",
+    "question": "What format and bookkeeping does the notification history file use for ids, corrupt files and unknown kinds?",
+    "answer": "Ids are never reused (a next_id counter, raised past the highest existing id). A corrupt file is copied to notifications.json.bad and an empty history starts. An unknown kind reads as Other. Kinds: update, group, plugins, local-edit, job, personal, other.",
+    "evidence": "crates/core/src/notifications.rs:6,33,55,77,85"
+  },
+  {
+    "id": "s17",
+    "area": "data",
+    "question": "What names do scheduled-job OS entries get on each platform, and how do debug builds differ?",
+    "answer": "Windows Task Scheduler folder \\claude-sync\\ (debug \\claude-sync-dev\\); launchd label dev.claude-sync.job.<id> (debug dev.claude-sync.dev-job.<id>); systemd claude-sync-job-<id>.service/.timer (debug claude-sync-dev-job-). systemd files live in $XDG_CONFIG_HOME/systemd/user or ~/.config/systemd/user.",
+    "evidence": "crates/core/src/jobs/os.rs:12-20,106-108"
+  },
+  {
+    "id": "s18",
+    "area": "rules",
+    "question": "Which cron expressions does a job accept?",
+    "answer": "Exactly 5 fields. Minute and hour are numbers or comma lists (no *, ranges or steps). Day-of-month and month must be *. Day-of-week is * or 0-6 lists and ranges (no 7, no names, no backward ranges). At most 48 times a day. Listing all 7 days means every day.",
+    "evidence": "crates/core/src/jobs/cron.rs:1-8,25-32,101,128"
+  },
+  {
+    "id": "s19",
+    "area": "rules",
+    "question": "How does a cron schedule read in plain words?",
+    "answer": "Weekdays (1-5) show \"Weekdays at 09:00\", 0 and 6 show \"Weekends\", others list days Monday first, e.g. \"Mon and Thu at 10:17\"; several times read \"Every day at 08:00, 08:30, 18:00 and 18:30\".",
+    "evidence": "crates/core/src/jobs/cron.rs:58-70,149"
+  },
+  {
+    "id": "s20",
+    "area": "rules",
+    "question": "What makes a job id, title, cwd, prompt and arguments valid?",
+    "answer": "Id: lowercase letters, digits, dashes, at most 41 chars, starting with a letter or digit. Prompt: not empty, no NUL, must not start with '-'. cwd defaults to ~ and must be ~ or ~/... (no .., backslash, colon, NUL). Title defaults to the id, max 100 chars. Args allowlist: --model (1-64 chars of letters, digits, - . _ [ ], starting alphanumeric) and --effort (low, medium, high, xhigh, max), each at most once. report must be a file, not ~.",
+    "evidence": "crates/core/src/jobs/mod.rs:40,164,210,229,248"
+  },
+  {
+    "id": "s21",
+    "area": "rules",
+    "question": "Which job fields change its consent hash, and what happens to a duplicate id?",
+    "answer": "The hash covers cron, prompt, cwd, permissionMode, timeoutMinutes and args, but not title or report. A duplicate id inside one file is a problem \"the id is used twice in this file\"; across groups the first group in the joined order keeps it and the other is reported. One bad job never stops the others.",
+    "evidence": "crates/core/src/jobs/mod.rs:17,67-75,319"
+  },
+  {
+    "id": "s22",
+    "area": "rules",
+    "question": "Which paths of a group are allowed to sync?",
+    "answer": "No empty, . or .. segments, no backslash or colon, no leading slash; dot segments never sync outside plugins/; plugins keep dot-files except .git, .DS_Store, .env, .env.* and node_modules; agents/commands/output-styles accept a single .md file with a name (length over 3); skills need skills/<name>/<file>; marketplace names match [a-z0-9][a-z0-9-]*.",
+    "evidence": "crates/core/src/group.rs:165-221"
+  },
+  {
+    "id": "s23",
+    "area": "rules",
+    "question": "Which secret patterns does the scan catch, and how is a hit reported or silenced?",
+    "answer": "github_pat_ (50+), sk-ant- (20+), ghp_ (36+), gh[orsu]_ (36+), AKIA+16, xox[abpr]-(10+), private-key headers, and access_token/refresh_token JSON fields. One hit per line (1-based, never the text); a line with `claude-sync: allow-secret` is skipped. Redaction ignores the marker, also hides Authorization token/basic and Bearer values (8+ chars) and writes [redacted:<name>].",
+    "evidence": "crates/core/src/secrets.rs:6,18-23,49,58,110"
+  },
+  {
+    "id": "s24",
+    "area": "rules",
+    "question": "Which settings.json keys are never applied from a group, and how are merge clashes handled?",
+    "answer": "Never applied: apiKeyHelper, env values the secret scan flags, hooks whose command has an absolute path (also permissions.additionalDirectories on the personal side). Objects merge key by key, arrays append shared items without duplicates, plain values take the shared one; a type clash skips only that key and reports it.",
+    "evidence": "crates/core/src/settings.rs:18-19,492,512"
+  },
+  {
+    "id": "s25",
+    "area": "rules",
+    "question": "Which members does the membership plan invite or remove?",
+    "answer": "Logins compare case-insensitively; the host is never invited or removed; a pending invitation is never resent; duplicate logins are deduped; invitations of removed logins are cancelled.",
+    "evidence": "crates/core/src/members.rs:18-20"
+  },
+  {
+    "id": "s26",
+    "area": "bugs",
+    "question": "How is the host-only lock named and what does a non-host see when changing a host-only group?",
+    "answer": "The commit-status/lock name is \"claude-sync: only the host updates the group\". The error reads \"Only {host} can change {group}. Your change stays on this machine; ask {host}, or propose it as a pull request.\"",
+    "evidence": "crates/core/src/remote.rs:109; crates/core/src/error.rs:33"
+  },
+  {
+    "id": "s27",
+    "area": "bugs",
+    "question": "What are the user-visible error messages for expired sign-in, lost push race, secret found, non-object JSON and public repo?",
+    "answer": "\"Your GitHub sign-in expired. Sign in again.\"; \"someone else pushed first and the retries ran out\" (after 3 retries); \"secret found in {path}:{line} ({pattern}); nothing was committed\"; \"{path} is not one JSON object; nothing was merged\"; \"repo {0} is public; claude-sync only uses private repos\".",
+    "evidence": "crates/core/src/error.rs:10-28; crates/core/src/engine.rs:198"
+  },
+  {
+    "id": "s28",
+    "area": "edge",
+    "question": "What happens to settings.json when it is a symlink or not valid JSON?",
+    "answer": "Nothing is merged and the file is left untouched; the messages are \"settings.json is a link or not a regular file, so nothing was merged; settings.json was not changed\" and the \"is not one JSON object\" variant. A UTF-8 BOM is accepted when reading (settings.rs:80); files are written with 2-space indent, LF and a trailing newline after a backup.",
+    "evidence": "crates/core/src/apply.rs:570"
+  },
+  {
+    "id": "s29",
+    "area": "edge",
+    "question": "How is the managed block placed inside the user's CLAUDE.md?",
+    "answer": "Between <!-- claude-sync:begin (managed, do not edit inside) --> and <!-- claude-sync:end -->, at the top followed by one blank line; the begin marker must start a line; CRLF is used when the first line ends in CRLF; everything outside the block is kept byte for byte.",
+    "evidence": "crates/core/src/apply.rs:39,1069,1097"
+  },
+  {
+    "id": "s30",
+    "area": "edge",
+    "question": "What does the rename migration do when the target already exists or runs twice?",
+    "answer": "It moves group dir, conflicts, apply, jobs, choices, plugin install, notifications, and state.json last; it is idempotent and restarts after a power loss. Nothing is deleted: an existing target stays and the old folder is left beside it; an already joined new name is kept once; case-only renames are handled.",
+    "evidence": "crates/core/src/rename.rs:6-7"
+  },
+  {
+    "id": "s31",
+    "area": "edge",
+    "question": "What does the log tail return for no log, for a tiny limit, and does it redact?",
+    "answer": "An empty string when no log exists or when max_bytes is smaller than the last line; otherwise whole lines from a line start, redacted again.",
+    "evidence": "crates/core/src/logging.rs:56-57"
+  },
+  {
+    "id": "s32",
+    "area": "edge",
+    "question": "What does the helper say when there is nothing to explain, or Claude Code is missing?",
+    "answer": "Activity: \"No other member changed the group recently, so there is nothing to summarise.\"; collisions and CLAUDE.md review: \"There is nothing to explain yet.\"; missing: \"Claude Code isn't installed or signed in. Install it and run `claude` once to sign in.\" A legacy keychain key \"@anthropic-key\" is deleted at startup.",
+    "evidence": "crates/core/src/helper.rs:10,16,45-47"
+  },
+  {
+    "id": "s33",
+    "area": "edge",
+    "question": "What are the caps of the CLAUDE.md review store and its diff?",
+    "answer": "claude-md-review.json format 2 remembers at most 500 declined items; a diff is cut to 2 context lines each side, and beyond 4,000,000 compared cells a coarser diff is used.",
+    "evidence": "crates/core/src/review.rs:21-31,515"
+  },
+  {
+    "id": "s34",
+    "area": "edge",
+    "question": "What does the relay do with a signature asset or asset id that is odd?",
+    "answer": "A signature asset over 16 KiB is refused; the download id must match ^\\d{1,20}$ else 400 \"asset id must be a number\"; download needs a Bearer token or the install session cookie, else 401 \"missing GitHub token\".",
+    "evidence": "relay/api/update.ts:8; relay/api/download/[id].ts:12,25"
+  },
+  {
+    "id": "s35",
+    "area": "platform",
+    "question": "What do jobs do on each OS when the computer was off at the scheduled time, and what OS-level time limit applies?",
+    "answer": "systemd timers use Persistent=true (run at next start); launchd runs a missed interval at wake; every OS entry may run 10 minutes longer than the job's own timeout before the OS stops it; Windows task XML is UTF-16LE with a BOM and local times.",
+    "evidence": "crates/core/src/jobs/os.rs:21-22,260,490-505"
+  },
+  {
+    "id": "s36",
+    "area": "platform",
+    "question": "How is the claude command found and run for jobs?",
+    "answer": "Windows uses where.exe and prefers an .exe over a .cmd; the job PATH is the login shell PATH, then the current one, then claude's folder and user bin folders (launchd only gives a minimal PATH); no console window; a timeout kills the whole process tree. Online check is a HEAD to https://api.github.com.",
+    "evidence": "crates/core/src/claude_cli.rs:4; crates/core/src/jobs/run.rs:178,256"
+  },
+  {
+    "id": "s37",
+    "area": "platform",
+    "question": "What do the install page and its sign-in cookie look like on the relay?",
+    "answer": "Not configured: 503 \"Install sign-in is not configured on this relay yet.\" Signed out: \"Sign in with GitHub\" and \"Only your GitHub username is read.\" Blocked login: 403 \"isn't on the list yet\". Missing assets show \"(not uploaded yet)\", none at all \"No release is available yet.\" macOS card shows `xattr -dr com.apple.quarantine /Applications/claude-sync.app`. Cookie: HttpOnly, Secure, SameSite=Lax, 24 h, HMAC-signed; CSP default-src 'none'.",
+    "evidence": "relay/api/install/page.ts:26,52-56,68,74-83; relay/lib/session.ts:6,50"
+  },
+  {
+    "id": "s38",
+    "area": "platform",
+    "question": "How does GitHub OAuth sign-in on the install page validate the callback?",
+    "answer": "Login asks scope read:user with a random state cookie (10 min); callback redirects to /install?error=state, denied or github on failure; only the login (^[A-Za-z0-9][A-Za-z0-9-]{0,38}$) is kept and the token dropped.",
+    "evidence": "relay/api/install/login.ts:14; relay/api/install/callback.ts:6-9"
+  },
+  {
+    "id": "s39",
+    "area": "platform",
+    "question": "What validates the relay caller token and what are its failure statuses and cache?",
+    "answer": "401 \"missing GitHub token\" or \"invalid GitHub token\" (www-authenticate Bearer), 502 \"GitHub is unavailable\", 403 \"<login> is not allowed to use this relay\" (blocked list, case-insensitive), 429 with retry-after. Result cached by SHA-256 of the token for 10 min, max 1000 entries. /api/health returns {ok:true} without auth.",
+    "evidence": "relay/lib/auth.ts:7-8,40-94; relay/api/health.ts:5"
+  },
+  {
+    "id": "s40",
+    "area": "platform",
+    "question": "How does the relay's own redaction differ from the app's, and how does it trim logs?",
+    "answer": "Uses upper-case [REDACTED:<name>], AKIA with 16+ chars, private-key bodies capped at 20000 chars; keepTail keeps the last N bytes without splitting a UTF-8 character and prefixes \"[… N earlier bytes cut]\". Function maxDuration is 30 s; unknown errors become 500 \"internal error\".",
+    "evidence": "relay/lib/redact.ts:10-38; relay/vercel.json:7; relay/lib/http.ts:51"
+  }
+]

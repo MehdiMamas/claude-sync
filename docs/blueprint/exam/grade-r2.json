@@ -1,0 +1,1 @@
+{"round":2,"date":"2026-11-26","asked":21,"pass":19,"partial":["q07: stale-lock rule missing","q36: single-instance --refresh and debug autostart skip missing"],"total":"38/40 (95%)","caveat":"the builder saw these questions, so this round measures the fixes, not completeness; a fresh question set is the real check"}

@@ -1,0 +1,5 @@
+{"round":1,"date":"2026-11-26","pass":["q03","q05","q08","q09","q11","q12","q13","q17","q18","q21","q22","q24","q25","q28","q31","q33","q35","q37","q39"],
+"partial":["q01","q06","q10","q14","q16","q19","q20","q23","q26","q27","q30","q34","q36","q38","q40"],
+"miss":["q02","q04","q15","q29","q32"],
+"wrong_in_canvas":["q07: canvas says 7 newest job logs, code keeps 20 (crates/core/src/jobs/run.rs:17)"],
+"score":"19/40 full (47.5%); 15 partial; 5 not in canvas; 1 wrong"}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CLAUDE.md review: happy path</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#f6f7f9;--surface:#ffffff;--ink:#1c1f24;--muted:#5f6672;--accent:#2f6fde;--on-accent:#ffffff;--error:#c4312b;--error-bg:#fdecea;--accent-bg:#e6eefc;--warn-bg:#fff4dc;--ok:#1f8a4c;--ok-bg:#e3f4ea;--warn:#9a5b00;--dg-bg:#17191d;--dg-lane:#212429;--dg-node:#353a42;--dg-line:#9aa1ad;--dg-ink:#e7e9ec;--dg-muted:#9aa1ad;--rule:color-mix(in srgb,var(--muted) 35%,transparent);--font-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent)}
+
+</style>
+</helmet>
+<div data-page="v1" data-section="play" data-created="2026-11-26" data-updated="2026-11-26" data-status="superseded" data-superseded-by="v2" data-scenario="ReviewHappy" data-kind="happy" data-story="As a group member, I want to review what others add to the group CLAUDE.md, so that my Claude never reads lines I did not accept." style="position:relative;width:960px;height:830px;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--font-body)"><h1 style="position:absolute;left:40px;top:28px;margin:0;font:600 28px/1.2 var(--font-display);color:var(--ink)">CLAUDE.md review: happy path</h1><p style="position:absolute;left:40px;top:72px;margin:0;font-size:14px;color:var(--muted)">Created 2026-11-26. Updated 2026-11-26.</p><p style="position:absolute;left:40px;top:100px;width:880px;margin:0;font-size:15px;color:var(--ink)">As a group member, I want to review what others add to the group CLAUDE.md, so that my Claude never reads lines I did not accept. Click a step to open its screen. <a href="v1-FlowReview.dc.html">See the flow that leads here</a>.</p><ol style="position:absolute;left:40px;top:160px;width:880px;margin:0;padding-left:24px;font-size:15px;line-height:1.4"><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-FlowReview:commit">Someone commits a CLAUDE.md change</a><br><span style="color:var(--muted);font-size:14px">System: Reviewed through GET /compare between the last synced head and the new head (docs/architecture.md section 7a).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-FlowReview:split">Split into items (one per commit block)</a><br><span style="color:var(--muted);font-size:14px">System: claude_md_review builds the items (engine.rs:1114); claude_md_pending counts them (engine.rs:1102).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-FlowReview:auto">Auto-accept on? apply now</a><br><span style="color:var(--muted);font-size:14px">System: autoAcceptClaudeMd in claude-sync.json is the group default; each device can override.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-FlowReview:card">Review card lists pending items</a><br><span style="color:var(--muted);font-size:14px">System: review_pending and review_claude_md drive the card (engine.rs:53-55); nav shows the count.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-FlowReview:choose">Accept or Decline each item</a><br><span style="color:var(--muted);font-size:14px">System: Choices are stored in claude-md-review.json, format 2.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-FlowReview:apply">Accepted lines enter ~/.claude/CLAUDE.md</a><br><span style="color:var(--muted);font-size:14px">System: Items apply by content, not by line number.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-FlowReview:never">Declined lines are never pushed</a><br><span style="color:var(--muted);font-size:14px">System: They stay out of what this device shares.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-StateReview:pending">State: Pending</a><br><span style="color:var(--muted);font-size:14px">System: state pending in CLAUDE.md review item states (docs/architecture.md section 7a; claude-md-review.json format 2).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-StateReview:accepted">State: Accepted: applied</a><br><span style="color:var(--muted);font-size:14px">System: state accepted in CLAUDE.md review item states (docs/architecture.md section 7a; claude-md-review.json format 2).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-StateReview:declined">State: Declined: kept out</a><br><span style="color:var(--muted);font-size:14px">System: state declined in CLAUDE.md review item states (docs/architecture.md section 7a; claude-md-review.json format 2).</span></li></ol><a href="v2-ScenarioReviewHappy.dc.html" style="position:absolute;right:12px;bottom:4px;font-size:11px;color:var(--accent);z-index:4">Superseded by v2</a></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":830}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

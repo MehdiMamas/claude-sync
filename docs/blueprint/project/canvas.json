@@ -1,0 +1,2790 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-26T15:06:20Z"
+  },
+  "title": "claude-sync blueprint",
+  "launch": {
+    "view": "canvas",
+    "page": "v2"
+  },
+  "pages": [
+    {
+      "id": "v2",
+      "name": "v2 · 2026-11-26 (To-be)"
+    },
+    {
+      "id": "v1",
+      "name": "v1 · 2026-11-26 (As-is, superseded)"
+    }
+  ],
+  "boards": {
+    "v2-FlowPersonal.dc.html": {
+      "x": 0,
+      "y": 23086,
+      "w": 1240,
+      "h": 704,
+      "title": "Personal memory sync",
+      "page": "v2"
+    },
+    "v2-DesignDirection.dc.html": {
+      "x": 1360,
+      "y": 32632,
+      "w": 1280,
+      "h": 700,
+      "title": "Visual direction",
+      "page": "v2",
+      "expand": "fill"
+    },
+    "v2-ScenarioInstallHappy.dc.html": {
+      "x": 1320,
+      "y": 28284,
+      "w": 960,
+      "h": 644,
+      "title": "Install page for a friend: happy path",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-StateMatrix.dc.html": {
+      "x": 2160,
+      "y": 0,
+      "w": 1280,
+      "h": 820,
+      "title": "State matrix",
+      "page": "v2",
+      "expand": "fill"
+    },
+    "v2-ScreenGroups.dc.html": {
+      "x": 0,
+      "y": 2620,
+      "w": 880,
+      "h": 723,
+      "title": "Screen: Groups",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-FlowFeedback.dc.html": {
+      "x": 0,
+      "y": 27460,
+      "w": 1240,
+      "h": 704,
+      "title": "Send feedback through the relay",
+      "page": "v2"
+    },
+    "v2-ScreenSettingsOffer.dc.html": {
+      "x": 960,
+      "y": 16736,
+      "w": 880,
+      "h": 1670,
+      "title": "Screen: Settings: memory offered",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScreenGroupsEmpty.dc.html": {
+      "x": 960,
+      "y": 2620,
+      "w": 880,
+      "h": 680,
+      "title": "Screen: Groups: empty",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-EdgeCases.dc.html": {
+      "x": 3780,
+      "y": 29048,
+      "w": 1240,
+      "h": 1484,
+      "title": "Edge cases",
+      "page": "v2"
+    },
+    "v2-C4Context.dc.html": {
+      "x": 0,
+      "y": 30652,
+      "w": 1770,
+      "h": 433,
+      "title": "System context",
+      "page": "v2"
+    },
+    "v2-ScreenNotificationsEmpty.dc.html": {
+      "x": 1920,
+      "y": 18914,
+      "w": 880,
+      "h": 680,
+      "title": "Screen: Notifications: empty",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScreenGroup.dc.html": {
+      "x": 0,
+      "y": 4114,
+      "w": 880,
+      "h": 5999,
+      "title": "Screen: Group (host)",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-Class.dc.html": {
+      "x": 840,
+      "y": 31472,
+      "w": 841,
+      "h": 808,
+      "title": "Core classes",
+      "page": "v2"
+    },
+    "v2-FlowUpdate.dc.html": {
+      "x": 0,
+      "y": 26634,
+      "w": 1240,
+      "h": 704,
+      "title": "App update through the relay",
+      "page": "v2"
+    },
+    "v2-ScreenFeedback.dc.html": {
+      "x": 2880,
+      "y": 16736,
+      "w": 880,
+      "h": 1078,
+      "title": "Screen: Send feedback",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScreenGroupOff.dc.html": {
+      "x": 0,
+      "y": 10233,
+      "w": 880,
+      "h": 6016,
+      "title": "Screen: Group: off here",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-Component.dc.html": {
+      "x": 1761,
+      "y": 31472,
+      "w": 1876,
+      "h": 794,
+      "title": "Components",
+      "page": "v2"
+    },
+    "v2-ScenarioSyncTickEdge.dc.html": {
+      "x": 2360,
+      "y": 22012,
+      "w": 960,
+      "h": 458,
+      "title": "Background sync tick: edge cases",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-Endpoints.dc.html": {
+      "x": 0,
+      "y": 32632,
+      "w": 1280,
+      "h": 900,
+      "title": "Endpoints",
+      "page": "v2",
+      "expand": "fill"
+    },
+    "v2-ScenarioUpdateHappy.dc.html": {
+      "x": 1320,
+      "y": 26634,
+      "w": 960,
+      "h": 706,
+      "title": "App update through the relay: happy path",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-DesignTokens.dc.html": {
+      "x": 2720,
+      "y": 32632,
+      "w": 1280,
+      "h": 1500,
+      "title": "Colour tokens",
+      "page": "v2",
+      "expand": "fill"
+    },
+    "v2-Deploy.dc.html": {
+      "x": 1360,
+      "y": 34252,
+      "w": 1280,
+      "h": 820,
+      "title": "Deploy and cost",
+      "page": "v2",
+      "expand": "fill"
+    },
+    "v2-ScenarioSyncTickHappy.dc.html": {
+      "x": 1320,
+      "y": 22012,
+      "w": 960,
+      "h": 954,
+      "title": "Background sync tick: happy path",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScreenSignIn.dc.html": {
+      "x": 0,
+      "y": 1820,
+      "w": 880,
+      "h": 680,
+      "title": "Screen: Sign in",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-FlowInstall.dc.html": {
+      "x": 0,
+      "y": 28284,
+      "w": 1240,
+      "h": 604,
+      "title": "Install page for a friend",
+      "page": "v2"
+    },
+    "v2-ScreenNotifications.dc.html": {
+      "x": 960,
+      "y": 18914,
+      "w": 880,
+      "h": 779,
+      "title": "Screen: Notifications",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScreenSettings.dc.html": {
+      "x": 0,
+      "y": 16736,
+      "w": 880,
+      "h": 2058,
+      "title": "Screen: Settings",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScenarioInstallEdge.dc.html": {
+      "x": 2360,
+      "y": 28284,
+      "w": 960,
+      "h": 334,
+      "title": "Install page for a friend: edge cases",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScenarioUpdateEdge.dc.html": {
+      "x": 2360,
+      "y": 26634,
+      "w": 960,
+      "h": 396,
+      "title": "App update through the relay: edge cases",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-StateSignIn.dc.html": {
+      "x": 0,
+      "y": 29048,
+      "w": 980,
+      "h": 380,
+      "title": "Sign-in states",
+      "page": "v2"
+    },
+    "v2-ScenarioReviewHappy.dc.html": {
+      "x": 1320,
+      "y": 24860,
+      "w": 960,
+      "h": 830,
+      "title": "CLAUDE.md review: happy path",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-DesignType.dc.html": {
+      "x": 4080,
+      "y": 32632,
+      "w": 1280,
+      "h": 620,
+      "title": "Type and spacing",
+      "page": "v2",
+      "expand": "fill"
+    },
+    "v2-FlowEdits.dc.html": {
+      "x": 0,
+      "y": 23910,
+      "w": 1240,
+      "h": 704,
+      "title": "Local edits, conflicts, proposals",
+      "page": "v2"
+    },
+    "v2-FlowReview.dc.html": {
+      "x": 0,
+      "y": 24860,
+      "w": 1240,
+      "h": 704,
+      "title": "CLAUDE.md review",
+      "page": "v2"
+    },
+    "v2-Plan.dc.html": {
+      "x": 2720,
+      "y": 34252,
+      "w": 1280,
+      "h": 760,
+      "title": "Plan",
+      "page": "v2",
+      "expand": "fill"
+    },
+    "v2-ErSchema.dc.html": {
+      "x": 3298,
+      "y": 30652,
+      "w": 1240,
+      "h": 640,
+      "title": "Data model",
+      "page": "v2"
+    },
+    "v2-StateGroup.dc.html": {
+      "x": 1060,
+      "y": 29048,
+      "w": 980,
+      "h": 380,
+      "title": "Group states on a device",
+      "page": "v2"
+    },
+    "v2-ScenarioGroupEdge.dc.html": {
+      "x": 2360,
+      "y": 21186,
+      "w": 960,
+      "h": 334,
+      "title": "Create a group, invite, join: edge cases",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScreenGroupProposals.dc.html": {
+      "x": 1920,
+      "y": 4114,
+      "w": 880,
+      "h": 5999,
+      "title": "Screen: Group: proposals",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScenarioGroupHappy.dc.html": {
+      "x": 1320,
+      "y": 21186,
+      "w": 960,
+      "h": 706,
+      "title": "Create a group, invite, join: happy path",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-InteractionCoverage.dc.html": {
+      "x": 3520,
+      "y": 0,
+      "w": 1280,
+      "h": 1700,
+      "title": "Interaction coverage",
+      "page": "v2",
+      "expand": "fill"
+    },
+    "v2-ScreenSignInExpired.dc.html": {
+      "x": 1920,
+      "y": 1820,
+      "w": 880,
+      "h": 680,
+      "title": "Screen: Sign in: expired",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScreenGroupGuest.dc.html": {
+      "x": 960,
+      "y": 4114,
+      "w": 880,
+      "h": 3082,
+      "title": "Screen: Group (member)",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScreenGroupNoHistory.dc.html": {
+      "x": 2880,
+      "y": 4114,
+      "w": 880,
+      "h": 3805,
+      "title": "Screen: Group: no history",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScenarioPersonalHappy.dc.html": {
+      "x": 1320,
+      "y": 23086,
+      "w": 960,
+      "h": 644,
+      "title": "Personal memory sync: happy path",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScenarioFeedbackHappy.dc.html": {
+      "x": 1320,
+      "y": 27460,
+      "w": 960,
+      "h": 644,
+      "title": "Send feedback through the relay: happy path",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScenarioPersonalEdge.dc.html": {
+      "x": 2360,
+      "y": 23086,
+      "w": 960,
+      "h": 334,
+      "title": "Personal memory sync: edge cases",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScenarioSignInHappy.dc.html": {
+      "x": 1320,
+      "y": 20112,
+      "w": 960,
+      "h": 954,
+      "title": "Sign in with GitHub (device code): happy path",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScenarioJobsHappy.dc.html": {
+      "x": 1320,
+      "y": 25810,
+      "w": 960,
+      "h": 644,
+      "title": "Scheduled jobs (accept, run): happy path",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-History.dc.html": {
+      "x": 5440,
+      "y": 34252,
+      "w": 1280,
+      "h": 620,
+      "title": "History",
+      "page": "v2",
+      "expand": "fill"
+    },
+    "v2-ScreenSignInCode.dc.html": {
+      "x": 960,
+      "y": 1820,
+      "w": 880,
+      "h": 680,
+      "title": "Screen: Sign in: code",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScenarioEditsEdge.dc.html": {
+      "x": 2360,
+      "y": 23910,
+      "w": 960,
+      "h": 458,
+      "title": "Local edits, conflicts, proposals: edge cases",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScreenGroupRevert.dc.html": {
+      "x": 1920,
+      "y": 10233,
+      "w": 880,
+      "h": 6123,
+      "title": "Screen: Group: revert",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScenarioEditsHappy.dc.html": {
+      "x": 1320,
+      "y": 23910,
+      "w": 960,
+      "h": 830,
+      "title": "Local edits, conflicts, proposals: happy path",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScenarioSignInEdge.dc.html": {
+      "x": 2360,
+      "y": 20112,
+      "w": 960,
+      "h": 458,
+      "title": "Sign in with GitHub (device code): edge cases",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-Questions.dc.html": {
+      "x": 4080,
+      "y": 34252,
+      "w": 1280,
+      "h": 620,
+      "title": "Open questions",
+      "page": "v2",
+      "expand": "fill"
+    },
+    "v2-UseCase.dc.html": {
+      "x": 0,
+      "y": 31472,
+      "w": 760,
+      "h": 1040,
+      "title": "Use cases",
+      "page": "v2"
+    },
+    "v2-ScenarioFeedbackEdge.dc.html": {
+      "x": 2360,
+      "y": 27460,
+      "w": 960,
+      "h": 396,
+      "title": "Send feedback through the relay: edge cases",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScenarioJobsEdge.dc.html": {
+      "x": 2360,
+      "y": 25810,
+      "w": 960,
+      "h": 458,
+      "title": "Scheduled jobs (accept, run): edge cases",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-FlowSignIn.dc.html": {
+      "x": 0,
+      "y": 20112,
+      "w": 1240,
+      "h": 704,
+      "title": "Sign in with GitHub (device code)",
+      "page": "v2"
+    },
+    "v2-Deployment.dc.html": {
+      "x": 3717,
+      "y": 31472,
+      "w": 1215,
+      "h": 690,
+      "title": "Deployment",
+      "page": "v2"
+    },
+    "v2-ScreenGroupsCreate.dc.html": {
+      "x": 1920,
+      "y": 2620,
+      "w": 880,
+      "h": 1374,
+      "title": "Screen: Groups: create",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-Decisions.dc.html": {
+      "x": 0,
+      "y": 34252,
+      "w": 1280,
+      "h": 1700,
+      "title": "Decisions",
+      "page": "v2",
+      "expand": "fill"
+    },
+    "v2-StateReview.dc.html": {
+      "x": 2950,
+      "y": 29048,
+      "w": 750,
+      "h": 380,
+      "title": "CLAUDE.md review item states",
+      "page": "v2"
+    },
+    "v2-FlowJobs.dc.html": {
+      "x": 0,
+      "y": 25810,
+      "w": 1240,
+      "h": 704,
+      "title": "Scheduled jobs (accept, run)",
+      "page": "v2"
+    },
+    "v2-C4Container.dc.html": {
+      "x": 1850,
+      "y": 30652,
+      "w": 1368,
+      "h": 546,
+      "title": "Containers",
+      "page": "v2"
+    },
+    "v2-Progress.dc.html": {
+      "x": 1360,
+      "y": 0,
+      "w": 720,
+      "h": 274,
+      "title": "Progress",
+      "page": "v2"
+    },
+    "v2-ScreenGroupShare.dc.html": {
+      "x": 2880,
+      "y": 10233,
+      "w": 880,
+      "h": 6383,
+      "title": "Screen: Group: share CLAUDE.md",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-StateProposal.dc.html": {
+      "x": 2120,
+      "y": 29048,
+      "w": 750,
+      "h": 380,
+      "title": "Proposal states",
+      "page": "v2"
+    },
+    "v2-Cover.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1280,
+      "h": 1500,
+      "title": "claude-sync: to-be (v2)",
+      "page": "v2",
+      "expand": "fill"
+    },
+    "v2-ScreenGroupHelper.dc.html": {
+      "x": 960,
+      "y": 10233,
+      "w": 880,
+      "h": 6320,
+      "title": "Screen: Group: Claude helper",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScreenSettingsOff.dc.html": {
+      "x": 1920,
+      "y": 16736,
+      "w": 880,
+      "h": 1531,
+      "title": "Screen: Settings: memory off",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-SequenceSync.dc.html": {
+      "x": 4618,
+      "y": 30652,
+      "w": 1200,
+      "h": 700,
+      "title": "Sequence: background tick",
+      "page": "v2"
+    },
+    "v2-FlowSyncTick.dc.html": {
+      "x": 0,
+      "y": 22012,
+      "w": 1240,
+      "h": 704,
+      "title": "Background sync tick",
+      "page": "v2"
+    },
+    "v2-ScenarioReviewEdge.dc.html": {
+      "x": 2360,
+      "y": 24860,
+      "w": 960,
+      "h": 334,
+      "title": "CLAUDE.md review: edge cases",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-FlowGroup.dc.html": {
+      "x": 0,
+      "y": 21186,
+      "w": 1240,
+      "h": 704,
+      "title": "Create a group, invite, join",
+      "page": "v2"
+    },
+    "v2-ScreenFeedbackEmpty.dc.html": {
+      "x": 0,
+      "y": 18914,
+      "w": 880,
+      "h": 1078,
+      "title": "Screen: Feedback: empty",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v2-ScreenGroupsPlugins.dc.html": {
+      "x": 2880,
+      "y": 2620,
+      "w": 880,
+      "h": 796,
+      "title": "Screen: Groups: plugins",
+      "page": "v2",
+      "is_interactive": true
+    },
+    "v1-Cover.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1280,
+      "h": 6067,
+      "title": "claude-sync: as-is",
+      "page": "v1",
+      "expand": "fill"
+    },
+    "v1-Progress.dc.html": {
+      "x": 1360,
+      "y": 0,
+      "w": 720,
+      "h": 297,
+      "title": "Progress",
+      "page": "v1"
+    },
+    "v1-StateMatrix.dc.html": {
+      "x": 2160,
+      "y": 0,
+      "w": 1280,
+      "h": 1608,
+      "title": "State matrix",
+      "page": "v1",
+      "expand": "fill"
+    },
+    "v1-InteractionCoverage.dc.html": {
+      "x": 3520,
+      "y": 0,
+      "w": 1280,
+      "h": 7216,
+      "title": "Interaction coverage",
+      "page": "v1",
+      "expand": "fill"
+    },
+    "v1-Abilities.dc.html": {
+      "x": 0,
+      "y": 6127,
+      "w": 1240,
+      "h": 3997,
+      "title": "Abilities: everything the app does",
+      "page": "v1"
+    },
+    "v1-FixedBugs.dc.html": {
+      "x": 1320,
+      "y": 6127,
+      "w": 1240,
+      "h": 2405,
+      "title": "Fixed bugs: behaviour a rebuild must not regress",
+      "page": "v1"
+    },
+    "v1-RebuildData.dc.html": {
+      "x": 0,
+      "y": 10184,
+      "w": 1240,
+      "h": 2344,
+      "title": "Rebuild spec 1: data contracts and migration",
+      "page": "v1"
+    },
+    "v1-RebuildRules.dc.html": {
+      "x": 1320,
+      "y": 10184,
+      "w": 1240,
+      "h": 1649,
+      "title": "Rebuild spec 2: behaviour rules",
+      "page": "v1"
+    },
+    "v1-RebuildNonFunc.dc.html": {
+      "x": 2640,
+      "y": 10184,
+      "w": 1240,
+      "h": 840,
+      "title": "Rebuild spec 3: non-functional baseline",
+      "page": "v1"
+    },
+    "v1-ScreenSignIn.dc.html": {
+      "x": 0,
+      "y": 12588,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Sign in",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSignInCode.dc.html": {
+      "x": 960,
+      "y": 12588,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Sign in: code",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSignInExpired.dc.html": {
+      "x": 1920,
+      "y": 12588,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Sign in: expired",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroups.dc.html": {
+      "x": 2880,
+      "y": 12588,
+      "w": 880,
+      "h": 683,
+      "title": "Screen: Groups",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsEmpty.dc.html": {
+      "x": 0,
+      "y": 13288,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Groups: empty",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsCreate.dc.html": {
+      "x": 960,
+      "y": 13288,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Groups: create (1/3)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsCreateP2.dc.html": {
+      "x": 1920,
+      "y": 13288,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Groups: create (2/3)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsCreateP3.dc.html": {
+      "x": 2880,
+      "y": 13288,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Groups: create (3/3)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsPlugins.dc.html": {
+      "x": 0,
+      "y": 13988,
+      "w": 880,
+      "h": 756,
+      "title": "Screen: Groups: plugins",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroup.dc.html": {
+      "x": 960,
+      "y": 13988,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (host) (1/10)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupP2.dc.html": {
+      "x": 1920,
+      "y": 13988,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (host) (2/10)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupP3.dc.html": {
+      "x": 2880,
+      "y": 13988,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (host) (3/10)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupP4.dc.html": {
+      "x": 0,
+      "y": 14804,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (host) (4/10)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupP5.dc.html": {
+      "x": 960,
+      "y": 14804,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (host) (5/10)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupP6.dc.html": {
+      "x": 1920,
+      "y": 14804,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (host) (6/10)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupP7.dc.html": {
+      "x": 2880,
+      "y": 14804,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (host) (7/10)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupP8.dc.html": {
+      "x": 0,
+      "y": 15504,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (host) (8/10)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupP9.dc.html": {
+      "x": 960,
+      "y": 15504,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (host) (9/10)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupP10.dc.html": {
+      "x": 1920,
+      "y": 15504,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (host) (10/10)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupGuest.dc.html": {
+      "x": 2880,
+      "y": 15504,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (member) (1/6)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupGuestP2.dc.html": {
+      "x": 0,
+      "y": 16204,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (member) (2/6)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupGuestP3.dc.html": {
+      "x": 960,
+      "y": 16204,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (member) (3/6)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupGuestP4.dc.html": {
+      "x": 1920,
+      "y": 16204,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (member) (4/6)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupGuestP5.dc.html": {
+      "x": 2880,
+      "y": 16204,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (member) (5/6)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupGuestP6.dc.html": {
+      "x": 0,
+      "y": 16904,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group (member) (6/6)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupProposals.dc.html": {
+      "x": 960,
+      "y": 16904,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group: proposals",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupNoHistory.dc.html": {
+      "x": 1920,
+      "y": 16904,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group: no history",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupOff.dc.html": {
+      "x": 2880,
+      "y": 16904,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group: off here",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupHelper.dc.html": {
+      "x": 0,
+      "y": 17604,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group: Claude helper",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupRevert.dc.html": {
+      "x": 960,
+      "y": 17604,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group: revert",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupShare.dc.html": {
+      "x": 1920,
+      "y": 17604,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group: share CLAUDE.md",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSettings.dc.html": {
+      "x": 2880,
+      "y": 17604,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Settings (1/4)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSettingsP2.dc.html": {
+      "x": 0,
+      "y": 18304,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Settings (2/4)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSettingsP3.dc.html": {
+      "x": 960,
+      "y": 18304,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Settings (3/4)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSettingsP4.dc.html": {
+      "x": 1920,
+      "y": 18304,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Settings (4/4)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSettingsOffer.dc.html": {
+      "x": 2880,
+      "y": 18304,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Settings: memory offered",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSettingsOff.dc.html": {
+      "x": 0,
+      "y": 19004,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Settings: memory off",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenFeedback.dc.html": {
+      "x": 960,
+      "y": 19004,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Send feedback (1/2)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenFeedbackP2.dc.html": {
+      "x": 1920,
+      "y": 19004,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Send feedback (2/2)",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenFeedbackEmpty.dc.html": {
+      "x": 2880,
+      "y": 19004,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Feedback: empty",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenNotifications.dc.html": {
+      "x": 0,
+      "y": 19704,
+      "w": 880,
+      "h": 739,
+      "title": "Screen: Notifications",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenNotificationsEmpty.dc.html": {
+      "x": 960,
+      "y": 19704,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Notifications: empty",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSignInStarting.dc.html": {
+      "x": 1920,
+      "y": 19704,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Sign in: asking GitHub",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSignInCodeCopied.dc.html": {
+      "x": 2880,
+      "y": 19704,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Sign in: code copied",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSignInOpened.dc.html": {
+      "x": 0,
+      "y": 20503,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Sign in: GitHub opened",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSignInFailed.dc.html": {
+      "x": 960,
+      "y": 20503,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Sign in: did not finish",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSignInNoClientId.dc.html": {
+      "x": 1920,
+      "y": 20503,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Sign in: not available",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSignInExpiredCode.dc.html": {
+      "x": 2880,
+      "y": 20503,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Sign in: new code",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSignInApproved.dc.html": {
+      "x": 0,
+      "y": 21203,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Signed in: loading groups",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsSyncing.dc.html": {
+      "x": 960,
+      "y": 21203,
+      "w": 880,
+      "h": 683,
+      "title": "Screen: Groups: syncing",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsSynced.dc.html": {
+      "x": 1920,
+      "y": 21203,
+      "w": 880,
+      "h": 683,
+      "title": "Screen: Groups: synced",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsSyncError.dc.html": {
+      "x": 2880,
+      "y": 21203,
+      "w": 880,
+      "h": 683,
+      "title": "Screen: Groups: sync error",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsReordered.dc.html": {
+      "x": 0,
+      "y": 21903,
+      "w": 880,
+      "h": 683,
+      "title": "Screen: Groups: order changed",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsAccepting.dc.html": {
+      "x": 960,
+      "y": 21903,
+      "w": 880,
+      "h": 683,
+      "title": "Screen: Groups: accepting",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsAccepted.dc.html": {
+      "x": 1920,
+      "y": 21903,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Groups: accepted",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsAcceptError.dc.html": {
+      "x": 2880,
+      "y": 21903,
+      "w": 880,
+      "h": 683,
+      "title": "Screen: Groups: accept failed",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsJoining.dc.html": {
+      "x": 0,
+      "y": 22646,
+      "w": 880,
+      "h": 683,
+      "title": "Screen: Groups: joining",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsJoined.dc.html": {
+      "x": 960,
+      "y": 22646,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Groups: joined",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsJoinError.dc.html": {
+      "x": 1920,
+      "y": 22646,
+      "w": 880,
+      "h": 683,
+      "title": "Screen: Groups: join failed",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupsCreating.dc.html": {
+      "x": 2880,
+      "y": 22646,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Groups: creating",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupCreated.dc.html": {
+      "x": 0,
+      "y": 23389,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group: just created",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenGroupAddMember.dc.html": {
+      "x": 960,
+      "y": 23389,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Group: member invited",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenFeedbackSent.dc.html": {
+      "x": 1920,
+      "y": 23389,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Feedback: sent",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenFeedbackError.dc.html": {
+      "x": 2880,
+      "y": 23389,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Feedback: not sent",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenNotificationsCleared.dc.html": {
+      "x": 0,
+      "y": 24089,
+      "w": 880,
+      "h": 739,
+      "title": "Screen: Notifications: cleared",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScreenSettingsUpToDate.dc.html": {
+      "x": 960,
+      "y": 24089,
+      "w": 880,
+      "h": 640,
+      "title": "Screen: Settings: up to date",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-FlowSignIn.dc.html": {
+      "x": 0,
+      "y": 24888,
+      "w": 1446,
+      "h": 704,
+      "title": "Sign in with GitHub (device code)",
+      "page": "v1"
+    },
+    "v1-ScenarioSignInHappy.dc.html": {
+      "x": 1526,
+      "y": 24888,
+      "w": 960,
+      "h": 1202,
+      "title": "Sign in with GitHub (device code): happy path",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScenarioSignInEdge.dc.html": {
+      "x": 2566,
+      "y": 24888,
+      "w": 960,
+      "h": 674,
+      "title": "Sign in with GitHub (device code): edge cases",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-FlowGroup.dc.html": {
+      "x": 0,
+      "y": 26150,
+      "w": 1446,
+      "h": 704,
+      "title": "Create a group, invite, join",
+      "page": "v1"
+    },
+    "v1-ScenarioGroupHappy.dc.html": {
+      "x": 1526,
+      "y": 26150,
+      "w": 960,
+      "h": 2814,
+      "title": "Create a group, invite, join: happy path",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScenarioGroupEdge.dc.html": {
+      "x": 2566,
+      "y": 26150,
+      "w": 960,
+      "h": 520,
+      "title": "Create a group, invite, join: edge cases",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-FlowSyncTick.dc.html": {
+      "x": 0,
+      "y": 29024,
+      "w": 1446,
+      "h": 704,
+      "title": "Background sync tick",
+      "page": "v1"
+    },
+    "v1-ScenarioSyncTickHappy.dc.html": {
+      "x": 1526,
+      "y": 29024,
+      "w": 960,
+      "h": 1140,
+      "title": "Background sync tick: happy path",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScenarioSyncTickEdge.dc.html": {
+      "x": 2566,
+      "y": 29024,
+      "w": 960,
+      "h": 458,
+      "title": "Background sync tick: edge cases",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-FlowPersonal.dc.html": {
+      "x": 0,
+      "y": 30224,
+      "w": 1288,
+      "h": 704,
+      "title": "Personal memory sync",
+      "page": "v1"
+    },
+    "v1-ScenarioPersonalHappy.dc.html": {
+      "x": 1368,
+      "y": 30224,
+      "w": 960,
+      "h": 830,
+      "title": "Personal memory sync: happy path",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScenarioPersonalEdge.dc.html": {
+      "x": 2408,
+      "y": 30224,
+      "w": 960,
+      "h": 334,
+      "title": "Personal memory sync: edge cases",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-FlowEdits.dc.html": {
+      "x": 0,
+      "y": 31114,
+      "w": 1288,
+      "h": 704,
+      "title": "Local edits, conflicts, proposals",
+      "page": "v1"
+    },
+    "v1-ScenarioEditsHappy.dc.html": {
+      "x": 1368,
+      "y": 31114,
+      "w": 960,
+      "h": 830,
+      "title": "Local edits, conflicts, proposals: happy path",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScenarioEditsEdge.dc.html": {
+      "x": 2408,
+      "y": 31114,
+      "w": 960,
+      "h": 458,
+      "title": "Local edits, conflicts, proposals: edge cases",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-FlowReview.dc.html": {
+      "x": 0,
+      "y": 32004,
+      "w": 1288,
+      "h": 704,
+      "title": "CLAUDE.md review",
+      "page": "v1"
+    },
+    "v1-ScenarioReviewHappy.dc.html": {
+      "x": 1368,
+      "y": 32004,
+      "w": 960,
+      "h": 830,
+      "title": "CLAUDE.md review: happy path",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScenarioReviewEdge.dc.html": {
+      "x": 2408,
+      "y": 32004,
+      "w": 960,
+      "h": 334,
+      "title": "CLAUDE.md review: edge cases",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-FlowJobs.dc.html": {
+      "x": 0,
+      "y": 32894,
+      "w": 1288,
+      "h": 704,
+      "title": "Scheduled jobs (accept, run)",
+      "page": "v1"
+    },
+    "v1-ScenarioJobsHappy.dc.html": {
+      "x": 1368,
+      "y": 32894,
+      "w": 960,
+      "h": 674,
+      "title": "Scheduled jobs (accept, run): happy path",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScenarioJobsEdge.dc.html": {
+      "x": 2408,
+      "y": 32894,
+      "w": 960,
+      "h": 458,
+      "title": "Scheduled jobs (accept, run): edge cases",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-FlowUpdate.dc.html": {
+      "x": 0,
+      "y": 33658,
+      "w": 1288,
+      "h": 704,
+      "title": "App update through the relay",
+      "page": "v1"
+    },
+    "v1-ScenarioUpdateHappy.dc.html": {
+      "x": 1368,
+      "y": 33658,
+      "w": 960,
+      "h": 768,
+      "title": "App update through the relay: happy path",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScenarioUpdateEdge.dc.html": {
+      "x": 2408,
+      "y": 33658,
+      "w": 960,
+      "h": 396,
+      "title": "App update through the relay: edge cases",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-FlowFeedback.dc.html": {
+      "x": 0,
+      "y": 34486,
+      "w": 1288,
+      "h": 704,
+      "title": "Send feedback through the relay",
+      "page": "v1"
+    },
+    "v1-ScenarioFeedbackHappy.dc.html": {
+      "x": 1368,
+      "y": 34486,
+      "w": 960,
+      "h": 768,
+      "title": "Send feedback through the relay: happy path",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScenarioFeedbackEdge.dc.html": {
+      "x": 2408,
+      "y": 34486,
+      "w": 960,
+      "h": 458,
+      "title": "Send feedback through the relay: edge cases",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-FlowInstall.dc.html": {
+      "x": 0,
+      "y": 35314,
+      "w": 1288,
+      "h": 604,
+      "title": "Install page for a friend",
+      "page": "v1"
+    },
+    "v1-ScenarioInstallHappy.dc.html": {
+      "x": 1368,
+      "y": 35314,
+      "w": 960,
+      "h": 644,
+      "title": "Install page for a friend: happy path",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-ScenarioInstallEdge.dc.html": {
+      "x": 2408,
+      "y": 35314,
+      "w": 960,
+      "h": 334,
+      "title": "Install page for a friend: edge cases",
+      "page": "v1",
+      "is_interactive": true
+    },
+    "v1-StateSignIn.dc.html": {
+      "x": 0,
+      "y": 35978,
+      "w": 980,
+      "h": 380,
+      "title": "Sign-in states",
+      "page": "v1"
+    },
+    "v1-StateGroup.dc.html": {
+      "x": 1060,
+      "y": 35978,
+      "w": 980,
+      "h": 380,
+      "title": "Group states on a device",
+      "page": "v1"
+    },
+    "v1-StateProposal.dc.html": {
+      "x": 2120,
+      "y": 35978,
+      "w": 750,
+      "h": 380,
+      "title": "Proposal states",
+      "page": "v1"
+    },
+    "v1-StateReview.dc.html": {
+      "x": 2950,
+      "y": 35978,
+      "w": 750,
+      "h": 380,
+      "title": "CLAUDE.md review item states",
+      "page": "v1"
+    },
+    "v1-EdgeCases.dc.html": {
+      "x": 3780,
+      "y": 35978,
+      "w": 1240,
+      "h": 1724,
+      "title": "Edge cases",
+      "page": "v1"
+    },
+    "v1-C4Context.dc.html": {
+      "x": 0,
+      "y": 37762,
+      "w": 1770,
+      "h": 433,
+      "title": "System context",
+      "page": "v1"
+    },
+    "v1-C4Container.dc.html": {
+      "x": 1850,
+      "y": 37762,
+      "w": 1368,
+      "h": 546,
+      "title": "Containers",
+      "page": "v1"
+    },
+    "v1-ErSchema.dc.html": {
+      "x": 3298,
+      "y": 37762,
+      "w": 1240,
+      "h": 640,
+      "title": "Data model",
+      "page": "v1"
+    },
+    "v1-SequenceSync.dc.html": {
+      "x": 4618,
+      "y": 37762,
+      "w": 1200,
+      "h": 700,
+      "title": "Sequence: background tick",
+      "page": "v1"
+    },
+    "v1-UseCase.dc.html": {
+      "x": 0,
+      "y": 38462,
+      "w": 760,
+      "h": 1040,
+      "title": "Use cases",
+      "page": "v1"
+    },
+    "v1-Class.dc.html": {
+      "x": 840,
+      "y": 38462,
+      "w": 841,
+      "h": 808,
+      "title": "Core classes",
+      "page": "v1"
+    },
+    "v1-Component.dc.html": {
+      "x": 1761,
+      "y": 38462,
+      "w": 1876,
+      "h": 794,
+      "title": "Components",
+      "page": "v1"
+    },
+    "v1-Deployment.dc.html": {
+      "x": 3717,
+      "y": 38462,
+      "w": 1215,
+      "h": 690,
+      "title": "Deployment",
+      "page": "v1"
+    },
+    "v1-Endpoints.dc.html": {
+      "x": 0,
+      "y": 39562,
+      "w": 1280,
+      "h": 1532,
+      "title": "Endpoints",
+      "page": "v1",
+      "expand": "fill"
+    },
+    "v1-DesignDirection.dc.html": {
+      "x": 1360,
+      "y": 39562,
+      "w": 1280,
+      "h": 790,
+      "title": "Visual direction",
+      "page": "v1",
+      "expand": "fill"
+    },
+    "v1-DesignTokens.dc.html": {
+      "x": 2720,
+      "y": 39562,
+      "w": 1280,
+      "h": 1500,
+      "title": "Colour tokens",
+      "page": "v1",
+      "expand": "fill"
+    },
+    "v1-DesignType.dc.html": {
+      "x": 4080,
+      "y": 39562,
+      "w": 1280,
+      "h": 620,
+      "title": "Type and spacing",
+      "page": "v1",
+      "expand": "fill"
+    },
+    "v1-Decisions.dc.html": {
+      "x": 0,
+      "y": 41154,
+      "w": 1280,
+      "h": 1700,
+      "title": "Decisions",
+      "page": "v1",
+      "expand": "fill"
+    },
+    "v1-Deploy.dc.html": {
+      "x": 1360,
+      "y": 41154,
+      "w": 1280,
+      "h": 958,
+      "title": "Deploy and cost",
+      "page": "v1",
+      "expand": "fill"
+    },
+    "v1-Plan.dc.html": {
+      "x": 2720,
+      "y": 41154,
+      "w": 1280,
+      "h": 760,
+      "title": "Plan",
+      "page": "v1",
+      "expand": "fill"
+    },
+    "v1-Questions.dc.html": {
+      "x": 4080,
+      "y": 41154,
+      "w": 1280,
+      "h": 796,
+      "title": "Open questions",
+      "page": "v1",
+      "expand": "fill"
+    },
+    "v1-History.dc.html": {
+      "x": 5440,
+      "y": 41154,
+      "w": 1280,
+      "h": 1695,
+      "title": "History",
+      "page": "v1",
+      "expand": "fill"
+    },
+    "v1-MsgSignInSettings.dc.html": {
+      "x": 0,
+      "y": 42914,
+      "w": 1240,
+      "h": 3897,
+      "title": "Messages 1: sign-in, settings, notifications, feedback screens",
+      "page": "v1"
+    },
+    "v1-MsgGroups.dc.html": {
+      "x": 1320,
+      "y": 42914,
+      "w": 1240,
+      "h": 5327,
+      "title": "Messages 2: groups list, group page, members, plugins",
+      "page": "v1"
+    },
+    "v1-MsgReview.dc.html": {
+      "x": 2640,
+      "y": 42914,
+      "w": 1240,
+      "h": 3586,
+      "title": "Messages 3: CLAUDE.md review, clashes, history, personal, activity",
+      "page": "v1"
+    },
+    "v1-MsgTrayNotifyCli.dc.html": {
+      "x": 2640,
+      "y": 47889,
+      "w": 1240,
+      "h": 3484,
+      "title": "Messages 4: tray, desktop notifications, background, updates, CLI",
+      "page": "v1"
+    },
+    "v1-MsgEngineErrors.dc.html": {
+      "x": 0,
+      "y": 48167,
+      "w": 1240,
+      "h": 3326,
+      "title": "Messages 5: errors and notes the engine hands to the screens",
+      "page": "v1"
+    },
+    "v1-MsgCommandsJobs.dc.html": {
+      "x": 3960,
+      "y": 52798,
+      "w": 1240,
+      "h": 4476,
+      "title": "Messages 7: window commands, jobs and scheduler",
+      "page": "v1"
+    },
+    "v1-MsgGithubHelper.dc.html": {
+      "x": 0,
+      "y": 52798,
+      "w": 1240,
+      "h": 1844,
+      "title": "Messages 6: GitHub client, helper, review engine, feedback commands",
+      "page": "v1"
+    },
+    "v1-EngSignIn.dc.html": {
+      "x": 2640,
+      "y": 53149,
+      "w": 1240,
+      "h": 849,
+      "title": "Engine 1: sign-in, tokens, GitHub App",
+      "page": "v1"
+    },
+    "v1-EngGroupLifecycle.dc.html": {
+      "x": 2640,
+      "y": 54058,
+      "w": 1240,
+      "h": 1438,
+      "title": "Engine 2: create, join, members, host rules",
+      "page": "v1"
+    },
+    "v1-EngProposalsRevert.dc.html": {
+      "x": 2640,
+      "y": 55556,
+      "w": 1240,
+      "h": 847,
+      "title": "Engine 3: proposals, revert, change notes",
+      "page": "v1"
+    },
+    "v1-EngSyncPull.dc.html": {
+      "x": 0,
+      "y": 55326,
+      "w": 1240,
+      "h": 983,
+      "title": "Engine 4: sync pass, state files, choices",
+      "page": "v1"
+    },
+    "v1-EngReviewClashes.dc.html": {
+      "x": 2640,
+      "y": 56463,
+      "w": 1240,
+      "h": 847,
+      "title": "Engine 5: CLAUDE.md review, clashes, sharing, local edits",
+      "page": "v1"
+    },
+    "v1-EngSettingsMarketsWatch.dc.html": {
+      "x": 0,
+      "y": 56369,
+      "w": 1240,
+      "h": 959,
+      "title": "Engine 6: settings merge, canary, marketplaces, watcher",
+      "page": "v1"
+    },
+    "v1-EngPersonalJobs.dc.html": {
+      "x": 2640,
+      "y": 57370,
+      "w": 1240,
+      "h": 1060,
+      "title": "Engine 7: personal memory and scheduled jobs",
+      "page": "v1"
+    },
+    "v1-FeedbackApp.dc.html": {
+      "x": 1320,
+      "y": 56819,
+      "w": 1240,
+      "h": 779,
+      "title": "Feedback 1: the app side",
+      "page": "v1"
+    },
+    "v1-FeedbackRelay.dc.html": {
+      "x": 0,
+      "y": 57388,
+      "w": 1240,
+      "h": 1088,
+      "title": "Feedback 2: the relay side",
+      "page": "v1"
+    },
+    "v1-FeedbackTriage.dc.html": {
+      "x": 1320,
+      "y": 57658,
+      "w": 1240,
+      "h": 996,
+      "title": "Feedback 3: the triage bot",
+      "page": "v1"
+    },
+    "v1-MigrationUpgrade.dc.html": {
+      "x": 2640,
+      "y": 58490,
+      "w": 1240,
+      "h": 981,
+      "title": "Migration and upgrade from every older version",
+      "page": "v1"
+    },
+    "v1-TemplatesUserRepo.dc.html": {
+      "x": 0,
+      "y": 58536,
+      "w": 1240,
+      "h": 538,
+      "title": "templates/user-repo: every file and what it holds",
+      "page": "v1"
+    },
+    "v1-GithubClient.dc.html": {
+      "x": 1320,
+      "y": 58714,
+      "w": 1240,
+      "h": 944,
+      "title": "GitHub client: GraphQL snapshots, request counters, pagination",
+      "page": "v1"
+    },
+    "v1-SpecEngine1.dc.html": {
+      "x": 0,
+      "y": 59718,
+      "w": 1240,
+      "h": 2755,
+      "title": "Module spec: engine, copy, conflicts, CLAUDE.md block, revert (1 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecEngine2.dc.html": {
+      "x": 1320,
+      "y": 59718,
+      "w": 1240,
+      "h": 2956,
+      "title": "Module spec: engine, copy, conflicts, CLAUDE.md block, revert (2 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecEngine3.dc.html": {
+      "x": 2640,
+      "y": 59718,
+      "w": 1240,
+      "h": 4451,
+      "title": "Module spec: engine, copy, conflicts, CLAUDE.md block, revert (3 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecEngine4.dc.html": {
+      "x": 3960,
+      "y": 59718,
+      "w": 1240,
+      "h": 4815,
+      "title": "Module spec: engine, copy, conflicts, CLAUDE.md block, revert (4 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecEngine5.dc.html": {
+      "x": 0,
+      "y": 64554,
+      "w": 1240,
+      "h": 4309,
+      "title": "Module spec: engine, copy, conflicts, CLAUDE.md block, revert (5 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecEngine6.dc.html": {
+      "x": 1320,
+      "y": 64554,
+      "w": 1240,
+      "h": 448,
+      "title": "Module spec: engine, copy, conflicts, CLAUDE.md block, revert (6 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecGithub1.dc.html": {
+      "x": 2640,
+      "y": 64554,
+      "w": 1240,
+      "h": 2774,
+      "title": "Module spec: remote, fake remote, GitHub client, GraphQL, request counts, session, GitHub App (1 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecGithub2.dc.html": {
+      "x": 3960,
+      "y": 64554,
+      "w": 1240,
+      "h": 3770,
+      "title": "Module spec: remote, fake remote, GitHub client, GraphQL, request counts, session, GitHub App (2 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecGithub3.dc.html": {
+      "x": 0,
+      "y": 68883,
+      "w": 1240,
+      "h": 3308,
+      "title": "Module spec: remote, fake remote, GitHub client, GraphQL, request counts, session, GitHub App (3 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecGithub4.dc.html": {
+      "x": 1320,
+      "y": 68883,
+      "w": 1240,
+      "h": 3232,
+      "title": "Module spec: remote, fake remote, GitHub client, GraphQL, request counts, session, GitHub App (4 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecGithub5.dc.html": {
+      "x": 2640,
+      "y": 68883,
+      "w": 1240,
+      "h": 3766,
+      "title": "Module spec: remote, fake remote, GitHub client, GraphQL, request counts, session, GitHub App (5 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecGithub6.dc.html": {
+      "x": 3960,
+      "y": 68883,
+      "w": 1240,
+      "h": 3421,
+      "title": "Module spec: remote, fake remote, GitHub client, GraphQL, request counts, session, GitHub App (6 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecGithub7.dc.html": {
+      "x": 0,
+      "y": 72796,
+      "w": 1240,
+      "h": 1233,
+      "title": "Module spec: remote, fake remote, GitHub client, GraphQL, request counts, session, GitHub App (7 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecPersonal1.dc.html": {
+      "x": 1320,
+      "y": 72796,
+      "w": 1240,
+      "h": 3496,
+      "title": "Module spec: personal memory, merge, settings, choices (1 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecPersonal2.dc.html": {
+      "x": 2640,
+      "y": 72796,
+      "w": 1240,
+      "h": 3506,
+      "title": "Module spec: personal memory, merge, settings, choices (2 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecPersonal3.dc.html": {
+      "x": 3960,
+      "y": 72796,
+      "w": 1240,
+      "h": 3827,
+      "title": "Module spec: personal memory, merge, settings, choices (3 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecPersonal4.dc.html": {
+      "x": 0,
+      "y": 76710,
+      "w": 1240,
+      "h": 3620,
+      "title": "Module spec: personal memory, merge, settings, choices (4 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecPersonal5.dc.html": {
+      "x": 1320,
+      "y": 76710,
+      "w": 1240,
+      "h": 3498,
+      "title": "Module spec: personal memory, merge, settings, choices (5 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecPersonal6.dc.html": {
+      "x": 2640,
+      "y": 76710,
+      "w": 1240,
+      "h": 2804,
+      "title": "Module spec: personal memory, merge, settings, choices (6 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecApply1.dc.html": {
+      "x": 3960,
+      "y": 76710,
+      "w": 1240,
+      "h": 3339,
+      "title": "Module spec: apply, marketplaces, plugin install, contents, watcher (1 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecApply2.dc.html": {
+      "x": 0,
+      "y": 80639,
+      "w": 1240,
+      "h": 2945,
+      "title": "Module spec: apply, marketplaces, plugin install, contents, watcher (2 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecApply3.dc.html": {
+      "x": 1320,
+      "y": 80639,
+      "w": 1240,
+      "h": 3455,
+      "title": "Module spec: apply, marketplaces, plugin install, contents, watcher (3 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecApply4.dc.html": {
+      "x": 2640,
+      "y": 80639,
+      "w": 1240,
+      "h": 3260,
+      "title": "Module spec: apply, marketplaces, plugin install, contents, watcher (4 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecApply5.dc.html": {
+      "x": 3960,
+      "y": 80639,
+      "w": 1240,
+      "h": 3067,
+      "title": "Module spec: apply, marketplaces, plugin install, contents, watcher (5 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecApply6.dc.html": {
+      "x": 0,
+      "y": 84426,
+      "w": 1240,
+      "h": 4032,
+      "title": "Module spec: apply, marketplaces, plugin install, contents, watcher (6 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecApply7.dc.html": {
+      "x": 1320,
+      "y": 84426,
+      "w": 1240,
+      "h": 1504,
+      "title": "Module spec: apply, marketplaces, plugin install, contents, watcher (7 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecJobs1.dc.html": {
+      "x": 2640,
+      "y": 84426,
+      "w": 1240,
+      "h": 2764,
+      "title": "Module spec: scheduled jobs, cron, OS entries, run, Claude CLI, helper, review, clashes (1 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecJobs2.dc.html": {
+      "x": 3960,
+      "y": 84426,
+      "w": 1240,
+      "h": 3380,
+      "title": "Module spec: scheduled jobs, cron, OS entries, run, Claude CLI, helper, review, clashes (2 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecJobs3.dc.html": {
+      "x": 0,
+      "y": 88478,
+      "w": 1240,
+      "h": 2976,
+      "title": "Module spec: scheduled jobs, cron, OS entries, run, Claude CLI, helper, review, clashes (3 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecJobs4.dc.html": {
+      "x": 1320,
+      "y": 88478,
+      "w": 1240,
+      "h": 3322,
+      "title": "Module spec: scheduled jobs, cron, OS entries, run, Claude CLI, helper, review, clashes (4 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecJobs5.dc.html": {
+      "x": 2640,
+      "y": 88478,
+      "w": 1240,
+      "h": 3412,
+      "title": "Module spec: scheduled jobs, cron, OS entries, run, Claude CLI, helper, review, clashes (5 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecJobs6.dc.html": {
+      "x": 3960,
+      "y": 88478,
+      "w": 1240,
+      "h": 3278,
+      "title": "Module spec: scheduled jobs, cron, OS entries, run, Claude CLI, helper, review, clashes (6 of 6)",
+      "page": "v1"
+    },
+    "v1-SpecCoreMisc1.dc.html": {
+      "x": 0,
+      "y": 92281,
+      "w": 1240,
+      "h": 3811,
+      "title": "Module spec: group, members, notifications, migrate, rename, secrets, logging, state, paths, errors (1 of 4)",
+      "page": "v1"
+    },
+    "v1-SpecCoreMisc2.dc.html": {
+      "x": 1320,
+      "y": 92281,
+      "w": 1240,
+      "h": 3369,
+      "title": "Module spec: group, members, notifications, migrate, rename, secrets, logging, state, paths, errors (2 of 4)",
+      "page": "v1"
+    },
+    "v1-SpecCoreMisc3.dc.html": {
+      "x": 2640,
+      "y": 92281,
+      "w": 1240,
+      "h": 3845,
+      "title": "Module spec: group, members, notifications, migrate, rename, secrets, logging, state, paths, errors (3 of 4)",
+      "page": "v1"
+    },
+    "v1-SpecCoreMisc4.dc.html": {
+      "x": 3960,
+      "y": 92281,
+      "w": 1240,
+      "h": 2066,
+      "title": "Module spec: group, members, notifications, migrate, rename, secrets, logging, state, paths, errors (4 of 4)",
+      "page": "v1"
+    },
+    "v1-SpecTauri1.dc.html": {
+      "x": 0,
+      "y": 96152,
+      "w": 1240,
+      "h": 3816,
+      "title": "Module spec: app tray, background, commands, CLI, updates, feedback, auth, notify (1 of 9)",
+      "page": "v1"
+    },
+    "v1-SpecTauri2.dc.html": {
+      "x": 1320,
+      "y": 96152,
+      "w": 1240,
+      "h": 3362,
+      "title": "Module spec: app tray, background, commands, CLI, updates, feedback, auth, notify (2 of 9)",
+      "page": "v1"
+    },
+    "v1-SpecTauri3.dc.html": {
+      "x": 2640,
+      "y": 96152,
+      "w": 1240,
+      "h": 3054,
+      "title": "Module spec: app tray, background, commands, CLI, updates, feedback, auth, notify (3 of 9)",
+      "page": "v1"
+    },
+    "v1-SpecTauri4.dc.html": {
+      "x": 3960,
+      "y": 96152,
+      "w": 1240,
+      "h": 1543,
+      "title": "Module spec: app tray, background, commands, CLI, updates, feedback, auth, notify (4 of 9)",
+      "page": "v1"
+    },
+    "v1-SpecTauri5.dc.html": {
+      "x": 0,
+      "y": 100121,
+      "w": 1240,
+      "h": 699,
+      "title": "Module spec: app tray, background, commands, CLI, updates, feedback, auth, notify (5 of 9)",
+      "page": "v1"
+    },
+    "v1-SpecTauri6.dc.html": {
+      "x": 1320,
+      "y": 100121,
+      "w": 1240,
+      "h": 3195,
+      "title": "Module spec: app tray, background, commands, CLI, updates, feedback, auth, notify (6 of 9)",
+      "page": "v1"
+    },
+    "v1-SpecTauri7.dc.html": {
+      "x": 2640,
+      "y": 100121,
+      "w": 1240,
+      "h": 3429,
+      "title": "Module spec: app tray, background, commands, CLI, updates, feedback, auth, notify (7 of 9)",
+      "page": "v1"
+    },
+    "v1-SpecTauri8.dc.html": {
+      "x": 3960,
+      "y": 100121,
+      "w": 1240,
+      "h": 3184,
+      "title": "Module spec: app tray, background, commands, CLI, updates, feedback, auth, notify (8 of 9)",
+      "page": "v1"
+    },
+    "v1-SpecTauri9.dc.html": {
+      "x": 0,
+      "y": 104029,
+      "w": 1240,
+      "h": 2983,
+      "title": "Module spec: app tray, background, commands, CLI, updates, feedback, auth, notify (9 of 9)",
+      "page": "v1"
+    },
+    "v1-SpecUi1.dc.html": {
+      "x": 1320,
+      "y": 104029,
+      "w": 1240,
+      "h": 3040,
+      "title": "Module spec: UI per screen (1 of 12)",
+      "page": "v1"
+    },
+    "v1-SpecUi2.dc.html": {
+      "x": 2640,
+      "y": 104029,
+      "w": 1240,
+      "h": 3586,
+      "title": "Module spec: UI per screen (2 of 12)",
+      "page": "v1"
+    },
+    "v1-SpecUi3.dc.html": {
+      "x": 3960,
+      "y": 104029,
+      "w": 1240,
+      "h": 3628,
+      "title": "Module spec: UI per screen (3 of 12)",
+      "page": "v1"
+    },
+    "v1-SpecUi4.dc.html": {
+      "x": 0,
+      "y": 108332,
+      "w": 1240,
+      "h": 3294,
+      "title": "Module spec: UI per screen (4 of 12)",
+      "page": "v1"
+    },
+    "v1-SpecUi5.dc.html": {
+      "x": 1320,
+      "y": 108332,
+      "w": 1240,
+      "h": 3295,
+      "title": "Module spec: UI per screen (5 of 12)",
+      "page": "v1"
+    },
+    "v1-SpecUi6.dc.html": {
+      "x": 2640,
+      "y": 108332,
+      "w": 1240,
+      "h": 3320,
+      "title": "Module spec: UI per screen (6 of 12)",
+      "page": "v1"
+    },
+    "v1-SpecUi7.dc.html": {
+      "x": 3960,
+      "y": 108332,
+      "w": 1240,
+      "h": 2829,
+      "title": "Module spec: UI per screen (7 of 12)",
+      "page": "v1"
+    },
+    "v1-SpecUi8.dc.html": {
+      "x": 0,
+      "y": 112198,
+      "w": 1240,
+      "h": 3130,
+      "title": "Module spec: UI per screen (8 of 12)",
+      "page": "v1"
+    },
+    "v1-SpecUi9.dc.html": {
+      "x": 1320,
+      "y": 112198,
+      "w": 1240,
+      "h": 2910,
+      "title": "Module spec: UI per screen (9 of 12)",
+      "page": "v1"
+    },
+    "v1-SpecUi10.dc.html": {
+      "x": 2640,
+      "y": 112198,
+      "w": 1240,
+      "h": 3104,
+      "title": "Module spec: UI per screen (10 of 12)",
+      "page": "v1"
+    },
+    "v1-SpecUi11.dc.html": {
+      "x": 3960,
+      "y": 112198,
+      "w": 1240,
+      "h": 3072,
+      "title": "Module spec: UI per screen (11 of 12)",
+      "page": "v1"
+    },
+    "v1-SpecUi12.dc.html": {
+      "x": 0,
+      "y": 115913,
+      "w": 1240,
+      "h": 482,
+      "title": "Module spec: UI per screen (12 of 12)",
+      "page": "v1"
+    },
+    "v1-SpecRelay1.dc.html": {
+      "x": 1320,
+      "y": 115913,
+      "w": 1240,
+      "h": 4290,
+      "title": "Module spec: relay api, relay lib, triage bot, relay tests, scripts and templates (1 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecRelay2.dc.html": {
+      "x": 2640,
+      "y": 115913,
+      "w": 1240,
+      "h": 3272,
+      "title": "Module spec: relay api, relay lib, triage bot, relay tests, scripts and templates (2 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecRelay3.dc.html": {
+      "x": 3960,
+      "y": 115913,
+      "w": 1240,
+      "h": 3399,
+      "title": "Module spec: relay api, relay lib, triage bot, relay tests, scripts and templates (3 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecRelay4.dc.html": {
+      "x": 0,
+      "y": 120223,
+      "w": 1240,
+      "h": 3668,
+      "title": "Module spec: relay api, relay lib, triage bot, relay tests, scripts and templates (4 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecRelay5.dc.html": {
+      "x": 1320,
+      "y": 120223,
+      "w": 1240,
+      "h": 3896,
+      "title": "Module spec: relay api, relay lib, triage bot, relay tests, scripts and templates (5 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecRelay6.dc.html": {
+      "x": 2640,
+      "y": 120223,
+      "w": 1240,
+      "h": 5692,
+      "title": "Module spec: relay api, relay lib, triage bot, relay tests, scripts and templates (6 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecRelay7.dc.html": {
+      "x": 3960,
+      "y": 120223,
+      "w": 1240,
+      "h": 1716,
+      "title": "Module spec: relay api, relay lib, triage bot, relay tests, scripts and templates (7 of 7)",
+      "page": "v1"
+    },
+    "v1-SpecIndex.dc.html": {
+      "x": 0,
+      "y": 123951,
+      "w": 1240,
+      "h": 6030,
+      "title": "Module spec index: topics per frame",
+      "page": "v1"
+    }
+  },
+  "order": [
+    "v2-Cover.dc.html",
+    "v2-Progress.dc.html",
+    "v2-StateMatrix.dc.html",
+    "v2-InteractionCoverage.dc.html",
+    "v2-ScreenSignIn.dc.html",
+    "v2-ScreenSignInCode.dc.html",
+    "v2-ScreenSignInExpired.dc.html",
+    "v2-ScreenGroups.dc.html",
+    "v2-ScreenGroupsEmpty.dc.html",
+    "v2-ScreenGroupsCreate.dc.html",
+    "v2-ScreenGroupsPlugins.dc.html",
+    "v2-ScreenGroup.dc.html",
+    "v2-ScreenGroupGuest.dc.html",
+    "v2-ScreenGroupProposals.dc.html",
+    "v2-ScreenGroupNoHistory.dc.html",
+    "v2-ScreenGroupOff.dc.html",
+    "v2-ScreenGroupHelper.dc.html",
+    "v2-ScreenGroupRevert.dc.html",
+    "v2-ScreenGroupShare.dc.html",
+    "v2-ScreenSettings.dc.html",
+    "v2-ScreenSettingsOffer.dc.html",
+    "v2-ScreenSettingsOff.dc.html",
+    "v2-ScreenFeedback.dc.html",
+    "v2-ScreenFeedbackEmpty.dc.html",
+    "v2-ScreenNotifications.dc.html",
+    "v2-ScreenNotificationsEmpty.dc.html",
+    "v2-FlowSignIn.dc.html",
+    "v2-ScenarioSignInHappy.dc.html",
+    "v2-ScenarioSignInEdge.dc.html",
+    "v2-FlowGroup.dc.html",
+    "v2-ScenarioGroupHappy.dc.html",
+    "v2-ScenarioGroupEdge.dc.html",
+    "v2-FlowSyncTick.dc.html",
+    "v2-ScenarioSyncTickHappy.dc.html",
+    "v2-ScenarioSyncTickEdge.dc.html",
+    "v2-FlowPersonal.dc.html",
+    "v2-ScenarioPersonalHappy.dc.html",
+    "v2-ScenarioPersonalEdge.dc.html",
+    "v2-FlowEdits.dc.html",
+    "v2-ScenarioEditsHappy.dc.html",
+    "v2-ScenarioEditsEdge.dc.html",
+    "v2-FlowReview.dc.html",
+    "v2-ScenarioReviewHappy.dc.html",
+    "v2-ScenarioReviewEdge.dc.html",
+    "v2-FlowJobs.dc.html",
+    "v2-ScenarioJobsHappy.dc.html",
+    "v2-ScenarioJobsEdge.dc.html",
+    "v2-FlowUpdate.dc.html",
+    "v2-ScenarioUpdateHappy.dc.html",
+    "v2-ScenarioUpdateEdge.dc.html",
+    "v2-FlowFeedback.dc.html",
+    "v2-ScenarioFeedbackHappy.dc.html",
+    "v2-ScenarioFeedbackEdge.dc.html",
+    "v2-FlowInstall.dc.html",
+    "v2-ScenarioInstallHappy.dc.html",
+    "v2-ScenarioInstallEdge.dc.html",
+    "v2-StateSignIn.dc.html",
+    "v2-StateGroup.dc.html",
+    "v2-StateProposal.dc.html",
+    "v2-StateReview.dc.html",
+    "v2-EdgeCases.dc.html",
+    "v2-C4Context.dc.html",
+    "v2-C4Container.dc.html",
+    "v2-ErSchema.dc.html",
+    "v2-SequenceSync.dc.html",
+    "v2-UseCase.dc.html",
+    "v2-Class.dc.html",
+    "v2-Component.dc.html",
+    "v2-Deployment.dc.html",
+    "v2-Endpoints.dc.html",
+    "v2-DesignDirection.dc.html",
+    "v2-DesignTokens.dc.html",
+    "v2-DesignType.dc.html",
+    "v2-Decisions.dc.html",
+    "v2-Deploy.dc.html",
+    "v2-Plan.dc.html",
+    "v2-Questions.dc.html",
+    "v2-History.dc.html",
+    "v1-Cover.dc.html",
+    "v1-Progress.dc.html",
+    "v1-StateMatrix.dc.html",
+    "v1-InteractionCoverage.dc.html",
+    "v1-Abilities.dc.html",
+    "v1-FixedBugs.dc.html",
+    "v1-RebuildData.dc.html",
+    "v1-RebuildRules.dc.html",
+    "v1-RebuildNonFunc.dc.html",
+    "v1-ScreenSignIn.dc.html",
+    "v1-ScreenSignInCode.dc.html",
+    "v1-ScreenSignInExpired.dc.html",
+    "v1-ScreenGroups.dc.html",
+    "v1-ScreenGroupsEmpty.dc.html",
+    "v1-ScreenGroupsCreate.dc.html",
+    "v1-ScreenGroupsCreateP2.dc.html",
+    "v1-ScreenGroupsCreateP3.dc.html",
+    "v1-ScreenGroupsPlugins.dc.html",
+    "v1-ScreenGroup.dc.html",
+    "v1-ScreenGroupP2.dc.html",
+    "v1-ScreenGroupP3.dc.html",
+    "v1-ScreenGroupP4.dc.html",
+    "v1-ScreenGroupP5.dc.html",
+    "v1-ScreenGroupP6.dc.html",
+    "v1-ScreenGroupP7.dc.html",
+    "v1-ScreenGroupP8.dc.html",
+    "v1-ScreenGroupP9.dc.html",
+    "v1-ScreenGroupP10.dc.html",
+    "v1-ScreenGroupGuest.dc.html",
+    "v1-ScreenGroupGuestP2.dc.html",
+    "v1-ScreenGroupGuestP3.dc.html",
+    "v1-ScreenGroupGuestP4.dc.html",
+    "v1-ScreenGroupGuestP5.dc.html",
+    "v1-ScreenGroupGuestP6.dc.html",
+    "v1-ScreenGroupProposals.dc.html",
+    "v1-ScreenGroupNoHistory.dc.html",
+    "v1-ScreenGroupOff.dc.html",
+    "v1-ScreenGroupHelper.dc.html",
+    "v1-ScreenGroupRevert.dc.html",
+    "v1-ScreenGroupShare.dc.html",
+    "v1-ScreenSettings.dc.html",
+    "v1-ScreenSettingsP2.dc.html",
+    "v1-ScreenSettingsP3.dc.html",
+    "v1-ScreenSettingsP4.dc.html",
+    "v1-ScreenSettingsOffer.dc.html",
+    "v1-ScreenSettingsOff.dc.html",
+    "v1-ScreenFeedback.dc.html",
+    "v1-ScreenFeedbackP2.dc.html",
+    "v1-ScreenFeedbackEmpty.dc.html",
+    "v1-ScreenNotifications.dc.html",
+    "v1-ScreenNotificationsEmpty.dc.html",
+    "v1-ScreenSignInStarting.dc.html",
+    "v1-ScreenSignInCodeCopied.dc.html",
+    "v1-ScreenSignInOpened.dc.html",
+    "v1-ScreenSignInFailed.dc.html",
+    "v1-ScreenSignInNoClientId.dc.html",
+    "v1-ScreenSignInExpiredCode.dc.html",
+    "v1-ScreenSignInApproved.dc.html",
+    "v1-ScreenGroupsSyncing.dc.html",
+    "v1-ScreenGroupsSynced.dc.html",
+    "v1-ScreenGroupsSyncError.dc.html",
+    "v1-ScreenGroupsReordered.dc.html",
+    "v1-ScreenGroupsAccepting.dc.html",
+    "v1-ScreenGroupsAccepted.dc.html",
+    "v1-ScreenGroupsAcceptError.dc.html",
+    "v1-ScreenGroupsJoining.dc.html",
+    "v1-ScreenGroupsJoined.dc.html",
+    "v1-ScreenGroupsJoinError.dc.html",
+    "v1-ScreenGroupsCreating.dc.html",
+    "v1-ScreenGroupCreated.dc.html",
+    "v1-ScreenGroupAddMember.dc.html",
+    "v1-ScreenFeedbackSent.dc.html",
+    "v1-ScreenFeedbackError.dc.html",
+    "v1-ScreenNotificationsCleared.dc.html",
+    "v1-ScreenSettingsUpToDate.dc.html",
+    "v1-FlowSignIn.dc.html",
+    "v1-ScenarioSignInHappy.dc.html",
+    "v1-ScenarioSignInEdge.dc.html",
+    "v1-FlowGroup.dc.html",
+    "v1-ScenarioGroupHappy.dc.html",
+    "v1-ScenarioGroupEdge.dc.html",
+    "v1-FlowSyncTick.dc.html",
+    "v1-ScenarioSyncTickHappy.dc.html",
+    "v1-ScenarioSyncTickEdge.dc.html",
+    "v1-FlowPersonal.dc.html",
+    "v1-ScenarioPersonalHappy.dc.html",
+    "v1-ScenarioPersonalEdge.dc.html",
+    "v1-FlowEdits.dc.html",
+    "v1-ScenarioEditsHappy.dc.html",
+    "v1-ScenarioEditsEdge.dc.html",
+    "v1-FlowReview.dc.html",
+    "v1-ScenarioReviewHappy.dc.html",
+    "v1-ScenarioReviewEdge.dc.html",
+    "v1-FlowJobs.dc.html",
+    "v1-ScenarioJobsHappy.dc.html",
+    "v1-ScenarioJobsEdge.dc.html",
+    "v1-FlowUpdate.dc.html",
+    "v1-ScenarioUpdateHappy.dc.html",
+    "v1-ScenarioUpdateEdge.dc.html",
+    "v1-FlowFeedback.dc.html",
+    "v1-ScenarioFeedbackHappy.dc.html",
+    "v1-ScenarioFeedbackEdge.dc.html",
+    "v1-FlowInstall.dc.html",
+    "v1-ScenarioInstallHappy.dc.html",
+    "v1-ScenarioInstallEdge.dc.html",
+    "v1-StateSignIn.dc.html",
+    "v1-StateGroup.dc.html",
+    "v1-StateProposal.dc.html",
+    "v1-StateReview.dc.html",
+    "v1-EdgeCases.dc.html",
+    "v1-C4Context.dc.html",
+    "v1-C4Container.dc.html",
+    "v1-ErSchema.dc.html",
+    "v1-SequenceSync.dc.html",
+    "v1-UseCase.dc.html",
+    "v1-Class.dc.html",
+    "v1-Component.dc.html",
+    "v1-Deployment.dc.html",
+    "v1-Endpoints.dc.html",
+    "v1-DesignDirection.dc.html",
+    "v1-DesignTokens.dc.html",
+    "v1-DesignType.dc.html",
+    "v1-Decisions.dc.html",
+    "v1-Deploy.dc.html",
+    "v1-Plan.dc.html",
+    "v1-Questions.dc.html",
+    "v1-History.dc.html",
+    "v1-MsgSignInSettings.dc.html",
+    "v1-MsgGroups.dc.html",
+    "v1-MsgReview.dc.html",
+    "v1-MsgTrayNotifyCli.dc.html",
+    "v1-MsgEngineErrors.dc.html",
+    "v1-MsgGithubHelper.dc.html",
+    "v1-MsgCommandsJobs.dc.html",
+    "v1-EngSignIn.dc.html",
+    "v1-EngGroupLifecycle.dc.html",
+    "v1-EngProposalsRevert.dc.html",
+    "v1-EngSyncPull.dc.html",
+    "v1-EngReviewClashes.dc.html",
+    "v1-EngSettingsMarketsWatch.dc.html",
+    "v1-EngPersonalJobs.dc.html",
+    "v1-FeedbackApp.dc.html",
+    "v1-FeedbackRelay.dc.html",
+    "v1-FeedbackTriage.dc.html",
+    "v1-MigrationUpgrade.dc.html",
+    "v1-TemplatesUserRepo.dc.html",
+    "v1-GithubClient.dc.html",
+    "v1-SpecEngine1.dc.html",
+    "v1-SpecEngine2.dc.html",
+    "v1-SpecEngine3.dc.html",
+    "v1-SpecEngine4.dc.html",
+    "v1-SpecEngine5.dc.html",
+    "v1-SpecEngine6.dc.html",
+    "v1-SpecGithub1.dc.html",
+    "v1-SpecGithub2.dc.html",
+    "v1-SpecGithub3.dc.html",
+    "v1-SpecGithub4.dc.html",
+    "v1-SpecGithub5.dc.html",
+    "v1-SpecGithub6.dc.html",
+    "v1-SpecGithub7.dc.html",
+    "v1-SpecPersonal1.dc.html",
+    "v1-SpecPersonal2.dc.html",
+    "v1-SpecPersonal3.dc.html",
+    "v1-SpecPersonal4.dc.html",
+    "v1-SpecPersonal5.dc.html",
+    "v1-SpecPersonal6.dc.html",
+    "v1-SpecApply1.dc.html",
+    "v1-SpecApply2.dc.html",
+    "v1-SpecApply3.dc.html",
+    "v1-SpecApply4.dc.html",
+    "v1-SpecApply5.dc.html",
+    "v1-SpecApply6.dc.html",
+    "v1-SpecApply7.dc.html",
+    "v1-SpecJobs1.dc.html",
+    "v1-SpecJobs2.dc.html",
+    "v1-SpecJobs3.dc.html",
+    "v1-SpecJobs4.dc.html",
+    "v1-SpecJobs5.dc.html",
+    "v1-SpecJobs6.dc.html",
+    "v1-SpecCoreMisc1.dc.html",
+    "v1-SpecCoreMisc2.dc.html",
+    "v1-SpecCoreMisc3.dc.html",
+    "v1-SpecCoreMisc4.dc.html",
+    "v1-SpecTauri1.dc.html",
+    "v1-SpecTauri2.dc.html",
+    "v1-SpecTauri3.dc.html",
+    "v1-SpecTauri4.dc.html",
+    "v1-SpecTauri5.dc.html",
+    "v1-SpecTauri6.dc.html",
+    "v1-SpecTauri7.dc.html",
+    "v1-SpecTauri8.dc.html",
+    "v1-SpecTauri9.dc.html",
+    "v1-SpecUi1.dc.html",
+    "v1-SpecUi2.dc.html",
+    "v1-SpecUi3.dc.html",
+    "v1-SpecUi4.dc.html",
+    "v1-SpecUi5.dc.html",
+    "v1-SpecUi6.dc.html",
+    "v1-SpecUi7.dc.html",
+    "v1-SpecUi8.dc.html",
+    "v1-SpecUi9.dc.html",
+    "v1-SpecUi10.dc.html",
+    "v1-SpecUi11.dc.html",
+    "v1-SpecUi12.dc.html",
+    "v1-SpecRelay1.dc.html",
+    "v1-SpecRelay2.dc.html",
+    "v1-SpecRelay3.dc.html",
+    "v1-SpecRelay4.dc.html",
+    "v1-SpecRelay5.dc.html",
+    "v1-SpecRelay6.dc.html",
+    "v1-SpecRelay7.dc.html",
+    "v1-SpecIndex.dc.html"
+  ],
+  "notes": {},
+  "designSystems": []
+}

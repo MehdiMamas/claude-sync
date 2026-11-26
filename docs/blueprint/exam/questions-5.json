@@ -1,0 +1,282 @@
+[
+  {
+    "id": "u01",
+    "area": "data",
+    "question": "What are the names and lifetimes of the relay's two install cookies, how is the signed session value built, and which attributes do the cookies carry?",
+    "answer": "Session cookie `cs_install` lasts 24 hours; the OAuth state cookie `cs_install_state` lasts 10 minutes (Max-Age 600) and is scoped to Path=/api/install (the session cookie to Path=/). The session value is `<base64url JSON {l: login, e: expiry in ms}>.<base64url HMAC-SHA256 of that payload>`. Both cookies are set with HttpOnly; Secure; SameSite=Lax. The state itself is 24 random bytes in base64url.",
+    "evidence": "relay/lib/session.ts:4-7,14-16,37-39,49-51"
+  },
+  {
+    "id": "u02",
+    "area": "rules",
+    "question": "When does the relay treat an install session cookie as invalid, and what does a valid one yield?",
+    "answer": "It yields the login only when: the value exists and has a dot at index 1 or later; the HMAC of the payload equals the given signature (same length, constant-time compare); the payload decodes as JSON with a string login `l` and a numeric expiry `e`; and the expiry is in the future (`e <= now` is expired). Anything else, including malformed base64/JSON, returns null (signed out). With no INSTALL session secret configured the session is null as well.",
+    "evidence": "relay/lib/session.ts:20-35,53-57"
+  },
+  {
+    "id": "u03",
+    "area": "flow",
+    "question": "Walk through GET /api/install/callback: which checks run in order and where does each outcome redirect?",
+    "answer": "If the OAuth client id, client secret or session secret is missing it redirects to plain /install. If the `state` query value is missing, the state cookie is missing, or they differ: /install?error=state. If there is no `code` or an `error` query param exists: /install?error=denied. Then the code is traded at github.com/login/oauth/access_token, GET /user reads the login; if either fails, no token, or the login does not match /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/: /install?error=github. On success: /install with the 24 h session cookie set. Every redirect is a 302 with cache-control no-store and also clears the state cookie (Max-Age 0, Path /api/install). The GitHub token is dropped, never stored.",
+    "evidence": "relay/api/install/callback.ts:6-13,16-37,40-56"
+  },
+  {
+    "id": "u04",
+    "area": "flow",
+    "question": "What does GET /api/install/login do, and what if install sign-in is not configured?",
+    "answer": "If install sign-in is not configured or there is no OAuth client id, it just 302-redirects to /install (no cookie). Otherwise it makes a random state, sets the state cookie (10 min, Path=/api/install) and 302-redirects to https://github.com/login/oauth/authorize with client_id, scope `read:user` and that state. Both responses carry cache-control no-store.",
+    "evidence": "relay/api/install/login.ts:6-19"
+  },
+  {
+    "id": "u05",
+    "area": "flow",
+    "question": "What does GET /api/install/logout do?",
+    "answer": "It clears the `cs_install` cookie (empty value, Max-Age 0, Path=/) and 302-redirects to /install with cache-control no-store. It needs no session and does not touch the state cookie.",
+    "evidence": "relay/api/install/logout.ts:5-8"
+  },
+  {
+    "id": "u06",
+    "area": "rules",
+    "question": "How does the relay's shared handler wrapper turn thrown errors into responses, and what is logged?",
+    "answer": "A thrown HttpError becomes a JSON body {\"error\": <its message>} with its own status and headers; it is logged only when the status is 500 or more. Any other thrown error is logged and answered 500 {\"error\":\"internal error\"} (the real message is never shown). Logging always goes through token redaction. JSON responses carry content-type application/json; charset=utf-8 and cache-control no-store.",
+    "evidence": "relay/lib/http.ts:15-24,30-38,41-53"
+  },
+  {
+    "id": "u07",
+    "area": "platform",
+    "question": "What is served at /api/health and how is /install routed on the relay's host config?",
+    "answer": "GET /api/health needs no auth and answers 200 {\"ok\":true}. vercel.json sets framework null, rewrites /install to /api/install/page, and gives every api/**/*.ts function maxDuration 30 seconds.",
+    "evidence": "relay/api/health.ts:3-6; relay/vercel.json:3-9"
+  },
+  {
+    "id": "u08",
+    "area": "bugs",
+    "question": "When the relay calls GitHub and gets an unexpected status, what does the caller see?",
+    "answer": "A GitHubError, which is an HttpError with status 502 and the message `GitHub <what> returned <status>` where <what> names the call (for example `issue`) and <status> is GitHub's status. It never includes a token. The unused response body is cancelled (discard) so the connection is freed.",
+    "evidence": "relay/lib/github.ts:36-56"
+  },
+  {
+    "id": "u09",
+    "area": "platform",
+    "question": "How does the feedback triage script run Claude, and what limits and tools does it set?",
+    "answer": "It runs `claude -p --model <model> --output-format json --max-turns 150 --allowedTools Read,Grep,Glob --disallowedTools <list> [--add-dir <d>...]` with the prompt on stdin, in the request's cwd, with a minimal environment (DISABLE_AUTOUPDATER=1, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 plus only allowlisted variables from the parent). Output buffer 64 MiB, timeout 30 minutes. If the JSON says is_error or has no string result it throws `Claude ended with <subtype>` (or `an error` when no subtype). The user's local Claude login is used, not an API key.",
+    "evidence": "relay/triage/run.ts:149-185"
+  },
+  {
+    "id": "u10",
+    "area": "rules",
+    "question": "What does the triage script do for an issue Claude judges abusive, versus a normal one, and what happens if the issue changed while Claude was thinking?",
+    "answer": "Before posting it re-reads the issue and its comments; if it no longer needs triage (someone triaged or closed it) it logs `skipped (changed while it was analysed)` and posts nothing. A normal verdict gets a triage comment (with repo and sha) and the `triaged` label. An abusive verdict gets the moderation note comment, the `needs-moderation` label, the issue closed with state_reason not_planned, and the conversation locked with reason spam. A failure on one issue does not stop the others; the exit code reports that some failed.",
+    "evidence": "relay/triage/run.ts:237-262,292-297"
+  },
+  {
+    "id": "u11",
+    "area": "platform",
+    "question": "What does relay/triage/install-launchd.sh need and do on macOS?",
+    "answer": "It requires TRIAGE_APP_ID, TRIAGE_APP_INSTALLATION_ID and TRIAGE_APP_KEY_FILE in the environment (it stops with `set <NAME>` otherwise). It writes ~/Library/LaunchAgents/com.claude-sync.triage.plist from the template, substituting the relay dir, HOME, the three values and a full user PATH (~/.local/bin, ~/.claude/local, /opt/homebrew/bin, /usr/local/bin, system dirs) because launchd's default PATH lacks node, claude and gh. It only loads the agent with `--load` (bootout then bootstrap in gui/<uid>); otherwise it prints the launchctl command to run.",
+    "evidence": "relay/triage/install-launchd.sh:1-27"
+  },
+  {
+    "id": "u12",
+    "area": "ui",
+    "question": "How does the app build an avatar for a GitHub login, including the initials and colour rules?",
+    "answer": "A fixed-size circle shows initials over a colour; the picture loads on top. Initials: split the login on runs of - _ . ; with two or more parts take the first letter of the first two, upper-cased; else if it has two or more capital letters take the first two capitals; else the first two characters upper-cased. Hue = a hash over the lower-cased characters (n = n*31 + code, 32-bit) mod 360, so the colour is stable per login. The avatar is aria-hidden with the login as its title.",
+    "evidence": "app/ui/src/activity.ts:438-460; app/ui/src/avatar.ts:7-13"
+  },
+  {
+    "id": "u13",
+    "area": "edge",
+    "question": "When does the avatar picture load, and what happens if it fails?",
+    "answer": "The picture URL is https://avatars.githubusercontent.com/<login>?s=64 and exists only when the login matches /^[A-Za-z0-9-]+$/ (otherwise initials only). The img is lazy, async-decoded, referrerpolicy no-referrer, alt empty, with src set last. On load the avatar gets class `loaded`; on error the img is removed so the initials stay. The app's CSP img-src allows only self, data:, blob: and https://avatars.githubusercontent.com.",
+    "evidence": "app/ui/src/avatar.ts:14-21; app/ui/src/activity.ts:450-453; app/src-tauri/tauri.conf.json:15"
+  },
+  {
+    "id": "u14",
+    "area": "ui",
+    "question": "How does the navigation badge for pending reviews read?",
+    "answer": "It shows only when the count is above 0, and reads the number up to 99; above 99 it reads `99+`. It is aria-hidden.",
+    "evidence": "app/ui/src/main.ts:78"
+  },
+  {
+    "id": "u15",
+    "area": "data",
+    "question": "How are the pending-review count and the 'groups I am a guest of' list computed from the group list?",
+    "answer": "review = the sum of each group's reviewPending (missing counts as 0). guestOf = `owner/repo` of every group where the user is not the host. The store only notifies listeners when either the review total or the guestOf list (compared as joined text) changed.",
+    "evidence": "app/ui/src/store.ts:53-57"
+  },
+  {
+    "id": "u16",
+    "area": "ui",
+    "question": "How do the 'Explain' and 'Summarise' helper buttons behave?",
+    "answer": "They are hidden unless the local `claude` command is found (the lookup is cached until Settings clears it). Nothing is sent until the user clicks. While waiting the button shows `Asking Claude…`. The answer appears in a polite live region with the note `Written by Claude from the text above. It can be wrong.`; on failure the area gets an error style and shows the error text.",
+    "evidence": "app/ui/src/screens/helper.ts:9-37"
+  },
+  {
+    "id": "u17",
+    "area": "ui",
+    "question": "How does the live clash warning under a CLAUDE.md text box behave?",
+    "answer": "Nothing is shown when there are no clashes. Otherwise a status block reads `Some lines clash with what Claude already reads on this device:` with at most the first 20 clashes. Checking is debounced 300 ms after the user stops typing; empty or whitespace-only text clears the box; a late answer from an older check is ignored (a sequence number), and a failed check clears the box instead of showing an error.",
+    "evidence": "app/ui/src/screens/conflicts.ts:12-45"
+  },
+  {
+    "id": "u18",
+    "area": "ui",
+    "question": "What buttons and messages does a duplicate/contradiction clash row have, and how is a setting clash different?",
+    "answer": "Rows are tagged `duplicate` or `contradiction`. There are two keep buttons: `Keep yours` when that side is the user's own CLAUDE.md, else `Keep <group name>'s` (busy label `Keeping…`); keeping one removes the other side's line. The toast is `Taken out of your CLAUDE.md (backed up first)` for the own side, or `Left out of <name>'s CLAUDE.md on all your devices`. An Edit button appears only when the first side is a group. A setting clash has no keep buttons: side `a` (the group joined first) is tagged `applies now` and the text says `<a>'s value is used because it comes first in your group order. To use <b>'s instead, move that group up.`",
+    "evidence": "app/ui/src/screens/conflicts.ts:10,55-95,112-120"
+  },
+  {
+    "id": "u19",
+    "area": "ui",
+    "question": "What does the Devices list in Personal memory show and what can be removed?",
+    "answer": "Each device shows its name, a `this device` tag, and the line `<OS label> · Last seen <relative time>`; for this device the second part is `Rename it with Device name above`. Every device except this one has a Remove button that asks `Remove <name>?` first, shows `Removing…`, and then the toast `Removed <name>`. The Remove buttons carry aria-label `Remove <name>`.",
+    "evidence": "app/ui/src/screens/personal.ts:36-56"
+  },
+  {
+    "id": "u20",
+    "area": "ui",
+    "question": "List the Personal memory switches and the texts around them.",
+    "answer": "Master switch `Sync my personal memory between my devices` (toasts `Personal memory is on` / `Personal memory is off on all your devices`; turning off leaves files and repo as they are). Kinds: `My CLAUDE.md` (without the groups' part), `Claude's memories` (the memory folder of each project), `Mod settings (~/.claude/personal-state)` (small settings your mods save, such as opus-only mode), `My settings (~/.claude/settings.json)` (without what your groups set and anything tied to this machine, such as file paths). Also `New devices of mine join automatically`. When another device already shares, an offer text asks to turn it on to merge. A collapsed summary reads `<N> file(s) stay on this device` with the list.",
+    "evidence": "app/ui/src/screens/personal.ts:91-147,190"
+  },
+  {
+    "id": "u21",
+    "area": "edge",
+    "question": "How does the UI turn an arbitrary thrown value from a backend command into text?",
+    "answer": "A string is used as is; an Error uses its message; anything else is JSON.stringify'd. (Backend commands reject with plain strings.)",
+    "evidence": "app/ui/src/api.ts:469-474"
+  },
+  {
+    "id": "u22",
+    "area": "data",
+    "question": "How is a project folder name derived from a path for Claude Code memory, with examples, including non-ASCII characters?",
+    "answer": "Every UTF-16 code unit that is not an ASCII letter or digit becomes `-` (one dash per unit): `C:\\Users\\alex\\Projects\\klawly` -> `C--Users-alex-Projects-klawly`; `/Users/alex/Projects/klawly` -> `-Users-alex-Projects-klawly`; `/Users/a/my_app.v2` -> `-Users-a-my-app-v2`; `/é/😀` -> `-----` (é one unit, the emoji two). It is lossy, so folders are never decoded back.",
+    "evidence": "crates/core/src/personal/keys.rs:1-20; crates/core/src/personal/tests.rs:19-30"
+  },
+  {
+    "id": "u23",
+    "area": "rules",
+    "question": "Which memory keys does the app accept from a repo, and how does a device map a key to its own folder?",
+    "answer": "A key is `home` or `home-` followed only by ASCII letters, digits and `-`, at most 200 characters, and not a skipped rest. Rejected: empty, `home/x`, `home..`, `home-../x`, `homeX`, `Home`, `tmp`, `home-a b`, `home-AppData-x`, and anything over 200 characters. A device maps key `home<rest>` to the folder `<encode(its home)><rest>`; invalid keys map to nothing.",
+    "evidence": "crates/core/src/personal/keys.rs:8-10,49-62; crates/core/src/personal/tests.rs:95-117"
+  },
+  {
+    "id": "u24",
+    "area": "edge",
+    "question": "Which personal files stay on the device, and how are they reported? Include what happens to a held file when the repo changes it.",
+    "answer": "Only `memory/` files of project folders under the home folder sync. Left out: temp and app-data folders, job folders, folders outside home, dotfiles, files outside the project's memory folder, files over 256 KiB (reported by name), and files the secret scanner flags (reported with the word `secret`). Only `ok.md` of a set of such files reaches the repo. A held (secret) file is not overwritten locally even when the repo has a clean version; the repo keeps its version and the local one stays.",
+    "evidence": "crates/core/src/personal/tests.rs:991-1040; crates/core/src/personal.rs:47,859,939"
+  },
+  {
+    "id": "u25",
+    "area": "flow",
+    "question": "What exactly does enabling personal memory create, and what does it refuse to do?",
+    "answer": "It creates a private repo `<login>/claude-sync-personal` with no group topic, containing claude-sync-personal.json (format 1, newDevicesJoin true), devices.json (this device), README.md, CLAUDE.md (the user's own text, groups' part removed) and memory/home... files; local files are untouched. It is not a group: it is not discovered, and joining it as a group fails. If it is made public later, sync pushes nothing and reports an error containing `public`. Enabling refuses an existing repo of that name that is not a personal repo (no manifest) and a public repo (PublicRepo error), leaving it unchanged.",
+    "evidence": "crates/core/src/personal/tests.rs:477-560; crates/core/src/personal.rs:37-43"
+  },
+  {
+    "id": "u26",
+    "area": "rules",
+    "question": "How are the JSON state files in personal-state merged between devices, and when do they conflict?",
+    "answer": "Under `state/`, a `.json` file is merged by its `ts` field: the side with the newer ts wins either way (a newer local is pushed, a newer remote is written locally); equal ts keeps the remote. ts is compared as an instant, so offsets count (06:30+02:00 is earlier than 05:00Z). If either side is not a JSON object with a parseable string `ts`, the normal three-way merge applies, so differing values conflict. Paths `state`, `state/`, `state/.hidden` and `state/../x.json` are not personal state.",
+    "evidence": "crates/core/src/personal/state.rs:14-40,78-130; crates/core/src/personal/tests.rs:1200-1260"
+  },
+  {
+    "id": "u27",
+    "area": "rules",
+    "question": "How are `.jsonl` log files in personal-state merged?",
+    "answer": "Union of both sides' lines: empty lines dropped, exact duplicates dropped, then a stable sort by each line's `ts` with lines that have no readable ts first. It never conflicts. A file one side deleted while the other left it as in base is deleted.",
+    "evidence": "crates/core/src/personal/state.rs:36-76; crates/core/src/personal/tests.rs:1261-1280"
+  },
+  {
+    "id": "u28",
+    "area": "rules",
+    "question": "How does MEMORY.md merge across devices?",
+    "answer": "Only `memory/<key>/MEMORY.md` is treated as an index and merged as a set of lines, three-way: a line the base had that either side removed is dropped; other lines of both sides are kept in local order, remote's new lines placed after the line that precedes them on the remote (after local's own new lines there); exact duplicate lines are dropped but blank lines stay; with no base it is the union. It never conflicts. If one side deleted the file it stays deleted only if the other left it unchanged from base. The result uses CRLF if local has any CRLF, else LF.",
+    "evidence": "crates/core/src/personal/lines.rs:7-85"
+  },
+  {
+    "id": "u29",
+    "area": "rules",
+    "question": "What part of ~/.claude/settings.json is shared between a person's devices?",
+    "answer": "A sorted view of the real file without: values a group sets (plain pointers) and array items a group added (an emptied array is removed); secrets/blocked values; canary override pointers; apiKeyHelper; permissions.additionalDirectories; any string containing an absolute path; and any object with a string `command` that mentions an absolute path (dropped whole, so a statusLine never stays half). Empty objects and arrays are removed. The shared file is None when it would be empty.",
+    "evidence": "crates/core/src/personal/settings_file.rs:1-10,55-72; crates/core/src/settings.rs:510-546"
+  },
+  {
+    "id": "u30",
+    "area": "rules",
+    "question": "How are two devices' settings.json copies merged?",
+    "answer": "Per JSON pointer, three-way: if local equals remote, or remote equals base, the local value is used; else if local equals base, the remote value; if both changed the same pointer, the remote (already pushed) wins, unless remote deleted the value, in which case the local change stays. The result is None when nothing is left.",
+    "evidence": "crates/core/src/personal/settings_file.rs:84-110"
+  },
+  {
+    "id": "u31",
+    "area": "data",
+    "question": "What does the personal CLAUDE.md keep from a local file, and what is stripped?",
+    "answer": "The synced text is the user's own text only: the app's managed block and group import lines (a line starting with `@` that contains `/.claude-sync/groups/` and ends with `/claude.md`, case-insensitive, backslashes treated as slashes) are removed, line ends become LF, leading blank lines are dropped, and the result is None when only blank lines remain.",
+    "evidence": "crates/core/src/personal/claude_md.rs:1-25"
+  },
+  {
+    "id": "u32",
+    "area": "edge",
+    "question": "When a synced CLAUDE.md text comes back to a device, how is the local file rebuilt?",
+    "answer": "The device's own managed block and its stray group import lines are kept and put first, followed by a blank line and the synced text; the managed block is rendered where the apply layer puts it. If the existing file's first line ends in CRLF the whole result uses CRLF. If nothing is left the file is removed (None). Strip then compose gives the original file back.",
+    "evidence": "crates/core/src/personal/claude_md.rs:27-58; crates/core/src/personal/tests.rs:205-290"
+  },
+  {
+    "id": "u33",
+    "area": "rules",
+    "question": "What does copying skills, agents and settings to another group refuse, and with which messages?",
+    "answer": "`<from> has no skill named <s>` (also when the name contains a slash or has no files); `<from> has no agent named <a>`; `<from> does not set <setting>`; `nothing was picked to copy` when no text, files or values were chosen; `pick another group to copy to` when the target is the same group; `<to> does not sync <CLAUDE.md|skills|agents|settings>` when that group's sync switch is off; `<to> already has a different skill named <s>` / `different agent named <a>`; `<to> already sets <setting> to <value>`; `<to> has a value that is not an object above <setting>`. Secrets are scanned before anything is pushed.",
+    "evidence": "crates/core/src/engine/copy.rs:205-250,270-380"
+  },
+  {
+    "id": "u34",
+    "area": "rules",
+    "question": "What does sharing a CLAUDE.md block into a group do and refuse?",
+    "answer": "Empty text fails with `there is no text to share`. The text is secret-scanned first, then the group must be joined, and if the group does not sync CLAUDE.md the error is `<group> does not sync CLAUDE.md`. The text is appended to the group's CLAUDE.md under the heading `From <login>`; a group sync follows, and the user's own copy of the lines may be removed if asked (remove_own).",
+    "evidence": "crates/core/src/engine/claude_md.rs:86-115"
+  },
+  {
+    "id": "u35",
+    "area": "data",
+    "question": "How does the app read a group's plugin marketplace, and where does a plugin's description or version come from?",
+    "answer": "From `.claude-plugin/marketplace.json` in the placed marketplace folder: the description is the top-level `description`, else `metadata.description` (trimmed, empty ignored). Each plugin needs a name. Its description and version come from the marketplace entry first; if missing, from the plugin's own `.claude-plugin/plugin.json`, but only when `source` is a string starting `./` with no empty or `..` segments (object sources like a github repo get nothing). A plugin is enabled when `enabledPlugins[\"<plugin>@<marketplace>\"]` is exactly true in ~/.claude/settings.json. Files are read only up to 64 KiB.",
+    "evidence": "crates/core/src/contents.rs:66-68,188-250"
+  },
+  {
+    "id": "u36",
+    "area": "rules",
+    "question": "Which GitHub App URLs does the app build, and how is 'the App cannot reach this repo' decided?",
+    "answer": "Install: https://github.com/apps/<slug>/installations/new; manage: https://github.com/apps/<slug>. The default slug is `claude-sync-app-github` (build-time override). Wanted repos missing from the installed set are compared case-insensitively on owner and repo. Coverage reports covered, missing, and noInstallation (the App is installed nowhere).",
+    "evidence": "crates/core/src/github/app.rs:8-16,48-72; app/src-tauri/src/config.rs:25-28"
+  },
+  {
+    "id": "u37",
+    "area": "platform",
+    "question": "What are the compile-time defaults and timing constants of the desktop app?",
+    "answer": "Relay URL defaults to https://claude-sync-relay.invalid (a build without CLAUDE_SYNC_RELAY_URL never sends the token anywhere; `relay_configured` is false when it ends in `.invalid`). GitHub client id defaults to empty. The GitHub App id is used by sign-in and refresh only when the `github_app` setting is on and the build has one, else the OAuth id. Poll default 60 s; invitations checked every 15 minutes; updates every 6 hours; feedback attaches up to 200 KiB of log; the login item starts the app with `--background` to stay in the tray.",
+    "evidence": "app/src-tauri/src/config.rs:1-56"
+  },
+  {
+    "id": "u38",
+    "area": "platform",
+    "question": "How does the macOS notification layer report permission?",
+    "answer": "One of `granted`, `denied`, `not_asked` or `unknown`. `unknown` when the app is not running from a bundle (no bundle identifier; notifications are skipped with a log) or the answer takes over 2 seconds. Denied -> `denied`, not determined -> `not_asked`, any other authorization status counts as `granted`.",
+    "evidence": "app/src-tauri/src/mac_notify.rs:65-75,124-145"
+  },
+  {
+    "id": "u39",
+    "area": "edge",
+    "question": "How does the core write files and parse timestamps, and what is the stamp format?",
+    "answer": "State files are written atomically: bytes go to a temp file `.<name>.<pid>.tmp` in the same folder and are renamed over the target (the temp file is removed if the rename fails); JSON is pretty-printed with a trailing newline. `utc_stamp` gives a folder-safe time like `20261013T094501Z`. `parse_rfc3339` needs at least 20 characters in the exact YYYY-MM-DDTHH:MM:SS shape, ignores fractional seconds, accepts `Z` or `±hh:mm` (offsets applied) and returns None for anything else or for times before 1970.",
+    "evidence": "crates/core/src/state.rs:38-110"
+  },
+  {
+    "id": "u40",
+    "area": "rules",
+    "question": "What does AppState (state.json) hold, and what is the default when the file is missing?",
+    "answer": "login, device_name, groups (joined groups in priority order, first wins collisions), poll_seconds, paused, disabled (joined groups whose off state has been applied on this device), and github_app (sign in with the GitHub App instead of the OAuth App, effective at the next sign-in). A missing state.json is the default state (nothing joined, not paused, github_app false); other read errors fail.",
+    "evidence": "crates/core/src/state.rs:5-35"
+  }
+]

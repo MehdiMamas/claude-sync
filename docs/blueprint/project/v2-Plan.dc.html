@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Plan</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#f6f7f9;--surface:#ffffff;--ink:#1c1f24;--muted:#5f6672;--accent:#2f6fde;--on-accent:#ffffff;--error:#c4312b;--error-bg:#fdecea;--accent-bg:#e6eefc;--warn-bg:#fff4dc;--ok:#1f8a4c;--ok-bg:#e3f4ea;--warn:#9a5b00;--dg-bg:#17191d;--dg-lane:#212429;--dg-node:#353a42;--dg-line:#9aa1ad;--dg-ink:#e7e9ec;--dg-muted:#9aa1ad;--rule:color-mix(in srgb,var(--muted) 35%,transparent);--font-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent)}
+
+</style>
+</helmet>
+<div data-page="v2" data-section="plan" data-created="2026-11-26" data-updated="2026-11-26" data-status="current" style="min-height:760px;box-sizing:border-box;padding:48px 32px;background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:16px;line-height:1.55"><div style="max-width:960px;margin:0 auto"><h1 style="margin:0 0 8px;font:600 36px/1.2 var(--font-display)">Plan</h1><p style="margin:0 0 32px;color:var(--muted);font-size:14px">Status: current. Created 2026-11-26. Updated 2026-11-26.</p><svg role="img" aria-label="Plan" width="420" height="72" viewBox="0 0 420 72" style="display:block;margin:0 0 20px"><rect x="0" y="16" width="124" height="40" rx="6" fill="var(--surface)" stroke="var(--rule)" stroke-width="2"/><text x="62" y="41" text-anchor="middle" font-size="14" fill="var(--ink)">As-is</text><path d="M128 36 H144" stroke="var(--muted)" stroke-width="2"/><rect x="148" y="16" width="124" height="40" rx="6" fill="var(--surface)" stroke="var(--rule)" stroke-width="2"/><text x="210" y="41" text-anchor="middle" font-size="14" fill="var(--ink)">Review</text><path d="M276 36 H292" stroke="var(--muted)" stroke-width="2"/><rect x="296" y="16" width="124" height="40" rx="6" fill="var(--surface)" stroke="var(--rule)" stroke-width="2"/><text x="358" y="41" text-anchor="middle" font-size="14" fill="var(--ink)">To-be</text></svg><h2 style="margin:32px 0 8px;font:600 22px/1.3 var(--font-display)">Steps</h2><ol style="margin:0 0 12px;padding-left:24px"><li>This page keeps the v1 record of the app as it is at commit 5ea0f8d. Check: node blueprint-check.mjs docs/blueprint passes.</li><li>The owner reviews v1 and comments on the canvas. Check: comments answered.</li><li>This v2 page copies v1 and changes only the screens and flows the review names, each with a decision record. Check: the gate passes and v1 is marked superseded.</li><li>One issue per change, each linking this v2 page: (a) relay install 403 text, (b) border colour for controls (issue 212). Check: issue links.</li></ol><h2 style="margin:32px 0 8px;font:600 22px/1.3 var(--font-display)">Out of scope</h2><p style="margin:0 0 12px">No app code changes in this work. The screens that the fake backend cannot produce (see Questions) are not rebuilt here.</p></div></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":760}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

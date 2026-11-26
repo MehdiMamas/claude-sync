@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Personal memory sync: happy path</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#f6f7f9;--surface:#ffffff;--ink:#1c1f24;--muted:#5f6672;--accent:#2f6fde;--on-accent:#ffffff;--error:#c4312b;--error-bg:#fdecea;--accent-bg:#e6eefc;--warn-bg:#fff4dc;--ok:#1f8a4c;--ok-bg:#e3f4ea;--warn:#9a5b00;--dg-bg:#17191d;--dg-lane:#212429;--dg-node:#353a42;--dg-line:#9aa1ad;--dg-ink:#e7e9ec;--dg-muted:#9aa1ad;--rule:color-mix(in srgb,var(--muted) 35%,transparent);--font-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent)}
+
+</style>
+</helmet>
+<div data-page="v1" data-section="play" data-created="2026-11-26" data-updated="2026-11-26" data-status="superseded" data-superseded-by="v2" data-scenario="PersonalHappy" data-kind="happy" data-story="As a person with two computers, I want to keep my own CLAUDE.md and memory in step, so that both computers act the same." style="position:relative;width:960px;height:830px;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--font-body)"><h1 style="position:absolute;left:40px;top:28px;margin:0;font:600 28px/1.2 var(--font-display);color:var(--ink)">Personal memory sync: happy path</h1><p style="position:absolute;left:40px;top:72px;margin:0;font-size:14px;color:var(--muted)">Created 2026-11-26. Updated 2026-11-26.</p><p style="position:absolute;left:40px;top:100px;width:880px;margin:0;font-size:15px;color:var(--ink)">As a person with two computers, I want to keep my own CLAUDE.md and memory in step, so that both computers act the same. Click a step to open its screen. <a href="v1-FlowPersonal.dc.html">See the flow that leads here</a>.</p><ol style="position:absolute;left:40px;top:160px;width:880px;margin:0;padding-left:24px;font-size:15px;line-height:1.4"><li style="margin:0 0 10px"><a href="v1-ScreenSettingsOff.dc.html" data-flow="v1-FlowPersonal:off">Open Settings &gt; Personal memory</a><br><span style="color:var(--muted);font-size:14px">System: Personal memory is off or offered (SettingsOff, SettingsOffer boards).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSettingsOff.dc.html" data-flow="v1-FlowPersonal:enable">Click Turn on</a><br><span style="color:var(--muted);font-size:14px">System: Window calls personal_enable (crates/core/src/personal.rs:314).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSettings.dc.html" data-flow="v1-FlowPersonal:repo">Create private repo &lt;login&gt;/claude-sync-personal</a><br><span style="color:var(--muted);font-size:14px">System: The private repo is created once (engine.rs:3468 create_personal_repo).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSettings.dc.html" data-flow="v1-FlowPersonal:kinds">Choose what to sync (3 switches)</a><br><span style="color:var(--muted);font-size:14px">System: CLAUDE.md, memory and mod settings (personal_set_kinds, personal.rs:351).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSettings.dc.html" data-flow="v1-FlowPersonal:push">Merge + push local files</a><br><span style="color:var(--muted);font-size:14px">System: personal_sync (personal.rs:466) merges and pushes; secrets are scanned first (secrets::scan, engine.rs:410).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSettingsOffer.dc.html" data-flow="v1-FlowPersonal:offer">Other device: &quot;Join this memory?&quot;</a><br><span style="color:var(--muted);font-size:14px">System: personal_check_new_device (personal.rs:419) offers a join; Dismiss calls personal_dismiss_offer (personal.rs:457).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSettings.dc.html" data-flow="v1-FlowPersonal:join">Accept: files pulled and merged</a><br><span style="color:var(--muted);font-size:14px">System: New devices can also join automatically (personal_set_new_devices_join, personal.rs:377).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSettingsP2.dc.html" data-flow="v1-FlowPersonal:off">Frame: Settings (2/4)</a><br><span style="color:var(--muted);font-size:14px">System: default.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSettingsP3.dc.html" data-flow="v1-FlowPersonal:off">Frame: Settings (3/4)</a><br><span style="color:var(--muted);font-size:14px">System: default.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSettingsP4.dc.html" data-flow="v1-FlowPersonal:off">Frame: Settings (4/4)</a><br><span style="color:var(--muted);font-size:14px">System: default.</span></li></ol><a href="v2-ScenarioPersonalHappy.dc.html" style="position:absolute;right:12px;bottom:4px;font-size:11px;color:var(--accent);z-index:4">Superseded by v2</a></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":830}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

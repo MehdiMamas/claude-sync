@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Local edits, conflicts, proposals: edge cases</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#f6f7f9;--surface:#ffffff;--ink:#1c1f24;--muted:#5f6672;--accent:#2f6fde;--on-accent:#ffffff;--error:#c4312b;--error-bg:#fdecea;--accent-bg:#e6eefc;--warn-bg:#fff4dc;--ok:#1f8a4c;--ok-bg:#e3f4ea;--warn:#9a5b00;--dg-bg:#17191d;--dg-lane:#212429;--dg-node:#353a42;--dg-line:#9aa1ad;--dg-ink:#e7e9ec;--dg-muted:#9aa1ad;--rule:color-mix(in srgb,var(--muted) 35%,transparent);--font-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent)}
+
+</style>
+</helmet>
+<div data-page="v1" data-section="play" data-created="2026-11-26" data-updated="2026-11-26" data-status="superseded" data-superseded-by="v2" data-scenario="EditsEdge" data-kind="edge" data-story="As a group member, I want to see what happens when it goes wrong while I share or propose a change I made locally, so that the group can use it after the host agrees even then." style="position:relative;width:960px;height:458px;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--font-body)"><h1 style="position:absolute;left:40px;top:28px;margin:0;font:600 28px/1.2 var(--font-display);color:var(--ink)">Local edits, conflicts, proposals: edge cases</h1><p style="position:absolute;left:40px;top:72px;margin:0;font-size:14px;color:var(--muted)">Created 2026-11-26. Updated 2026-11-26.</p><p style="position:absolute;left:40px;top:100px;width:880px;margin:0;font-size:15px;color:var(--ink)">As a group member, I want to see what happens when it goes wrong while I share or propose a change I made locally, so that the group can use it after the host agrees even then. Click a step to open its screen. <a href="v1-FlowEdits.dc.html">See the flow that leads here</a>.</p><ol style="position:absolute;left:40px;top:160px;width:880px;margin:0;padding-left:24px;font-size:15px;line-height:1.4"><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-FlowEdits:ask">Group lists &quot;Local changes&quot; with actions</a><br><span style="color:var(--muted);font-size:14px">System: Each edit offers a choice; engine.resolve_edit applies it (engine.rs:971).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-FlowEdits:conflict">Conflict: remote wins, local copy kept</a><br><span style="color:var(--muted);font-size:14px">System: Conflicts list on the Group screen; the copy lives in conflicts/&lt;group&gt;/&lt;UTC&gt; (paths.rs:75).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-FlowEdits:scan">Secret scan before any commit</a><br><span style="color:var(--muted);font-size:14px">System: Blocked when a pattern matches (secrets::scan, engine.rs:410), unless the line has claude-sync: allow-secret.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroup.dc.html" data-flow="v1-FlowEdits:secret">Secret found: change refused</a><br><span style="color:var(--muted);font-size:14px">System: The edit is not pushed and the pattern name is shown (helper.rs:171 uses first_hit).</span></li></ol><a href="v2-ScenarioEditsEdge.dc.html" style="position:absolute;right:12px;bottom:4px;font-size:11px;color:var(--accent);z-index:4">Superseded by v2</a></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":458}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

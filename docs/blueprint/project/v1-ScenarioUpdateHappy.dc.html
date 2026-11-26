@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>App update through the relay: happy path</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#f6f7f9;--surface:#ffffff;--ink:#1c1f24;--muted:#5f6672;--accent:#2f6fde;--on-accent:#ffffff;--error:#c4312b;--error-bg:#fdecea;--accent-bg:#e6eefc;--warn-bg:#fff4dc;--ok:#1f8a4c;--ok-bg:#e3f4ea;--warn:#9a5b00;--dg-bg:#17191d;--dg-lane:#212429;--dg-node:#353a42;--dg-line:#9aa1ad;--dg-ink:#e7e9ec;--dg-muted:#9aa1ad;--rule:color-mix(in srgb,var(--muted) 35%,transparent);--font-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent)}
+
+</style>
+</helmet>
+<div data-page="v1" data-section="play" data-created="2026-11-26" data-updated="2026-11-26" data-status="superseded" data-superseded-by="v2" data-scenario="UpdateHappy" data-kind="happy" data-story="As a user, I want to get the new version of the app, so that I run the fixed version without reinstalling." style="position:relative;width:960px;height:768px;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--font-body)"><h1 style="position:absolute;left:40px;top:28px;margin:0;font:600 28px/1.2 var(--font-display);color:var(--ink)">App update through the relay: happy path</h1><p style="position:absolute;left:40px;top:72px;margin:0;font-size:14px;color:var(--muted)">Created 2026-11-26. Updated 2026-11-26.</p><p style="position:absolute;left:40px;top:100px;width:880px;margin:0;font-size:15px;color:var(--ink)">As a user, I want to get the new version of the app, so that I run the fixed version without reinstalling. Click a step to open its screen. <a href="v1-FlowUpdate.dc.html">See the flow that leads here</a>.</p><ol style="position:absolute;left:40px;top:160px;width:880px;margin:0;padding-left:24px;font-size:15px;line-height:1.4"><li style="margin:0 0 10px"><a href="v1-ScreenGroups.dc.html" data-flow="v1-FlowUpdate:check">Check at start and every 6 h</a><br><span style="color:var(--muted);font-size:14px">System: update_loop in app/src-tauri/src/background.rs; check at app/src-tauri/src/updates.rs:117.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroups.dc.html" data-flow="v1-FlowUpdate:ask" data-endpoint="GET /api/update">Relay: is a newer release published?</a><br><span style="color:var(--muted);font-size:14px">System: The handler compares the caller version with the latest published release (relay/api/update.ts:91). Calls <strong>GET /api/update</strong>.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroups.dc.html" data-flow="v1-FlowUpdate:none">204: nothing new</a><br><span style="color:var(--muted);font-size:14px">System: No body; the app does nothing.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroups.dc.html" data-flow="v1-FlowUpdate:json">200: updater JSON</a><br><span style="color:var(--muted);font-size:14px">System: Tauri updater format with signature and a download URL.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroups.dc.html" data-flow="v1-FlowUpdate:dl" data-endpoint="GET /api/download/{asset-id}">Download through the relay</a><br><span style="color:var(--muted);font-size:14px">System: The relay answers 302 to a short-lived signed asset URL (relay/api/download/[id].ts:21). Calls <strong>GET /api/download/{asset-id}</strong>.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroups.dc.html" data-flow="v1-FlowUpdate:sig">Verify the minisign signature</a><br><span style="color:var(--muted);font-size:14px">System: Public key in app/src-tauri/tauri.conf.json; a bad signature is never installed.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroups.dc.html" data-flow="v1-FlowUpdate:quiet">Install when quiet</a><br><span style="color:var(--muted);font-size:14px">System: quiet_now: no sync running, window hidden, QUIET_AFTER since last toast (updates.rs:41).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroups.dc.html" data-flow="v1-FlowUpdate:restart">Or click &quot;Restart to update&quot;</a><br><span style="color:var(--muted);font-size:14px">System: The Groups screen shows the button when an update is waiting (Groups board).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSettingsUpToDate.dc.html" data-flow="v1-FlowUpdate:check">Frame: Settings: up to date</a><br><span style="color:var(--muted);font-size:14px">System: up to date toast.</span></li></ol><a href="v2-ScenarioUpdateHappy.dc.html" style="position:absolute;right:12px;bottom:4px;font-size:11px;color:var(--accent);z-index:4">Superseded by v2</a></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":768}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

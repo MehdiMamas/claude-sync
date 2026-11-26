@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Screen Groups: sync error</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#f6f7f9;--surface:#ffffff;--ink:#1c1f24;--muted:#5f6672;--accent:#2f6fde;--on-accent:#ffffff;--error:#c4312b;--error-bg:#fdecea;--accent-bg:#e6eefc;--warn-bg:#fff4dc;--ok:#1f8a4c;--ok-bg:#e3f4ea;--warn:#9a5b00;--dg-bg:#17191d;--dg-lane:#212429;--dg-node:#353a42;--dg-line:#9aa1ad;--dg-ink:#e7e9ec;--dg-muted:#9aa1ad;--rule:color-mix(in srgb,var(--muted) 35%,transparent);--font-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent)}
+:root { --bg: #f6f7f9; --panel: #ffffff; --text: #1c1f24; --muted: #5f6672; --line: #dde1e6; --accent: #2f6fde; --accent-text: #ffffff; --accent-soft: #e6eefc; --danger: #c4312b; --danger-soft: #fdecea; --warn: #9a5b00; --warn-soft: #fff4dc; --ok: #1f8a4c; --focus: #2f6fde; --radius: 8px; color-scheme: light; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 14px; line-height: 1.45; color: var(--text); background: var(--bg); }
+* { box-sizing: border-box; }
+body { margin: 0px; background: var(--bg); }
+h1 { font-size: 1.45rem; margin: 0px; }
+h2 { font-size: 1.05rem; margin: 1.25rem 0px 0.5rem; }
+p { margin: 0.4rem 0px; }
+code { font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace; font-size: 0.92em; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button { font: inherit; padding: 0.4rem 0.85rem; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; white-space: nowrap; }
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: 0.6; cursor: progress; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.app { display: grid; grid-template-columns: 210px 1fr; min-height:683px; }
+.nav { display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem 0.75rem; border-right: 1px solid var(--line); background: var(--panel); position: sticky; top: 0px; height:683px; }
+.nav ul { list-style: none; margin: 0px; padding: 0px; display: flex; flex-direction: column; gap: 2px; }
+.nav a { display: block; padding: 0.45rem 0.6rem; border-radius: 6px; color: var(--text); text-decoration: none; }
+.nav a:hover { background: var(--bg); }
+.nav a[aria-current="page"] { background: var(--accent-soft); font-weight: 600; }
+.nav-foot { margin-top: auto; display: flex; flex-direction: column; gap: 0.4rem; }
+.brand { display: flex; align-items: center; gap: 0.45rem; font-weight: 700; font-size: 1.05rem; padding: 0px 0.4rem; }
+.logo { display: inline-grid; place-items: center; width: 1.6em; height: 1.6em; border-radius: 50%; background: var(--accent); color: var(--accent-text); font-size: 0.9em; }
+.main { padding: 1.25rem 1.5rem 3rem; max-width: 860px; width: 100%; }
+.view:focus { outline: none; }
+.head { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.list { list-style: none; margin: 0px 0px 1rem; padding: 0px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+.list > li + li { border-top: 1px solid var(--line); }
+.row { display: flex; align-items: center; gap: 0.75rem; padding: 0.65rem 0.9rem; }
+.link-row { color: inherit; text-decoration: none; }
+.link-row:hover { background: var(--bg); }
+.row-title { font-weight: 600; display: flex; gap: 0.4rem; align-items: center; }
+.grow { flex: 1 1 0%; min-width: 0px; }
+.right { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 0.2rem; }
+.tag { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 0.05rem 0.45rem; margin-left: 0.35rem; border-radius: 999px; background: var(--accent-soft); color: var(--text); }
+.tag.warn { background: var(--warn-soft); color: var(--warn); }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; border: 0px; }
+.notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem; padding: 0.7rem 0.9rem; margin-bottom: 0.75rem; border-radius: var(--radius); background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }
+.notice.info { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.notice-text { flex: 1 1 18rem; }
+.pill { display: flex; align-items: center; gap: 0.45rem; font-size: 0.85rem; padding: 0.3rem 0.55rem; border-radius: 6px; background: var(--bg); }
+.dot { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+.pill.ok .dot { background: var(--ok); }
+.avatar { position: relative; flex: 0 0 auto; width: var(--size, 28px); height: var(--size, 28px); border-radius: 50%; overflow: hidden; display: inline-grid; place-items: center; font-size: calc(var(--size, 28px) * 0.38); line-height: 1; font-weight: 700; color: rgb(255, 255, 255); background: hsl(var(--h, 210) 55% 42%); user-select: none; vertical-align: middle; }
+.who { display: flex; align-items: center; gap: 0.5rem; }
+.bell { position: relative; display: inline-grid; place-items: center; width: 2rem; height: 2rem; border-radius: 6px; color: var(--muted); }
+.nav a.bell { padding: 0px; }
+.bell:hover, .bell[aria-current="page"] { color: var(--text); }
+.bell svg { width: 1.2rem; height: 1.2rem; fill: none; stroke: currentcolor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.badge { position: absolute; top: -0.1rem; right: -0.25rem; min-width: 1.15rem; height: 1.15rem; padding: 0px 0.3rem; border-radius: 999px; background: var(--danger); color: rgb(255, 255, 255); font-size: 0.7rem; font-weight: 700; line-height: 1.15rem; text-align: center; }
+.nav-badge { display: inline-block; min-width: 1.3rem; margin-left: 0.4rem; padding: 0px 0.35rem; border-radius: 999px; background: var(--warn-soft); color: var(--warn); font-size: 0.75rem; font-weight: 700; line-height: 1.3rem; text-align: center; }
+.group-item { display: flex; align-items: center; }
+.reorder { display: flex; flex-direction: column; gap: 0.15rem; padding: 0px 0px 0px 0.6rem; }
+.icon-btn { padding: 0px 0.4rem; line-height: 1.2; font-size: 0.7rem; }
+.x-details{display:flow-root;margin-top:.2rem}.x-details>.x-summary:first-child{margin-top:0}
+:where(.x-summary){display:list-item;list-style:disclosure-closed inside;cursor:pointer}.x-details[open]>.x-summary{list-style-type:disclosure-open}
+@keyframes pulse { 
+  100% { opacity: 0.3; }
+}
+@keyframes spin { 
+  100% { transform: rotate(360deg); }
+}
+</style>
+</helmet>
+<div data-page="v1" data-created="2026-11-26" data-updated="2026-11-26" data-status="superseded" data-superseded-by="v2" data-screen="GroupsSyncError" data-state="sync error toast" style="position:relative;width:880px;height:683px;overflow:hidden;background:var(--bg)"><div style="position:relative;width:880px;height:683px;overflow:hidden"><div class="app"><nav class="nav" aria-label="Main"><div class="brand"><span class="logo" aria-hidden="true">⟳</span><span class="grow">claude-sync</span><span id="bell-slot"><a class="bell" aria-label="Notifications, 2 unread" title="Notifications" data-sx="1"><svg aria-hidden="true" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0-6 6v3.6L4.3 15.5A1 1 0 0 0 5.2 17h13.6a1 1 0 0 0 .9-1.5L18 12.6V9a6 6 0 0 0-6-6Zm-2.4 15.5a2.5 2.5 0 0 0 4.8 0"></path></svg><span class="badge" aria-hidden="true">2</span></a></span></div><ul><li><a aria-current="page" data-sx="2">Groups<span id="nav-review"><span class="nav-badge" title="2 CLAUDE.md changes to review">2</span></span></a></li><li><a data-sx="3">Send feedback</a></li><li><a data-sx="4">Settings</a></li></ul><div class="nav-foot"><div id="status-slot"><div class="pill ok" title="Up to date"><span class="dot" aria-hidden="true"></span><span>Up to date · 2 min ago</span></div></div><div class="muted small who"><span class="avatar" style="--h:38;--size:18px" title="alexm" aria-hidden="true">AL</span>Signed in as alexm</div></div></nav><main class="main"><div id="banners"><div class="notice info" role="region" aria-label="Update"><div class="notice-text">claude-sync 0.2.0 is ready. It installs when you quit, or now:</div><div class="actions"><button class="primary">Restart to update</button></div></div><div class="notice" role="region" aria-label="Local change to skills/review/SKILL.md"><div class="notice-text"><code>skills/review/SKILL.md</code> was changed on this device. It is shared by <strong>acme/claude-sync-data</strong>.</div><div class="actions"><button class="primary">Share with group</button><button class="">Undo</button></div></div></div><section class="view"><header class="head"><h1>Groups</h1><div class="actions"><button>Create group</button><button class="primary">Sync now</button></div></header><div></div><div><h2>Invitations</h2><p class="muted small">Plugins in this group run code on every member's machine; only join groups whose members you trust.</p><ul class="list" aria-label="Pending invitations"><li class="row"><div class="grow"><strong>pat-w</strong> invited you to <code>pat-w/prompts</code></div><button class="primary">Accept</button></li></ul></div><h2 class="sr-only">Your groups</h2><div><p class="muted small">Groups higher in the list win when two groups set the same thing.</p><ul class="list" aria-label="Your groups"><li class="group-item"><div class="reorder"><button class="icon-btn" type="button" aria-label="Move up Alex &amp; friends" title="Move up" disabled="">▲</button><button class="icon-btn" type="button" aria-label="Move down Alex &amp; friends" title="Move down">▼</button></div><a class="row link-row grow" data-sx="5"><div class="grow"><div class="row-title">Alex &amp; friends<span class="tag">you host</span></div><div class="muted small">acme/claude-sync-data · 3 members</div></div><div class="right"><span class="tag warn">2 CLAUDE.md changes to review</span><span class="tag warn">2 to review</span><div class="muted small">Synced 2 min ago</div></div></a></li><li class="group-item"><div class="reorder"><button class="icon-btn" type="button" aria-label="Move up Acme team" title="Move up">▲</button><button class="icon-btn" type="button" aria-label="Move down Acme team" title="Move down" disabled="">▼</button></div><a class="row link-row grow" data-sx="6"><div class="grow"><div class="row-title">Acme team</div><div class="muted small">acme/claude-team · 2 members</div></div><div class="right"><div class="muted small">Synced 7 min ago</div></div></a></li></ul></div><div><h2>Groups you can join</h2><p class="muted small">You already have access to these on GitHub, but they are not set up on this device.</p><p class="muted small">Plugins in this group run code on every member's machine; only join groups whose members you trust.</p><ul class="list"><li class="row"><div class="grow"><code>sam-dev/claude-sync-data</code></div><button>Join</button></li></ul></div></section></main></div></div><a href="v1-ScreenNotifications.dc.html" aria-label="Notifications, 2 unread" style="position:absolute;left:165px;top:14px;width:28px;height:28px;display:block;z-index:3;opacity:0"></a><a href="v1-ScreenGroups.dc.html" aria-label="Groups2" style="position:absolute;left:11px;top:53px;width:188px;height:33px;display:block;z-index:3;opacity:0"></a><a href="v1-ScreenFeedback.dc.html" aria-label="Send feedback" style="position:absolute;left:11px;top:87px;width:188px;height:33px;display:block;z-index:3;opacity:0"></a><a href="v1-ScreenSettings.dc.html" aria-label="Settings" style="position:absolute;left:11px;top:122px;width:188px;height:33px;display:block;z-index:3;opacity:0"></a><a href="v1-ScreenGroup.dc.html" aria-label="Alex &amp; friendsyou hostacme/claude-sync-data · 3 membe" style="position:absolute;left:261px;top:350px;width:597px;height:74px;display:block;z-index:3;opacity:0"></a><a href="v1-ScreenGroupGuest.dc.html" aria-label="Acme teamacme/claude-team · 2 membersSynced 7 min ago" style="position:absolute;left:261px;top:425px;width:597px;height:56px;display:block;z-index:3;opacity:0"></a><div style="position:absolute;left:50%;top:627px;transform:translateX(-50%);max-width:520px;padding:.6rem 1rem;border-radius:var(--radius);background:var(--danger);color:#fff;font-size:14px;z-index:5">1 group(s) had an error</div><a href="v2-Cover.dc.html" style="position:absolute;right:12px;bottom:4px;font-size:11px;color:var(--accent);z-index:4">Superseded by v2</a></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":880,"height":683}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

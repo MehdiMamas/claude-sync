@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Module spec: UI per screen (12 of 12)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#f6f7f9;--surface:#ffffff;--ink:#1c1f24;--muted:#5f6672;--accent:#2f6fde;--on-accent:#ffffff;--error:#c4312b;--error-bg:#fdecea;--accent-bg:#e6eefc;--warn-bg:#fff4dc;--ok:#1f8a4c;--ok-bg:#e3f4ea;--warn:#9a5b00;--dg-bg:#17191d;--dg-lane:#212429;--dg-node:#353a42;--dg-line:#9aa1ad;--dg-ink:#e7e9ec;--dg-muted:#9aa1ad;--rule:color-mix(in srgb,var(--muted) 35%,transparent);--font-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent)}
+[data-dg]{--error:#f07a73;--accent:#6b9cf0;--on-accent:#0e1420;--ok:#5fcf8d;--warn:#f0b85a}
+</style>
+</helmet>
+<div data-page="v1" data-section="architecture" data-created="2026-11-26" data-updated="2026-11-26" data-status="superseded" data-superseded-by="v2" data-dg style="position:relative;width:1240px;min-height:456px;overflow:hidden;background:var(--dg-bg);color:var(--dg-ink);font-family:var(--font-body);padding:32px 24px;box-sizing:border-box"><h1 style="margin:0 0 8px;font:700 22px/1.2 var(--font-body)">Module spec: UI per screen (12 of 12)</h1><p style="margin:0 0 8px;font-size:12px;color:var(--dg-muted)">Every constant, limit, validation rule, error message, on-disk name and test of these modules, as behaviour with file:line, so a builder needs no code. Facts already stated exactly in the Rebuild spec, Eng and Messages frames are not repeated here. Created 2026-11-26. Updated 2026-11-26.</p><table style="width:100%;border-collapse:collapse;background:var(--dg-lane);border-radius:6px;table-layout:fixed;margin:0 0 14px"><colgroup><col style="width:auto"><col style="width:110px"><col style="width:170px"></colgroup><thead><tr><th style="text-align:left;padding:6px 10px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--dg-muted);font-weight:600">Behaviour</th><th style="text-align:left;padding:6px 10px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--dg-muted);font-weight:600">Kind</th><th style="text-align:left;padding:6px 10px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--dg-muted);font-weight:600">file:line</th></tr></thead><tbody><tr data-topic><td colspan="3" style="padding:9px 10px 5px;border-top:2px solid var(--dg-node);font-size:12px;font-weight:700;letter-spacing:.02em;color:var(--dg-ink)">style.css &middot; bell and notifications, review styles, clash, pick, helper</td></tr><tr data-rule><td style="padding:7px 10px;border-top:1px solid var(--dg-node);vertical-align:top;font-size:12px;line-height:1.4">Bell: 2rem square, radius 6px, muted (text colour on hover or current), icon 1.2rem stroke 1.8 round. Badge: absolute top -0.1rem right -0.25rem, min 1.15rem round, --danger fill, white 0.7rem weight 700. Unread notification rows use --accent-soft. Kind icon 1.8rem circle; update and plugins accent, group --ok, local-edit --warn, others muted.</td><td style="padding:7px 10px;border-top:1px solid var(--dg-node);vertical-align:top;font-size:11px;line-height:1.4;color:var(--dg-muted)">bell and notifications</td><td style="padding:7px 10px;border-top:1px solid var(--dg-node);vertical-align:top;font-size:11px;line-height:1.4;font-family:var(--font-mono);color:var(--dg-muted);word-break:break-all">style.css:910-982</td></tr><tr data-rule><td style="padding:7px 10px;border-top:1px solid var(--dg-node);vertical-align:top;font-size:12px;line-height:1.4">Nav badge: warn-soft pill, 0.75rem weight 700, min-width 1.3rem. Diff block: 1px border, radius 8px, 0.85rem pre-wrap; added lines tinted 14% --ok, removed lines 14% --danger with line-through (60% danger decoration colour). Review-ask box: warn-soft, padding 0.6rem 0.75rem, radius 8px; the [hidden] attribute hides it.</td><td style="padding:7px 10px;border-top:1px solid var(--dg-node);vertical-align:top;font-size:11px;line-height:1.4;color:var(--dg-muted)">review styles</td><td style="padding:7px 10px;border-top:1px solid var(--dg-node);vertical-align:top;font-size:11px;line-height:1.4;font-family:var(--font-mono);color:var(--dg-muted);word-break:break-all">style.css:985-1049</td></tr><tr data-rule><td style="padding:7px 10px;border-top:1px solid var(--dg-node);vertical-align:top;font-size:12px;line-height:1.4">Clash side grid: minmax(7rem, 11rem) 1fr, gap 0.6rem; name 0.85rem muted. Warnings box warn-soft with 1.2rem list indent. Pick list indent 1.5rem, monospace 0.85rem lines. Group row: flex with reorder buttons stacked (gap 0.15rem; icon button padding 0 0.4rem, 0.7rem font). Helper output: 3px --line left border, pre-wrap; error variant border var(--danger, #c0392b).</td><td style="padding:7px 10px;border-top:1px solid var(--dg-node);vertical-align:top;font-size:11px;line-height:1.4;color:var(--dg-muted)">clash, pick, helper</td><td style="padding:7px 10px;border-top:1px solid var(--dg-node);vertical-align:top;font-size:11px;line-height:1.4;font-family:var(--font-mono);color:var(--dg-muted);word-break:break-all">style.css:1052-1138</td></tr></tbody></table><a href="v2-Cover.dc.html" style="position:absolute;right:12px;bottom:4px;font-size:11px;color:var(--accent);z-index:4">Superseded by v2</a></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1240,"height":456}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

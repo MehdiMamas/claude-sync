@@ -1,0 +1,53 @@
+@startuml
+skinparam shadowing false
+skinparam backgroundColor #ffffff
+skinparam defaultFontName sans-serif
+skinparam defaultFontSize 13
+skinparam defaultFontColor #1c1f24
+skinparam ArrowColor #5f6672
+skinparam ArrowFontColor #1c1f24
+skinparam roundCorner 8
+skinparam RectangleBackgroundColor #ffffff
+skinparam RectangleBorderColor #5f6672
+skinparam RectangleFontColor #1c1f24
+skinparam NodeBackgroundColor #ffffff
+skinparam NodeBorderColor #5f6672
+skinparam ComponentBackgroundColor #ffffff
+skinparam ComponentBorderColor #5f6672
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassBorderColor #5f6672
+skinparam ClassAttributeFontColor #1c1f24
+skinparam ActorBackgroundColor #ffffff
+skinparam ActorBorderColor #5f6672
+skinparam UsecaseBackgroundColor #e6eefc
+skinparam UsecaseBorderColor #2f6fde
+skinparam DatabaseBackgroundColor #ffffff
+skinparam DatabaseBorderColor #5f6672
+skinparam CloudBackgroundColor #ffffff
+skinparam CloudBorderColor #5f6672
+skinparam PackageBackgroundColor #f6f7f9
+skinparam PackageBorderColor #5f6672
+skinparam PackageFontColor #1c1f24
+skinparam NoteBackgroundColor #fff4dc
+skinparam NoteBorderColor #9a5b00
+skinparam NoteFontColor #1c1f24
+left to right direction
+package "Desktop app (Tauri 2)" {
+ rectangle "Window UI\napp/ui (TypeScript, Vite)" as UI
+ rectangle "Tauri shell\napp/src-tauri (tray, loops, commands)" as TS
+ rectangle "Core engine\ncrates/core (Rust)" as CE
+ database "Local state\n~/.claude-sync/*.json" as LS
+ database "Managed files\n~/.claude/" as MF
+}
+package "Relay (Vercel)" {
+ rectangle "api/*.ts functions" as RF
+}
+rectangle "GitHub" as GH
+UI --> TS : invoke commands
+TS --> CE : engine calls
+CE --> LS
+CE --> MF
+CE --> GH : REST + GraphQL
+TS --> RF : update, feedback
+RF --> GH : releases, issues
+@enduml

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in with GitHub (device code): edge cases</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#f6f7f9;--surface:#ffffff;--ink:#1c1f24;--muted:#5f6672;--accent:#2f6fde;--on-accent:#ffffff;--error:#c4312b;--error-bg:#fdecea;--accent-bg:#e6eefc;--warn-bg:#fff4dc;--ok:#1f8a4c;--ok-bg:#e3f4ea;--warn:#9a5b00;--dg-bg:#17191d;--dg-lane:#212429;--dg-node:#353a42;--dg-line:#9aa1ad;--dg-ink:#e7e9ec;--dg-muted:#9aa1ad;--rule:color-mix(in srgb,var(--muted) 35%,transparent);--font-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent)}
+
+</style>
+</helmet>
+<div data-page="v1" data-section="play" data-created="2026-11-26" data-updated="2026-11-26" data-status="superseded" data-superseded-by="v2" data-scenario="SignInEdge" data-kind="edge" data-story="As a new user, I want to see what happens when it goes wrong while I sign in with my GitHub account, so that I can use the app without a separate password even then." style="position:relative;width:960px;height:644px;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--font-body)"><h1 style="position:absolute;left:40px;top:28px;margin:0;font:600 28px/1.2 var(--font-display);color:var(--ink)">Sign in with GitHub (device code): edge cases</h1><p style="position:absolute;left:40px;top:72px;margin:0;font-size:14px;color:var(--muted)">Created 2026-11-26. Updated 2026-11-26.</p><p style="position:absolute;left:40px;top:100px;width:880px;margin:0;font-size:15px;color:var(--ink)">As a new user, I want to see what happens when it goes wrong while I sign in with my GitHub account, so that I can use the app without a separate password even then. Click a step to open its screen. <a href="v1-FlowSignIn.dc.html">See the flow that leads here</a>.</p><ol style="position:absolute;left:40px;top:160px;width:880px;margin:0;padding-left:24px;font-size:15px;line-height:1.4"><li style="margin:0 0 10px"><a href="v1-ScreenSignInCode.dc.html" data-flow="v1-FlowSignIn:poll" data-endpoint="POST https://github.com/login/oauth/access_token">Poll until GitHub says approved</a><br><span style="color:var(--muted);font-size:14px">System: auth::poll waits between polls (auth.rs:157) and handles slow_down and expiry. Calls <strong>POST https://github.com/login/oauth/access_token</strong>.</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSignInCode.dc.html" data-flow="v1-FlowSignIn:expired">Code expired: &quot;Start again&quot;</a><br><span style="color:var(--muted);font-size:14px">System: Poll returns Expired and the error text is &quot;The code expired. Start again.&quot; (auth.rs:173, 181).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenGroups.dc.html" data-flow="v1-FlowSignIn:keep">Save tokens in the OS keychain</a><br><span style="color:var(--muted);font-size:14px">System: One JSON keychain entry; one shared github::Session per sign-in (auth.rs:42).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSignInExpired.dc.html" data-flow="v1-FlowSignIn:revoked">Later: token refused, sign-in expired</a><br><span style="color:var(--muted);font-size:14px">System: A 401 that refresh cannot cure removes the tokens, the tray says &quot;claude-sync: Sign-in expired&quot;, a notification titled &quot;GitHub sign-in expired&quot; appears, and the window shows Sign in again (auth.rs:69-88).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSignInFailed.dc.html" data-flow="v1-FlowSignIn:expired">Frame: Sign in: did not finish</a><br><span style="color:var(--muted);font-size:14px">System: sign-in did not finish (built from the app code, not captured).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSignInNoClientId.dc.html" data-flow="v1-FlowSignIn:expired">Frame: Sign in: not available</a><br><span style="color:var(--muted);font-size:14px">System: no client id in this build (built from the app code, not captured).</span></li><li style="margin:0 0 10px"><a href="v1-ScreenSignInExpiredCode.dc.html" data-flow="v1-FlowSignIn:expired">Frame: Sign in: new code</a><br><span style="color:var(--muted);font-size:14px">System: new code after expiry.</span></li></ol><a href="v2-ScenarioSignInEdge.dc.html" style="position:absolute;right:12px;bottom:4px;font-size:11px;color:var(--accent);z-index:4">Superseded by v2</a></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":644}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

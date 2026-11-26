@@ -1,0 +1,1 @@
+{"set":5,"round":1,"date":"2026-11-26","full":40,"partial":0,"miss":0,"key_errors":["u14: key said the review badge caps at 99+; code (app/ui/src/main.ts:85) shows the plain number, 99+ is the bell. Canvas was right."],"notes":"taker self-graded u24 u36 u39 u40 partial; each covers every fact in the key","score":"40/40 full (100%)"}

@@ -1,0 +1,282 @@
+[
+  {
+    "id": "q01",
+    "area": "abilities",
+    "question": "List every item in the tray menu, and say which one appears only sometimes and what a left-click on the tray icon does.",
+    "answer": "Status line, Sync now, Open claude-sync, Pause/Resume syncing, Turn groups off/on, Send feedback..., Quit. A Notifications item is inserted (at position 4) only while there are unread notifications. Left-click (button up) opens the window.",
+    "evidence": "app/src-tauri/src/tray.rs:19-52,81-89,152-170"
+  },
+  {
+    "id": "q02",
+    "area": "abilities",
+    "question": "What does the tray's 'Turn groups off / on' item do when some groups are on and some are off?",
+    "answer": "It enables all groups only if every group is currently disabled; otherwise it disables all of them (it is a single toggle for all groups, saved as a personal choice).",
+    "evidence": "app/src-tauri/src/tray.rs:105-130"
+  },
+  {
+    "id": "q03",
+    "area": "abilities",
+    "question": "Which CLI commands exist, what are the exit codes, and what happens to a running app after 'personal enable/disable'?",
+    "answer": "Only 'status' and 'personal status|enable|disable' (the app binary is the CLI; --json gives machine output). Exit 0 done, 1 failed, 2 wrong usage. After enable/disable the CLI sends the running app a --refresh so it reloads its screens.",
+    "evidence": "app/src-tauri/src/cli.rs:12-17,45-74,127-129; AGENTS.md (Command line)"
+  },
+  {
+    "id": "q04",
+    "area": "abilities",
+    "question": "Which top-level keys does 'claude-sync status --json' print?",
+    "answer": "requests, login, expiredLogin, groups, groupsError, personal.",
+    "evidence": "app/src-tauri/src/cli.rs:93-100"
+  },
+  {
+    "id": "q05",
+    "area": "abilities",
+    "question": "What background loops run in the app and at what cadence (sync, invitations, requests file, updates)?",
+    "answer": "Sync every poll interval (default 60 s, min 15 s); invitations 5 s after start then every 15 min; requests.json written every minute (totals logged every 10 min); updates checked 20 s after start then every 6 h, with an install-if-quiet check each minute. A file watcher with a 2 s debounce triggers syncs on local edits.",
+    "evidence": "app/src-tauri/src/config.rs:47-50; app/src-tauri/src/background.rs:358-364,399-439; crates/core/src/watch.rs:126"
+  },
+  {
+    "id": "q06",
+    "area": "abilities",
+    "question": "What are the limits and allowed values of a group scheduled job in schedules.json?",
+    "answer": "At most 20 jobs, prompt up to 4096 chars, id lowercase letters/digits/hyphens, default timeout 60 and max 240 minutes, permission modes default/acceptEdits/plan/bypassPermissions, extra args only --chrome, --model, --effort (effort low/medium/high/xhigh/max). The OS scheduler is Task Scheduler, launchd or a systemd user timer, registered only after the user accepts the job.",
+    "evidence": "crates/core/src/jobs/mod.rs:31-40,161-167; README.md (Group scheduled jobs)"
+  },
+  {
+    "id": "q07",
+    "area": "abilities",
+    "question": "What does a scheduled job run do when the machine is offline, and how many job logs are kept?",
+    "answer": "It records the result 'skipped: offline' and does not run. The 20 newest logs are kept (rotation). A lock on the job is taken; a lock older than timeout + 5 min is stale.",
+    "evidence": "crates/core/src/jobs/run.rs:17-19,80,226-227,254"
+  },
+  {
+    "id": "q08",
+    "area": "abilities",
+    "question": "What are the relay's features and its per-login limits?",
+    "answer": "Update check endpoint (cached 60 s in memory, serves a stale cached release if GitHub refuses the relay token), feedback (opens a public issue under the user's login, attachments to a private repo; 5 posts per hour per login, title max 200 chars), install page. Every authenticated call is limited to 120 per hour per login; the token-to-login check is cached 10 min; nothing stores the token.",
+    "evidence": "relay/lib/ratelimit.ts:5-9; relay/lib/auth.ts:7,89-96; relay/api/update.ts:16,39-55; relay/lib/feedback.ts:5; relay/api/feedback.ts:145"
+  },
+  {
+    "id": "q09",
+    "area": "data",
+    "question": "Where is the app's state directory on any OS and what are its overrides?",
+    "answer": "~/.claude-sync (on Windows the user's home folder), or ~/.claude-sync/app if ~/.claude-sync/.git exists (the group-sync repo clash). Env overrides CLAUDE_HOME (Claude's folder) and CLAUDE_SYNC_HOME (state folder).",
+    "evidence": "crates/core/src/paths.rs:6-10,36-47"
+  },
+  {
+    "id": "q10",
+    "area": "data",
+    "question": "What fields does state.json hold and how is it written?",
+    "answer": "camelCase: login, deviceName, groups (in priority order), pollSeconds, paused, disabled, githubApp. Written atomically (temp file .<name>.<pid>.tmp then rename), pretty-printed with a trailing newline.",
+    "evidence": "crates/core/src/state.rs:5-23,40-58"
+  },
+  {
+    "id": "q11",
+    "area": "data",
+    "question": "Where do personal choices live and what does each group choice record hold?",
+    "answer": "Locally ~/.claude/personal-state/claude-sync/choices.json, in the personal repo at state/claude-sync/choices.json. Per group: off, reviewClaudeMd, autoRunJobs, acceptedJobs, offJobs, droppedLines, member, ts (ms). Also order {list, ts}, app {paused, intervalSecs, startAtLogin, ts}, personal {off, ts}; unknown keys are kept.",
+    "evidence": "crates/core/src/choices.rs:31-101"
+  },
+  {
+    "id": "q12",
+    "area": "data",
+    "question": "How does choices.json merge between devices, and what does an existing install with no choices.json get?",
+    "answer": "Per-key by ts (the newer ts wins; a new stamp is always greater than the previous one). When the file is missing, legacy per-device values (from state.json) are copied in with ts 0 so any real choice wins later.",
+    "evidence": "crates/core/src/choices.rs:121-125; docs/architecture.md §16"
+  },
+  {
+    "id": "q13",
+    "area": "data",
+    "question": "What are the personal memory repo name, file names, format and size limits?",
+    "answer": "Repo <login>/claude-sync-personal (private; the app refuses a public one). Manifest claude-sync-personal.json, devices.json, FORMAT 1. Files over 256 KiB stay local ('not synced, it is over 256 KiB'); total cap 16 MiB. Device last-seen is pushed at most once per 24 h.",
+    "evidence": "crates/core/src/personal.rs:37-57,859,939-946"
+  },
+  {
+    "id": "q14",
+    "area": "data",
+    "question": "How is a Claude project folder turned into a personal-memory key, and which folders are skipped?",
+    "answer": "Every non-ASCII-alphanumeric UTF-16 unit becomes '-'; key is 'home<rest>' (max 200 chars, matched case-insensitively; case-variant folders are chosen between). Skipped: -appdata, --claude-jobs, -.claude-jobs, --claude-worktrees-, --worktrees-.",
+    "evidence": "crates/core/src/personal/keys.rs:14-80"
+  },
+  {
+    "id": "q15",
+    "area": "data",
+    "question": "How are personal state files (state/ folder) merged: JSON and jsonl?",
+    "answer": "JSON with an ISO ts: the newer wins, equal keeps the remote. jsonl logs: union of lines, empty and duplicate lines dropped, stable-sorted by ts, trailing newline.",
+    "evidence": "crates/core/src/personal/state.rs:26-75"
+  },
+  {
+    "id": "q16",
+    "area": "data",
+    "question": "How is the GitHub token stored and in which layouts must a new build read it?",
+    "answer": "In the OS keychain (service 'claude-sync'). Two layouts: the bare access token (0.1.1 and earlier, and non-expiring tokens) and JSON {access_token, refresh_token, expires_at, refresh_token_expires_at}. A GitHub token never starts with '{', which tells them apart. Tokens are never in files or logs.",
+    "evidence": "crates/core/src/github/session.rs:73-91; crates/core/src/github.rs:212"
+  },
+  {
+    "id": "q17",
+    "area": "rules",
+    "question": "State the three-way merge rule for a file with local, remote and base versions, and what happens on a real conflict.",
+    "answer": "If local==remote or local==base, take remote. If remote==base, keep local and push it. Otherwise it is a conflict: the group's (remote) version wins and the local copy is saved in conflicts/.",
+    "evidence": "crates/core/src/merge.rs:36-40,55-60"
+  },
+  {
+    "id": "q18",
+    "area": "rules",
+    "question": "How are claude-sync.json and settings.shared.json merged differently from other files?",
+    "answer": "Key by key. A key changed differently on both sides takes the remote value and the file is flagged conflicted; keys changed on one side only are combined. Only these two files get JSON merge.",
+    "evidence": "crates/core/src/merge.rs:23-25,125-147"
+  },
+  {
+    "id": "q19",
+    "area": "rules",
+    "question": "How is a personal MEMORY.md merged between devices?",
+    "answer": "As a set of lines: lines removed on a side are dropped, remote's new lines are inserted after their predecessor, exact duplicates dropped, blank lines kept. Line ending is CRLF if local has CRLF; a trailing newline is kept if either side has one.",
+    "evidence": "crates/core/src/personal/lines.rs:7-74"
+  },
+  {
+    "id": "q20",
+    "area": "rules",
+    "question": "Which settings are dropped as machine-specific when sharing or syncing?",
+    "answer": "apiKeyHelper, permissions.additionalDirectories, canary (mods) overrides, any string that is or contains an absolute path, and any object holding a 'command' (dropped whole). apiKeyHelper is also never applied from a group.",
+    "evidence": "crates/core/src/settings.rs:152-175,512-521,607-608"
+  },
+  {
+    "id": "q21",
+    "area": "rules",
+    "question": "What happens when GitHub rate-limits a request, and when does the next sync wake?",
+    "answer": "A 403/429 with retry-after, or remaining=0 (wait for x-ratelimit-reset), or a 429 / 'secondary rate limit' body (wait 60 s), marks that resource (core or graphql, tracked apart) limited. The app wakes at reset + 5 s, capped at 3600 s, and that pass is a full sync. Status shows 'GitHub limit reached, resumes at ...'.",
+    "evidence": "crates/core/src/github.rs:622-664; app/src-tauri/src/background.rs:32-36,57-62"
+  },
+  {
+    "id": "q22",
+    "area": "rules",
+    "question": "How does the GitHub client cache and retry?",
+    "answer": "GET answers are cached by URL with ETag (256 entries); repeat GETs send If-None-Match and a 304 returns the cached body (free against the limit); non-GETs and answers without ETag are never cached. GETs retry network errors and 502-504 up to 3 attempts with doubling backoff starting at 500 ms. Pagination links are followed only if on the same API root.",
+    "evidence": "crates/core/src/github.rs:304,381,402,412-424,436-438; AGENTS.md (Gotchas)"
+  },
+  {
+    "id": "q23",
+    "area": "rules",
+    "question": "What are the poll interval limits and the update-install timing rule?",
+    "answer": "Default 60 s, minimum 15 s, UI clamps 15..3600. A downloaded update installs at a 'quiet moment': no sync running, window hidden, and the window last shown at least 10 min ago (or never); also on Quit or 'Restart to update'.",
+    "evidence": "app/src-tauri/src/config.rs:47-48; app/src-tauri/src/commands.rs:785; app/src-tauri/src/updates.rs:16,41-50,200-235"
+  },
+  {
+    "id": "q24",
+    "area": "rules",
+    "question": "How many notifications are kept and for how long?",
+    "answer": "Newest first, at most 200; read entries older than 30 days are pruned.",
+    "evidence": "crates/core/src/notifications.rs:12-13,91-94"
+  },
+  {
+    "id": "q25",
+    "area": "bugs",
+    "question": "Two devices hold the same personal MEMORY.md lines but one has CRLF and one LF. What went wrong before and what happens now?",
+    "answer": "They used to rewrite each other endlessly. Now the comparison ignores line endings (lf()), pushed index bytes are LF, and local bytes are kept when they equal the merge modulo line endings, so nothing is pushed or rewritten.",
+    "evidence": "crates/core/src/personal.rs:1456-1544; commit 0308c12 (#159/#160); AGENTS.md (Gotchas)"
+  },
+  {
+    "id": "q26",
+    "area": "bugs",
+    "question": "Personal rule files arrived twice on a machine where personal-state is a git clone. What is the rule now?",
+    "answer": "When personal-state/.git exists, only state/claude-sync/** is synced by claude-sync; the rest is left to git.",
+    "evidence": "crates/core/src/personal.rs:272,995; commit 8df1695 (#132/#134)"
+  },
+  {
+    "id": "q27",
+    "area": "bugs",
+    "question": "A mod (plugin) source changed but 'claude plugin update' did not run on other machines. Why and what fixed it?",
+    "answer": "Mods carry no version, so nothing looked changed. The plugin entry hash now covers the plugin's source folder, so a change triggers the update.",
+    "evidence": "crates/core/src/plugin_install.rs; commit 7047f95 (#112)"
+  },
+  {
+    "id": "q28",
+    "area": "bugs",
+    "question": "On a brand-new machine, plugin installs failed. Why, and how does sync behave now?",
+    "answer": "Claude Code does not know extraKnownMarketplaces until a session starts. Sync now checks 'claude plugin marketplace list --json', adds the marketplace if missing, and falls back to add when update says not found.",
+    "evidence": "crates/core/src/plugin_install.rs; commit 4d7a16e (#108)"
+  },
+  {
+    "id": "q29",
+    "area": "bugs",
+    "question": "Scheduled jobs on macOS failed when their hooks used node or gh. Cause and fix?",
+    "answer": "launchd ran jobs with only /usr/bin:/bin:/usr/sbin:/sbin. The job's PATH is now the login shell's PATH plus the current one, claude's directory and the standard bin dirs.",
+    "evidence": "crates/core/src/jobs/run.rs; commit f7a83af (#88)"
+  },
+  {
+    "id": "q30",
+    "area": "bugs",
+    "question": "Claude Code's own generated mod files showed up as local edits and prompted the user. What is the rule now?",
+    "answer": "The app never prompts about files it did not expect the user to write: .gitignore files are honoured, and generated files (.claude-plugin/types/**, mods/<name>/tsconfig.json) are ignored by the walk and watcher.",
+    "evidence": "crates/core/src/apply/marketplaces.rs; crates/core/src/watch.rs; commit 269ecc3 (#139/#140)"
+  },
+  {
+    "id": "q31",
+    "area": "edge",
+    "question": "How does a push that loses a race behave?",
+    "answer": "The engine retries up to 3 times (PUSH_RETRIES) after re-reading the head; a head moving mid-push is a PushRace error.",
+    "evidence": "crates/core/src/engine.rs:198,1419,1481,1699"
+  },
+  {
+    "id": "q32",
+    "area": "edge",
+    "question": "A group repo is deleted or the user is removed from it (403/404). What does the app do?",
+    "answer": "is_lost_access (403 or 404) removes the group from this machine, keeps the group order, a backup is kept, and a notification says group access ended.",
+    "evidence": "crates/core/src/engine.rs:1469-1482,1900-1915,2333-2341; app/src-tauri/src/background.rs (lost_access notification)"
+  },
+  {
+    "id": "q33",
+    "area": "edge",
+    "question": "The GitHub token expires or the refresh token is refused. What happens?",
+    "answer": "Tokens refresh 5 min before expiry (single-flight; a 401 renews once). A 400 from GitHub on refresh expires the session: every later call fails with SignInExpired without reaching GitHub, the hook fires once, and the UI shows the expired sign-in state (status shows expiredLogin). A network failure on refresh just keeps the current token.",
+    "evidence": "crates/core/src/github/session.rs:16,199-257; crates/core/src/github.rs:436-470"
+  },
+  {
+    "id": "q34",
+    "area": "edge",
+    "question": "What does the sync do when the user is not signed in, is paused, or is rate-limited?",
+    "answer": "Not signed in: error. Paused (and not a forced full sync): 'Syncing is paused'. Rate-limited: 'GitHub limit reached, resumes at ...'. Pause is saved both in state.json and in personal choices.",
+    "evidence": "app/src-tauri/src/background.rs:84-242; app/src-tauri/src/tray.rs:62-75"
+  },
+  {
+    "id": "q35",
+    "area": "edge",
+    "question": "Two members edit the same shared file at once. What does each see?",
+    "answer": "The group's version wins on every machine and the member's version is saved in conflicts/<group>; a notification says the group's version won and theirs was saved. CLAUDE.md changes from others wait for accept/decline review unless review is turned off.",
+    "evidence": "crates/core/src/merge.rs:55-60; app/src-tauri/src/background.rs (conflict notification); README.md (Reviewing changes)"
+  },
+  {
+    "id": "q36",
+    "area": "platform",
+    "question": "What happens when the user closes the window, on each OS, and what does the --background argument do?",
+    "answer": "Closing never quits (exit request with no code is prevented; the app stays in the tray). On macOS a Dock reopen opens the window. Autostart launches with --background, which starts in the tray only if signed in. Single-instance: a second launch opens the window, but a launch with --refresh only reloads. First-run autostart is skipped in debug builds or with CLAUDE_SYNC_NO_AUTOSTART.",
+    "evidence": "app/src-tauri/src/main.rs:60-76,116-126,244-258,270-271"
+  },
+  {
+    "id": "q37",
+    "area": "platform",
+    "question": "How are secrets kept out of what is shared and out of logs?",
+    "answer": "A pattern scan (github_pat_, ghp_, token fields, authorization/bearer, etc.) refuses to share a file with a match unless the line has the 'claude-sync: allow-secret' marker; the same redaction runs on logs, feedback and before text goes to Claude. Tokens are never printed (Debug hides them).",
+    "evidence": "crates/core/src/secrets.rs:6-28,58-78; crates/core/src/github/session.rs:31-40"
+  },
+  {
+    "id": "q38",
+    "area": "platform",
+    "question": "How are updates delivered and verified, and what happens when the relay is not configured?",
+    "answer": "The app asks the relay (target, arch, current version, Bearer token, 60 s timeout), downloads in the background, installs at a quiet moment or Quit. Bundles are minisign-signed (TAURI_SIGNING_PRIVATE_KEY). RELAY_URL defaults to an .invalid host, so updates and feedback are off in a build without CLAUDE_SYNC_RELAY_URL.",
+    "evidence": "app/src-tauri/src/config.rs:6-9,56-58; app/src-tauri/src/updates.rs:103-138,176-185; README.md (Building)"
+  },
+  {
+    "id": "q39",
+    "area": "platform",
+    "question": "How does the app handle a panic inside the sync engine?",
+    "answer": "Engine calls are wrapped (guard.rs): a panic is caught and shown as '<what>: internal error (<msg>)'. The panic hook is installed first, logs, and prints only in debug builds. The release profile keeps panic = 'unwind' so this works.",
+    "evidence": "app/src-tauri/src/guard.rs:12-70; app/src-tauri/src/main.rs:98; AGENTS.md (Gotchas)"
+  },
+  {
+    "id": "q40",
+    "area": "platform",
+    "question": "What differs between Windows, macOS and Linux for the CLI and scheduling?",
+    "answer": "macOS/Linux release app links ~/.local/bin/claude-sync at startup (only if the folder exists and name is free); Windows has no shim and its release exe is a GUI program so output must be piped (Out-String, #149). Jobs: Task Scheduler (Windows), launchd (macOS), systemd user timers (Linux, beta, needs tray AppIndicator and Secret Service keyring). Keychain: Credential Manager, Keychain, Secret Service. The installers are not code-signed/notarized.",
+    "evidence": "AGENTS.md (Command line); README.md (Install, intro); crates/core/src/jobs/os.rs"
+  }
+]

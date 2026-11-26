@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Screen Settings: up to date</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#f6f7f9;--surface:#ffffff;--ink:#1c1f24;--muted:#5f6672;--accent:#2f6fde;--on-accent:#ffffff;--error:#c4312b;--error-bg:#fdecea;--accent-bg:#e6eefc;--warn-bg:#fff4dc;--ok:#1f8a4c;--ok-bg:#e3f4ea;--warn:#9a5b00;--dg-bg:#17191d;--dg-lane:#212429;--dg-node:#353a42;--dg-line:#9aa1ad;--dg-ink:#e7e9ec;--dg-muted:#9aa1ad;--rule:color-mix(in srgb,var(--muted) 35%,transparent);--font-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-display:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent)}
+:root { --bg: #f6f7f9; --panel: #ffffff; --text: #1c1f24; --muted: #5f6672; --line: #dde1e6; --accent: #2f6fde; --accent-text: #ffffff; --accent-soft: #e6eefc; --danger: #c4312b; --danger-soft: #fdecea; --warn: #9a5b00; --warn-soft: #fff4dc; --ok: #1f8a4c; --focus: #2f6fde; --radius: 8px; color-scheme: light; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 14px; line-height: 1.45; color: var(--text); background: var(--bg); }
+* { box-sizing: border-box; }
+body { margin: 0px; background: var(--bg); }
+h1 { font-size: 1.45rem; margin: 0px; }
+h2 { font-size: 1.05rem; margin: 1.25rem 0px 0.5rem; }
+.card > h2:first-child { margin-top: 0px; }
+h3 { font-size: 0.95rem; margin: 1rem 0px 0.4rem; }
+p { margin: 0.4rem 0px; }
+code { font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace; font-size: 0.92em; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button { font: inherit; padding: 0.4rem 0.85rem; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; white-space: nowrap; }
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: 0.6; cursor: progress; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+input, select, textarea { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 0.4rem 0.55rem; width: 100%; }
+input[type="checkbox"], input[type="radio"] { width: auto; margin: 0px; accent-color: var(--accent); }
+label { font-weight: 600; }
+.app { display: grid; grid-template-columns: 210px 1fr; min-height:2018px; }
+.nav { display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem 0.75rem; border-right: 1px solid var(--line); background: var(--panel); position: sticky; top: 0px; height:2018px; }
+.nav ul { list-style: none; margin: 0px; padding: 0px; display: flex; flex-direction: column; gap: 2px; }
+.nav a { display: block; padding: 0.45rem 0.6rem; border-radius: 6px; color: var(--text); text-decoration: none; }
+.nav a:hover { background: var(--bg); }
+.nav a[aria-current="page"] { background: var(--accent-soft); font-weight: 600; }
+.nav-foot { margin-top: auto; display: flex; flex-direction: column; gap: 0.4rem; }
+.brand { display: flex; align-items: center; gap: 0.45rem; font-weight: 700; font-size: 1.05rem; padding: 0px 0.4rem; }
+.logo { display: inline-grid; place-items: center; width: 1.6em; height: 1.6em; border-radius: 50%; background: var(--accent); color: var(--accent-text); font-size: 0.9em; }
+.main { padding: 1.25rem 1.5rem 3rem; max-width: 860px; width: 100%; }
+.view:focus { outline: none; }
+.head { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem 1.1rem; margin-bottom: 1rem; }
+.form { display: flex; flex-direction: column; gap: 0.4rem; }
+.inline-form { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.inline-form input, .inline-form select { flex: 1 1 0%; }
+.check { display: flex; gap: 0.5rem; align-items: center; margin: 0.5rem 0px; }
+.check label { font-weight: normal; }
+.list { list-style: none; margin: 0px 0px 1rem; padding: 0px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+.list.flat { border-width: medium; border-style: none; border-color: currentcolor; border-image: none; background: none; margin: 0px; }
+.list > li + li { border-top: 1px solid var(--line); }
+.row { display: flex; align-items: center; gap: 0.75rem; padding: 0.65rem 0.9rem; }
+.list.flat .row { padding: 0.5rem 0px; }
+.grow { flex: 1 1 0%; min-width: 0px; }
+.tag { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 0.05rem 0.45rem; margin-left: 0.35rem; border-radius: 999px; background: var(--accent-soft); color: var(--text); }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+.notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem; padding: 0.7rem 0.9rem; margin-bottom: 0.75rem; border-radius: var(--radius); background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }
+.notice.info { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.notice-text { flex: 1 1 18rem; }
+.pill { display: flex; align-items: center; gap: 0.45rem; font-size: 0.85rem; padding: 0.3rem 0.55rem; border-radius: 6px; background: var(--bg); }
+.dot { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+.pill.ok .dot { background: var(--ok); }
+:where(.x-details) :where(.x-summary) { cursor: pointer; color: var(--accent); margin: 0.2rem 0px; }
+.card > .form + .form, .card > .form + .check { margin-top: 0.75rem; }
+.avatar { position: relative; flex: 0 0 auto; width: var(--size, 28px); height: var(--size, 28px); border-radius: 50%; overflow: hidden; display: inline-grid; place-items: center; font-size: calc(var(--size, 28px) * 0.38); line-height: 1; font-weight: 700; color: rgb(255, 255, 255); background: hsl(var(--h, 210) 55% 42%); user-select: none; vertical-align: middle; }
+.who { display: flex; align-items: center; gap: 0.5rem; }
+.bell { position: relative; display: inline-grid; place-items: center; width: 2rem; height: 2rem; border-radius: 6px; color: var(--muted); }
+.nav a.bell { padding: 0px; }
+.bell:hover, .bell[aria-current="page"] { color: var(--text); }
+.bell svg { width: 1.2rem; height: 1.2rem; fill: none; stroke: currentcolor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.badge { position: absolute; top: -0.1rem; right: -0.25rem; min-width: 1.15rem; height: 1.15rem; padding: 0px 0.3rem; border-radius: 999px; background: var(--danger); color: rgb(255, 255, 255); font-size: 0.7rem; font-weight: 700; line-height: 1.15rem; text-align: center; }
+.nav-badge { display: inline-block; min-width: 1.3rem; margin-left: 0.4rem; padding: 0px 0.35rem; border-radius: 999px; background: var(--warn-soft); color: var(--warn); font-size: 0.75rem; font-weight: 700; line-height: 1.3rem; text-align: center; }
+.x-details{display:flow-root;margin-top:.2rem}.x-details>.x-summary:first-child{margin-top:0}
+:where(.x-summary){display:list-item;list-style:disclosure-closed inside;cursor:pointer}.x-details[open]>.x-summary{list-style-type:disclosure-open}
+@keyframes pulse { 
+  100% { opacity: 0.3; }
+}
+@keyframes spin { 
+  100% { transform: rotate(360deg); }
+}
+.nav{position:relative!important;top:1378px;height:640px!important}
+</style>
+</helmet>
+<div data-page="v1" data-created="2026-11-26" data-updated="2026-11-26" data-status="superseded" data-superseded-by="v2" data-screen="SettingsUpToDate" data-state="up to date toast" data-end="No button on this state leads anywhere." style="position:relative;width:880px;height:640px;overflow:hidden;background:var(--bg)"><div style="position:absolute;left:0;top:-1378px;width:880px;height:2018px"><div class="app"><nav class="nav" aria-label="Main"><div class="brand"><span class="logo" aria-hidden="true">⟳</span><span class="grow">claude-sync</span><span id="bell-slot"><a class="bell" aria-label="Notifications, 2 unread" title="Notifications" data-sx="1"><svg aria-hidden="true" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0-6 6v3.6L4.3 15.5A1 1 0 0 0 5.2 17h13.6a1 1 0 0 0 .9-1.5L18 12.6V9a6 6 0 0 0-6-6Zm-2.4 15.5a2.5 2.5 0 0 0 4.8 0"></path></svg><span class="badge" aria-hidden="true">2</span></a></span></div><ul><li><a data-sx="2">Groups<span id="nav-review"><span class="nav-badge" title="2 CLAUDE.md changes to review">2</span></span></a></li><li><a data-sx="3">Send feedback</a></li><li><a aria-current="page" data-sx="4">Settings</a></li></ul><div class="nav-foot"><div id="status-slot"><div class="pill ok" title="Up to date"><span class="dot" aria-hidden="true"></span><span>Up to date · 2 min ago</span></div></div><div class="muted small who"><span class="avatar" style="--h:38;--size:18px" title="alexm" aria-hidden="true">AL</span>Signed in as alexm</div></div></nav><main class="main"><div id="banners"><div class="notice info" role="region" aria-label="Update"><div class="notice-text">claude-sync 0.2.0 is ready. It installs when you quit, or now:</div><div class="actions"><button class="primary">Restart to update</button></div></div><div class="notice" role="region" aria-label="Local change to skills/review/SKILL.md"><div class="notice-text"><code>skills/review/SKILL.md</code> was changed on this device. It is shared by <strong>acme/claude-sync-data</strong>.</div><div class="actions"><button class="primary">Share with group</button><button class="">Undo</button></div></div></div><section class="view"><header class="head"><h1>Settings</h1></header><div><section class="card" aria-labelledby="sync-h"><h2 id="sync-h">Sync</h2><form class="form"><label for="s-device">Device name</label><p class="muted small" id="s-device-hint">Shown in the group's history next to your changes.</p><div class="inline-form"><input id="s-device" maxlength="64" autocomplete="off" aria-describedby="s-device-hint" style="" value="desktop"><button type="submit">Save</button></div></form><div class="form"><label for="s-poll">Check for changes</label><select id="s-poll"><option value="30">Every 30 seconds</option><option value="60" selected="">Every minute</option><option value="120">Every 2 minutes</option><option value="300">Every 5 minutes</option><option value="900">Every 15 minutes</option></select></div><div class="check"><input id="s-autostart" type="checkbox" style="" checked=""><label for="s-autostart">Start claude-sync when I log in</label></div><div class="check"><input id="s-paused" type="checkbox" style=""><label for="s-paused">Pause syncing</label></div></section><section class="card" id="personal" aria-labelledby="personal-h"><h2 id="personal-h">Personal memory</h2><div><p class="muted small">Your own CLAUDE.md text and Claude's memories, shared with your other devices through <code>acme/claude-sync-personal</code>, a private repo on your GitHub account. Groups never see it. Turning it off leaves your files and the repo as they are.</p><div class="check"><input id="p-enabled" type="checkbox" style="" checked=""><label for="p-enabled">Sync my personal memory between my devices</label></div><p class="muted small">Turning this off stops it on all your devices.</p><div class="check"><input id="p-claude-md" type="checkbox" aria-describedby="p-claude-md-hint" style="" checked=""><label for="p-claude-md">My CLAUDE.md<span class="muted small" id="p-claude-md-hint"> (without the groups' part)</span></label></div><div class="check"><input id="p-memory" type="checkbox" aria-describedby="p-memory-hint" style="" checked=""><label for="p-memory">Claude's memories<span class="muted small" id="p-memory-hint"> (the memory folder of each project)</span></label></div><div class="check"><input id="p-state" type="checkbox" aria-describedby="p-state-hint" style="" checked=""><label for="p-state">Mod settings (~/.claude/personal-state)<span class="muted small" id="p-state-hint"> Small settings your mods save, such as opus-only mode.</span></label></div><div class="check"><input id="p-settings" type="checkbox" aria-describedby="p-settings-hint" style="" checked=""><label for="p-settings">My settings (~/.claude/settings.json)<span class="muted small" id="p-settings-hint"> Without what your groups set and anything tied to this machine, such as file paths.</span></label></div><div class="check"><input id="p-join" type="checkbox" style="" checked=""><label for="p-join">New devices of mine join automatically</label></div><h3>Devices</h3><ul class="list flat" aria-label="Your devices"><li class="row"><div class="grow">desktop<span class="tag">this device</span><div class="muted small">Windows · Rename it with Device name above</div></div></li><li class="row"><div class="grow">macbook<div class="muted small">macOS · Last seen 2 h ago</div></div><button class="danger" aria-label="Remove macbook">Remove</button></li></ul><p class="muted small" role="status">Last synced 2 min ago.</p><div class="x-details"><div class="muted small x-summary" role="button">1 file stay on this device</div></div><h3>To review</h3><p class="muted small">The same file changed on two of your devices. The other device's version is in place; this device's version was saved next to it.</p><ul class="list flat" aria-label="Conflicts"><li class="row"><div class="grow"><code>memory/home--projects-app/MEMORY.md</code><div class="muted small">10 min ago</div></div><div class="actions"><button>Open saved copy</button><button>Show in folder</button></div></li></ul><div class="actions"><button>Open repo</button></div></div></section><section class="card" aria-labelledby="notify-h"><h2 id="notify-h">Notifications</h2><div class="check"><input id="s-desktop" type="checkbox" style="" checked=""><label for="s-desktop">Show desktop notifications</label></div><p class="muted small">Either way, every notification is kept in <a data-sx="5">Notifications</a>.</p><div class="actions"><button>Send a test notification</button></div></section><section class="card" aria-labelledby="account-h"><h2 id="account-h">Account</h2><p>Signed in to GitHub as <strong>alexm</strong>.</p><p class="muted small">Signing out removes the token from this computer. Your groups stay on GitHub and your files stay where they are.</p><div class="actions"><button class="danger">Sign out</button></div></section><section class="card" aria-labelledby="ghapp-h"><h2 id="ghapp-h">GitHub App (beta)</h2><div class="check"><input id="s-ghapp" type="checkbox" style=""><label for="s-ghapp">Sign in with the GitHub App (beta)</label></div><p class="muted small">Takes effect at your next sign-in. The App only reaches repos it is installed on.</p></section><section class="card" aria-labelledby="helper-h"><h2 id="helper-h">Claude helper</h2><p class="muted small">Uses your Claude Code login on this computer. It adds Explain and Summarise buttons for conflicts, CLAUDE.md changes and group activity. Nothing is sent until you click one. Text with a secret in it is never sent.</p><p role="status">Claude Code isn't installed or signed in. Install it and run `claude` once to sign in.</p></section><section class="card" aria-labelledby="update-h"><h2 id="update-h">Updates</h2><p role="status">You have version 0.1.0.</p><div class="actions"><button>Check for updates</button></div></section><p class="muted small">claude-sync 0.1.0 · windows 11 (x86_64) · data in <code>C:/Users/me/.claude-sync/app</code></p></div></section></main></div></div><div style="position:absolute;left:50%;top:584px;transform:translateX(-50%);max-width:520px;padding:.6rem 1rem;border-radius:var(--radius);background:var(--text);color:var(--bg);font-size:14px;z-index:5">claude-sync is up to date</div><a href="v2-Cover.dc.html" style="position:absolute;right:12px;bottom:4px;font-size:11px;color:var(--accent);z-index:4">Superseded by v2</a></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":880,"height":640}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
