@@ -256,6 +256,30 @@ ts! {
         pub lines: Vec<String>,
         pub author: String,
     }
+
+    /// One opt-in pack of a group, as this machine sees it.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct PackView {
+        pub repo: String,
+        pub id: String,
+        pub title: String,
+        pub summary: String,
+        /// `off`, `ready` (the check passed), `on` or `failed`.
+        pub state: String,
+        /// The pack is not for this computer's system.
+        pub unsupported: bool,
+        /// Last line of the last check, redacted.
+        pub tail: String,
+    }
+}
+
+/// What the helper is asked to explain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplainTask {
+    Collision,
+    ClaudeMdReview,
+    Activity,
 }
 
 /// One user action.
@@ -425,6 +449,46 @@ pub enum Command {
         to: String,
         req: CopyRequest,
     },
+    /// Packs of one group, or of every group.
+    Packs {
+        repo: Option<String>,
+    },
+    /// The setup text the person hands to Claude; nothing is run.
+    PackSetup {
+        repo: String,
+        id: String,
+    },
+    PackCheck {
+        repo: String,
+        id: String,
+    },
+    PackOn {
+        repo: String,
+        id: String,
+    },
+    PackOff {
+        repo: String,
+        id: String,
+    },
+    SshSet {
+        on: bool,
+    },
+    SshAlias {
+        alias: String,
+    },
+    ActivitySet {
+        on: bool,
+    },
+    /// The window reads the idle time (the OS call is its) and sends it here.
+    ActivityTick {
+        idle_secs: Option<u64>,
+    },
+    /// Explain text others changed with the local `claude`; empty text (only my own changes) is skipped.
+    Explain {
+        task: ExplainTask,
+        text: String,
+    },
+    CheckUpdate,
     MarkRead {
         id: i64,
     },
@@ -487,6 +551,8 @@ pub struct CopyRequest {
 pub enum Event {
     /// The change went out as proposal #n, not as a commit.
     Proposed(u64),
+    Packs(Vec<PackView>),
+    Text(String),
     /// Feedback was filed (`number`, `url`) or saved to send later (`queued`).
     Feedback {
         queued: bool,

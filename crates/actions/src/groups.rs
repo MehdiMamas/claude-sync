@@ -130,6 +130,11 @@ impl Core {
             &format!("group-file/{}", created.full_name),
             &bytes,
         )?;
+        Store::write(
+            &self.db,
+            &format!("host-lock/{}", created.full_name),
+            lock.as_bytes(),
+        )?;
         self.db.add_group(&created.full_name, true)?;
         Ok(Event::Created {
             repo: created.full_name,

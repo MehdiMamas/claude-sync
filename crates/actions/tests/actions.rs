@@ -58,8 +58,8 @@ impl T {
             cfg: Config {
                 api: uri.clone(),
                 login: uri.clone(),
-                relay: uri,
-                releases: String::new(),
+                relay: uri.clone(),
+                releases: uri.clone(),
                 client_id: client_id.into(),
                 retry_delay: Duration::from_millis(1),
             },
@@ -1297,6 +1297,34 @@ mod jobs {
         assert!(std::fs::read_to_string(log)
             .unwrap()
             .contains("timed out after 5 min"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_helper_asks_the_local_claude_and_skips_empty_or_secret_text() {
+        use std::os::unix::fs::PermissionsExt;
+        let (r, h) = rig().await;
+        let claude = r.t.dir.path().join("bin/claude");
+        std::fs::write(
+            &claude,
+            "#!/bin/sh\ncat > /dev/null\necho '{\"result\": \"- adds a rule\"}'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let ask = |text: &str| Command::Explain {
+            task: ExplainTask::ClaudeMdReview,
+            text: text.into(),
+        };
+        assert_eq!(
+            h.send(ask("+ use tabs")).await.unwrap(),
+            Event::Text("- adds a rule".into())
+        );
+        let e = h.send(ask("  ")).await.unwrap_err();
+        assert_eq!(e.0, "There is nothing to explain yet.");
+        let e = h
+            .send(ask("key ghp_abcdefghijklmnopqrstuvwxyz0123456789"))
+            .await
+            .unwrap_err();
+        assert!(e.0.contains("looks like it contains a secret"), "{}", e.0);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2925,5 +2953,235 @@ mod feedback {
         h.send(Command::MarkAllRead).await.unwrap();
         h.send(Command::ClearNotifications).await.unwrap();
         assert!(h.snapshot().notifications.is_empty());
+    }
+}
+
+mod extras {
+    use super::*;
+
+    fn pack(id: &str, check: &str) -> Vec<(String, String)> {
+        vec![
+            (
+                format!("packs/{id}/pack.json"),
+                format!(
+                    r#"{{"schema":1,"id":"{id}","title":"Demo {id}","summary":"A pack","setup":"setup.md","check":{{"run":{check}}}}}"#
+                ),
+            ),
+            (
+                format!("packs/{id}/setup.md"),
+                "Install the thing.\n".into(),
+            ),
+        ]
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pack_goes_on_only_after_its_check_passed_here() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        let mut files = pack("demo", r#"["true"]"#);
+        files.extend(pack("bad", r#"["sh","-c","echo nope >&2; exit 3"]"#));
+        files.push(("packs/wrong/pack.json".into(), "{}".into()));
+        let f: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        t.serve("h1", &f).await;
+        t.push_tail("zed/team").await;
+        h.send(Command::Join {
+            repo: "zed/team".into(),
+        })
+        .await
+        .unwrap();
+        h.send(Command::SyncNow).await.unwrap();
+        let go = |c: Command| h.send(c);
+        let id = |i: &str| (String::from("zed/team"), i.to_string());
+        let list = || async {
+            match h.send(Command::Packs { repo: None }).await.unwrap() {
+                Event::Packs(p) => p
+                    .into_iter()
+                    .map(|p| (p.id, p.state, p.tail))
+                    .collect::<Vec<_>>(),
+                e => panic!("{e:?}"),
+            }
+        };
+        assert_eq!(
+            list().await,
+            [
+                ("bad".into(), "off".into(), "".into()),
+                ("demo".into(), "off".into(), "".into())
+            ]
+        );
+        let (repo, d) = id("demo");
+        let e = go(Command::PackOn {
+            repo: repo.clone(),
+            id: d.clone(),
+        })
+        .await
+        .unwrap_err();
+        assert!(e.0.contains("has not passed"), "{}", e.0);
+        assert_eq!(
+            go(Command::PackSetup {
+                repo: repo.clone(),
+                id: d.clone()
+            })
+            .await
+            .unwrap(),
+            Event::Text("Install the thing.\n".into())
+        );
+        go(Command::PackCheck {
+            repo: repo.clone(),
+            id: d.clone(),
+        })
+        .await
+        .unwrap();
+        go(Command::PackOn {
+            repo: repo.clone(),
+            id: d.clone(),
+        })
+        .await
+        .unwrap();
+        go(Command::PackCheck {
+            repo: repo.clone(),
+            id: "bad".into(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            list().await,
+            [
+                ("bad".into(), "failed".into(), "nope".into()),
+                ("demo".into(), "on".into(), "".into())
+            ]
+        );
+        assert!(go(Command::PackOn {
+            repo: repo.clone(),
+            id: "bad".into()
+        })
+        .await
+        .is_err());
+        go(Command::PackOff {
+            repo: repo.clone(),
+            id: d.clone(),
+        })
+        .await
+        .unwrap();
+        assert!(
+            go(Command::PackOff { repo, id: d }).await.is_err(),
+            "not on"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ssh_alias_and_activity_are_local_choices() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        assert!(h
+            .send(Command::SshAlias {
+                alias: "bad name".into()
+            })
+            .await
+            .is_err());
+        h.send(Command::SshAlias {
+            alias: "laptop-1".into(),
+        })
+        .await
+        .unwrap();
+        let _ = h.send(Command::SshSet { on: true }).await; // no tailscale here: may fail, the choice stays
+        assert!(h.snapshot().ssh_on);
+        h.send(Command::SshSet { on: false }).await.unwrap();
+        assert!(!h.snapshot().ssh_on);
+
+        let file = claude_sync_fs::Home::under(t.dir.path())
+            .state
+            .join("activity.json");
+        let read = || -> serde_json::Value {
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap()
+        };
+        h.send(Command::ActivityTick { idle_secs: Some(1) })
+            .await
+            .unwrap();
+        assert!(!file.exists(), "off by default: nothing is written");
+        h.send(Command::ActivitySet { on: true }).await.unwrap();
+        assert!(h.snapshot().activity_on);
+        h.send(Command::ActivityTick { idle_secs: Some(1) })
+            .await
+            .unwrap();
+        assert_eq!(read()["state"], "active");
+        t.clock.fetch_add(10, Ordering::SeqCst);
+        h.send(Command::ActivityTick { idle_secs: Some(2) })
+            .await
+            .unwrap();
+        assert_eq!(read()["ts"], 1_000_000, "same state, no new write");
+        h.send(Command::ActivityTick {
+            idle_secs: Some(500),
+        })
+        .await
+        .unwrap();
+        assert_eq!(read()["state"], "idle");
+        h.send(Command::ActivityTick { idle_secs: None })
+            .await
+            .unwrap();
+        assert_eq!(read()["state"], "unknown");
+        h.send(Command::ActivitySet { on: false }).await.unwrap();
+        assert!(!file.exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_update_state_comes_from_the_latest_release_only() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        assert_eq!(h.snapshot().update, "");
+        t.mock(
+            "GET",
+            "/latest/download/latest.json",
+            200,
+            json!({"version": "999.0.0"}),
+        )
+        .await;
+        h.send(Command::CheckUpdate).await.unwrap();
+        assert_eq!(h.snapshot().update, "available:999.0.0");
+        t.server.reset().await;
+        t.mock("GET", "/user", 200, json!({"login": "ann", "id": 1}))
+            .await;
+        t.mock(
+            "GET",
+            "/latest/download/latest.json",
+            200,
+            json!({"version": "0.0.1"}),
+        )
+        .await;
+        h.send(Command::CheckUpdate).await.unwrap();
+        assert_eq!(h.snapshot().update, "");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_created_group_shows_whether_the_host_lock_took() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        t.mock("POST", "/user/repos", 201, json!({"name": "mine", "full_name": "ann/mine", "private": true, "owner": {"login": "ann"}, "default_branch": "main"})).await;
+        t.mock("PUT", "/repos/ann/mine/topics", 200, json!({}))
+            .await;
+        t.mock("GET", "/repos/ann/mine/rulesets", 200, json!([]))
+            .await;
+        t.mock(
+            "POST",
+            "/repos/ann/mine/rulesets",
+            403,
+            json!({"message": "upgrade"}),
+        )
+        .await;
+        t.push_chain("ann/mine").await;
+        let e = h
+            .send(Command::CreateGroup {
+                name: "Mine".into(),
+                repo: "ann/mine".into(),
+            })
+            .await;
+        if let Ok(Event::Created { lock, .. }) = e {
+            assert_eq!(
+                h.snapshot().groups[0].host_lock.as_deref(),
+                Some(lock.as_str())
+            );
+        }
     }
 }

@@ -173,6 +173,17 @@ impl Core {
             ProposalsDeclineAll { repo } => self.proposals_decline_all(&repo),
             CopyPreview { from, to } => self.copy_preview(&from, &to),
             Copy { from, to, req } => self.copy(&from, &to, req),
+            Packs { repo } => self.packs(repo.as_deref()),
+            PackSetup { repo, id } => self.pack_setup(&repo, &id),
+            PackCheck { repo, id } => self.pack_check(&repo, &id),
+            PackOn { repo, id } => self.pack_on(&repo, &id),
+            PackOff { repo, id } => self.pack_off(&repo, &id),
+            SshSet { on } => self.ssh_set(on),
+            SshAlias { alias } => self.ssh_alias(&alias),
+            ActivitySet { on } => self.activity_set(on),
+            ActivityTick { idle_secs } => self.activity_tick(idle_secs),
+            Explain { task, text } => self.explain(task, &text),
+            CheckUpdate => self.check_update(),
             MarkRead { id } => self.notes(|d| d.mark_read(id)),
             MarkAllRead => self.notes(|d| d.mark_all_read()),
             ClearNotifications => self.notes(|d| d.clear_notifications()),
@@ -319,7 +330,7 @@ impl Core {
                         .unwrap_or_else(|| vec![host]),
                     proposal_mode: gf.as_ref().is_some_and(|f| f.proposal_mode),
                     auto_accept_claude_md: gf.as_ref().is_none_or(|f| f.auto_accept_claude_md),
-                    host_lock: None,
+                    host_lock: self.host_lock(&g.repo, g.host),
                     review_choice: c.review_choice(&g.repo),
                     pending_review: crate::review::load(&self.db, &g.repo)
                         .map_or(0, |r| r.pending.len() as u32),
@@ -368,7 +379,7 @@ impl Core {
                 .and_then(|p| p.get("share"))
                 .and_then(|o| o.as_bool())
                 .unwrap_or(false),
-            update: String::new(),
+            update: self.update_state(),
         }
     }
 }

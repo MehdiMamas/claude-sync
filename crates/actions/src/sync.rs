@@ -24,6 +24,7 @@ impl Core {
             return Err(Error::new(msg::SESSION_EXPIRED));
         }
         let _ = self.retry_feedback();
+        self.ssh_pass();
         self.personal_discover();
         let repos: Vec<String> = self.db.groups()?.into_iter().map(|g| g.repo).collect();
         for r in repos {
