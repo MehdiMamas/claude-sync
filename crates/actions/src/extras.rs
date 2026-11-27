@@ -159,6 +159,11 @@ impl Core {
             String::new()
         };
         Store::write(&self.db, "update", v.as_bytes())?;
+        Store::write(
+            &self.db,
+            "update-checked",
+            self.now().to_string().as_bytes(),
+        )?;
         Ok(Event::Text(v))
     }
 
@@ -169,6 +174,11 @@ impl Core {
             .flatten()
             .map(|b| String::from_utf8_lossy(&b).into_owned())
             .unwrap_or_default()
+    }
+
+    pub(crate) fn update_checked(&self) -> Option<i64> {
+        let b = Store::read(&self.db, "update-checked").ok().flatten()?;
+        String::from_utf8_lossy(&b).parse().ok()
     }
 
     pub(crate) fn host_lock(&self, repo: &str, host: bool) -> Option<String> {

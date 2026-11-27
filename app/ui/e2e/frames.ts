@@ -324,4 +324,36 @@ export const frames: FrameCase[] = [
       await p.getByText("weekly-report finished").waitFor();
     },
   },
+  ...[
+    ["Settings", "groups-invite", ""],
+    ["SettingsPaused", "settings-paused", ""],
+    ["SettingsOff", "groups-invite", "/personal"],
+    ["SettingsOffer", "settings-offer", "/personal"],
+    ["SettingsPersonal", "settings-personal", "/personal"],
+    ["SettingsPersonalPublic", "settings-public", "/personal"],
+    ["SettingsDeviceRemove", "settings-personal", "/personal/remove/d2"],
+    ["SettingsNotifications", "groups-invite", "/notifications"],
+    ["SettingsAccount", "groups-invite", "/account"],
+    ["SettingsAccountApp", "settings-app", "/account"],
+    ["SettingsSignOut", "groups-invite", "/account/signout"],
+    ["SettingsUpdates", "groups-invite", "/updates"],
+    ["SettingsUpdateReady", "update-ready", "/updates"],
+    ["SettingsUpdateError", "update-error", "/updates"],
+    ["SettingsUpdated", "update-updated", "/updates"],
+    ["SettingsAdvanced", "groups-invite", "/advanced"],
+    ["SettingsPacks", "groups-invite", "/advanced/packs"],
+    ["SettingsSsh", "settings-ssh", "/advanced/ssh"],
+    ["SettingsConflicts", "groups-invite", "/advanced/conflicts"],
+  ].map(([frame, scenario, path]) => ({
+    frame: frame as string,
+    url: `/?scenario=${scenario}#/settings${path}`,
+  })),
+  {
+    frame: "SettingsNotifyBlocked",
+    url: "/?scenario=groups-invite#/settings/notifications",
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Test" }).click();
+      await p.getByText("blocks notifications from claude-sync").waitFor();
+    },
+  },
 ];

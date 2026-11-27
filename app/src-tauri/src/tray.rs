@@ -313,6 +313,8 @@ mod tests {
             ssh_on: false,
             activity_on: false,
             update: String::new(),
+            update_checked: None,
+            app_uncovered: Vec::new(),
             desktop_notifications: true,
             start_at_login: None,
         }

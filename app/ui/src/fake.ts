@@ -8,6 +8,7 @@ import type { GroupStatus } from "./generated/GroupStatus";
 import type { GroupView } from "./generated/GroupView";
 import type { HistoryItem } from "./generated/HistoryItem";
 import type { JobView } from "./generated/JobView";
+import type { PackView } from "./generated/PackView";
 import type { ProposalView } from "./generated/ProposalView";
 import type { ReviewLine } from "./generated/ReviewLine";
 import type { Snapshot } from "./generated/Snapshot";
@@ -70,9 +71,12 @@ const base = (): Snapshot => ({
   personal: {
     on: false,
     offer: false,
-    repo: "alex-host/claude-personal",
+    repo: "alex-host/claude-sync-personal",
     kindsOff: [],
-    devices: [],
+    devices: [
+      { id: "d1", name: "Laptop", os: "macOS", lastSeen: sec(), this: true },
+      { id: "d2", name: "Desktop", os: "Windows", lastSeen: sec() - 3600, this: false },
+    ],
     stays: [],
     error: null,
     lastSync: null,
@@ -83,6 +87,8 @@ const base = (): Snapshot => ({
   sshOn: false,
   activityOn: false,
   update: "",
+  updateChecked: sec() - 3600,
+  appUncovered: [],
   desktopNotifications: true,
   startAtLogin: true,
 });
@@ -259,6 +265,40 @@ function scenario(name: string): Snapshot {
       s.groups = s.groups.slice(0, 2).map((g) => ({ ...g, status: "off" as const, off: true }));
       s.invitations = [];
       return s;
+    case "settings-paused":
+      s.paused = true;
+      return s;
+    case "settings-offer":
+      s.personal.offer = true;
+      return s;
+    case "settings-personal":
+    case "settings-public":
+      s.personalOn = true;
+      s.personal.on = true;
+      s.personal.lastSync = sec() - 120;
+      s.personal.stays = [
+        "memory/big-notes.md: 300 KiB, over the 256 KiB limit per file (16 MiB in all)",
+      ];
+      if (name === "settings-public")
+        s.personal.error =
+          "Stopped: alex-host/claude-sync-personal is public now. Nothing more is pushed until it is private again.";
+      return s;
+    case "settings-app":
+      s.appMode = true;
+      s.appUncovered = ["sample-org/dev-rules"];
+      return s;
+    case "settings-ssh":
+      s.sshOn = true;
+      return s;
+    case "update-ready":
+      s.update = "ready:2.0.1";
+      return s;
+    case "update-error":
+      s.update = "failed:2.0.1";
+      return s;
+    case "update-updated":
+      s.update = "updated:2.0.1";
+      return s;
     default:
       return s;
   }
@@ -274,6 +314,8 @@ export type FakeControls = {
   /** The new owner accepted the transfer on GitHub: the repo moves to them. */
   transferred(login: string): void;
   end(kind: "expired" | "denied" | "offline"): void;
+  /** The personal repo is private again. */
+  fixed(): void;
 };
 
 export function fakeBackend(search: string): Backend {
@@ -325,6 +367,9 @@ export function fakeBackend(search: string): Backend {
     },
     end(kind) {
       set({ signIn: { kind } });
+    },
+    fixed() {
+      set({ personal: { ...snap.personal, error: null } });
     },
   };
   (window as unknown as { __fake: FakeControls }).__fake = controls;
@@ -432,6 +477,22 @@ export function fakeBackend(search: string): Backend {
   const addGroup = (repo: string, over: Partial<GroupView> = {}) =>
     set({ groups: [...snap.groups, group(repo, { members: many(3), ...over })] });
 
+  const pack = (id: string, over: Partial<PackView>): PackView => ({
+    repo: "alex-host/claude-group",
+    id,
+    title: id,
+    summary: "",
+    state: "off",
+    unsupported: false,
+    tail: "",
+    ...over,
+  });
+  const packs: PackView[] = [
+    pack("browser-tools", { state: "on", tail: "checked 1 h ago: ready" }),
+    pack("mac-signing", { unsupported: true }),
+    pack("gpu-tools", { state: "failed", tail: "step 2 of 3: download timed out" }),
+  ];
+
   async function send(cmd: Command): Promise<Event> {
     switch (cmd.kind) {
       case "signInStart":
@@ -446,6 +507,92 @@ export function fakeBackend(search: string): Backend {
       case "signOut":
         set({ login: null, groups: [] });
         return { kind: "signedOut" };
+      case "pause":
+      case "resume":
+        set({ paused: cmd.kind === "pause" });
+        return done;
+      case "setInterval":
+        set({ intervalSecs: cmd.data.secs });
+        return done;
+      case "startAtLogin":
+        set({ startAtLogin: cmd.data.on });
+        return done;
+      case "desktopNotifications":
+        set({ desktopNotifications: cmd.data.on });
+        return done;
+      case "personalOn":
+        set({
+          personalOn: true,
+          personal: { ...snap.personal, on: true, offer: false, lastSync: sec() },
+        });
+        return done;
+      case "personalOff":
+        set({ personalOn: false, personal: { ...snap.personal, on: false } });
+        return done;
+      case "personalDismiss":
+        set({ personal: { ...snap.personal, offer: false } });
+        return done;
+      case "personalKind": {
+        const off = snap.personal.kindsOff.filter((k) => k !== cmd.data.kind);
+        set({
+          personal: { ...snap.personal, kindsOff: cmd.data.on ? off : [...off, cmd.data.kind] },
+        });
+        return done;
+      }
+      case "deviceRename":
+      case "deviceRemove": {
+        const c = cmd;
+        set({
+          personal: {
+            ...snap.personal,
+            devices: snap.personal.devices.flatMap((d) =>
+              d.id !== c.data.id
+                ? [d]
+                : c.kind === "deviceRemove"
+                  ? []
+                  : [{ ...d, name: c.data.name }],
+            ),
+          },
+        });
+        return done;
+      }
+      case "conflicts":
+        return {
+          kind: "conflicts",
+          data: [
+            {
+              repo: "alex-host/claude-group",
+              path: "skills/notes/SKILL.md",
+              savedAt: sec() - 86400,
+            },
+          ],
+        };
+      case "sshSet":
+        set({ sshOn: cmd.data.on });
+        return done;
+      case "activitySet":
+        set({ activityOn: cmd.data.on });
+        return done;
+      case "packs":
+        return { kind: "packs", data: structuredClone(packs) };
+      case "packOn":
+      case "packOff":
+      case "packSetup": {
+        const d = cmd.data;
+        const p = packs.find((x) => x.id === d.id);
+        if (p) {
+          p.state = cmd.kind === "packOff" ? "off" : "on";
+          p.tail = cmd.kind === "packOff" ? "" : "ready";
+        }
+        return done;
+      }
+      case "checkUpdate": {
+        // Up to date finds 2.0.1, a failed download tries again and gets it.
+        const v =
+          snap.update === "" || snap.update.startsWith("failed") ? "ready:2.0.1" : snap.update;
+        set({ update: v, updateChecked: sec() });
+        return { kind: "text", data: v };
+      }
       case "syncNow": {
         set({
           syncing: true,

@@ -167,6 +167,11 @@ ts! {
         pub ssh_on: bool,
         pub activity_on: bool,
         pub update: String,
+        /// When the update check last ran (Unix time); `None` before the first check.
+        pub update_checked: Option<i64>,
+        /// Groups the GitHub App is not installed on (App mode). Filled when the engine reads the
+        /// app's installations; empty until then.
+        pub app_uncovered: Vec<String>,
         /// Desktop notifications switch (Settings); on until turned off.
         pub desktop_notifications: bool,
         /// `None` until the first start decided it.

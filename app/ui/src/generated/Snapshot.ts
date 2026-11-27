@@ -24,6 +24,15 @@ rateLimitedUntil: number | null, groups: Array<GroupView>, invitations: Array<In
  */
 discoverable: Array<DiscoverView>, personalOn: boolean, personal: PersonalView, unread: number, notifications: Array<NotificationView>, jobs: Array<JobView>, sshOn: boolean, activityOn: boolean, update: string, 
 /**
+ * When the update check last ran (Unix time); `None` before the first check.
+ */
+updateChecked: number | null, 
+/**
+ * Groups the GitHub App is not installed on (App mode). Filled when the engine reads the
+ * app's installations; empty until then.
+ */
+appUncovered: Array<string>, 
+/**
  * Desktop notifications switch (Settings); on until turned off.
  */
 desktopNotifications: boolean, 

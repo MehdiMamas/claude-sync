@@ -4,6 +4,7 @@ import type { Event } from "./generated/Event";
 import { GroupPage } from "./screens/Group";
 import { type Flash, Groups } from "./screens/Groups";
 import { Join, NewGroup } from "./screens/GroupsForms";
+import { Settings } from "./screens/Settings";
 import { Later, Shell } from "./screens/Shell";
 import { SignIn } from "./screens/SignIn";
 import { useBackend, useSnapshot } from "./store";
@@ -167,6 +168,16 @@ export function App() {
         syncNow={act.syncNow}
         sub={rest[0] === "leave" ? [] : rest}
         leaving={rest[0] === "leave"}
+      />
+    );
+  } else if (route.split("/")[0] === "settings") {
+    body = (
+      <Settings
+        snap={snap}
+        now={now}
+        call={call}
+        toast={(toast) => patch({ toast })}
+        route={route}
       />
     );
   } else {

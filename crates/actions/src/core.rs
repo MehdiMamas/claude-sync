@@ -485,6 +485,8 @@ impl Core {
                 .and_then(|o| o.as_bool())
                 .unwrap_or(false),
             update: self.update_state(),
+            update_checked: self.update_checked(),
+            app_uncovered: Vec::new(),
             desktop_notifications: c.app.desktop_notifications.unwrap_or(true),
             start_at_login: c.app.start_at_login,
         }

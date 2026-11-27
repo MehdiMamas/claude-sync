@@ -5,6 +5,7 @@ export const fake = (page: Page) => ({
   approve: () => page.evaluate(() => window.__fake.approve()),
   end: (k: "expired" | "denied" | "offline") => page.evaluate((x) => window.__fake.end(x), k),
   transferred: (l: string) => page.evaluate((x) => window.__fake.transferred(x), l),
+  fixed: () => page.evaluate(() => window.__fake.fixed()),
   release: () => page.evaluate(() => window.__fake.release()),
   opened: () => page.evaluate(() => window.__opened ?? []),
 });
