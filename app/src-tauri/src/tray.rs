@@ -316,6 +316,7 @@ mod tests {
             update_checked: None,
             app_uncovered: Vec::new(),
             desktop_notifications: true,
+            helper: true,
             start_at_login: None,
             install: None,
         }
