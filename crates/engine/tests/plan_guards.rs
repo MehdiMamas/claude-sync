@@ -27,3 +27,12 @@ fn merged_memory_index_with_a_token_is_not_pushed() {
     assert_eq!(pl.secrets.len(), 1);
     assert_eq!(pl.new_base.get(P), base.get(P));
 }
+
+#[test]
+fn unchanged_crlf_local_with_a_remote_change_is_no_conflict() {
+    let f = |t: &str| FileSet::from([("CLAUDE.md".to_string(), t.as_bytes().to_vec())]);
+    let (base, local, remote) = (f("- a\n"), f("- a\r\n"), f("- a\n- b\n"));
+    let pl = plan(&remote, &base, &local, &opts());
+    assert!(pl.conflicts.is_empty());
+    assert_eq!(pl.writes.get("CLAUDE.md"), remote.get("CLAUDE.md"));
+}

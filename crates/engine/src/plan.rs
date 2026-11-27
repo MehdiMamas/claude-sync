@@ -122,7 +122,9 @@ pub fn plan(remote: &FileSet, base: &FileSet, local: &FileSet, o: &Opts) -> Plan
         };
         if same {
             keep(&mut out, r);
-        } else if l == b {
+        } else if l == b
+            || (personal && matches!((l, b), (Some(x), Some(y)) if strip_cr(x) == strip_cr(y)))
+        {
             // user untouched: take the group's version (the only case that deletes)
             match r {
                 Some(v) => {
