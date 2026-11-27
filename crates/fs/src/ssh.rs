@@ -246,6 +246,19 @@ pub fn replace_block(existing: &str, block: Option<&str>) -> String {
     out.join(eol) + eol
 }
 
+/// A BEGIN line with no END line after it: the lines in between may be the user's.
+pub fn unclosed_block(existing: &str) -> bool {
+    let mut open = false;
+    for l in existing.lines() {
+        match l.trim_end() {
+            BEGIN => open = true,
+            END => open = false,
+            _ => {}
+        }
+    }
+    open
+}
+
 /// `~/.ssh/config` with `Include claude-sync.conf` as its first line (once), or without it.
 fn with_include(existing: &str, on: bool) -> String {
     let eol = if existing.contains("\r\n") {
@@ -338,18 +351,33 @@ pub fn set_alias(env: &Env, alias: &str) -> Result<()> {
     save_local(env, &l)
 }
 
+/// The file as text; a file that is not valid UTF-8 is an error (it is never rewritten).
 fn read_text(path: &Path) -> Result<Option<String>> {
-    Ok(read_file(path)
-        .map_err(e)?
-        .map(|b| String::from_utf8_lossy(&b).into_owned()))
+    let Some(b) = read_file(path).map_err(e)? else {
+        return Ok(None);
+    };
+    String::from_utf8(b).map(Some).map_err(|_| {
+        format!(
+            "{} is not valid UTF-8, so it was left alone",
+            path.display()
+        )
+    })
 }
 
-/// Write `text` to `path` when it differs (an empty text removes the file), with mode 0600.
-fn put(path: &Path, text: &str) -> Result<()> {
-    if read_text(path)?.unwrap_or_default() == text {
+/// Write `text` to `path` when it differs, with mode 0600, after a backup of what was there.
+/// An empty text removes the file, or with `keep` empties it (`config` may hold the user's).
+fn put(env: &Env, path: &Path, text: &str, keep: bool) -> Result<()> {
+    let old = read_text(path)?;
+    if old.clone().unwrap_or_default() == text {
         return Ok(());
     }
-    if text.is_empty() {
+    if let Some(o) = &old {
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        crate::apply::backup(env.home, env.now, &format!("ssh/{name}"), o.as_bytes()).map_err(e)?;
+    }
+    if text.is_empty() && !keep {
         return match std::fs::remove_file(path) {
             Err(x) if x.kind() != std::io::ErrorKind::NotFound => Err(e(x)),
             _ => Ok(()),
@@ -517,32 +545,57 @@ fn host_names(peers: &[(Record, String)], mine: &[String]) -> Vec<String> {
 pub fn apply(env: &Env, probe: &dyn Probe, on: bool) -> Result<()> {
     let own_id = load_local(env).id;
     let list = if on { peers(env, &own_id) } else { Vec::new() };
-    let windows = probe.os() == Os::Windows;
-
-    if !windows {
-        let path = env.home.ssh.join("authorized_keys");
-        let lan_block = probe.lan_ip().as_deref().and_then(private_block);
-        let lines: Vec<String> = list
-            .iter()
-            .map(|(r, k)| key_line(r, k, lan_block))
-            .collect();
-        let old = read_text(&path)?;
-        if old.is_some() || !lines.is_empty() {
-            let new = replace_block(
-                old.as_deref().unwrap_or(""),
-                render_block(&lines).as_deref(),
-            );
-            put(&path, &new)?;
-        }
+    // A file that cannot be rewritten safely is skipped and reported; the others go on.
+    let mut problems: Vec<String> = Vec::new();
+    if probe.os() != Os::Windows {
+        problems.extend(authorized_keys(env, probe, &list).err());
     }
+    problems.extend(config_and_conf(env, probe, &list, on).err());
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(problems.join("; "))
+    }
+}
 
+fn authorized_keys(env: &Env, probe: &dyn Probe, list: &[(Record, String)]) -> Result<()> {
+    let path = env.home.ssh.join("authorized_keys");
+    let lan_block = probe.lan_ip().as_deref().and_then(private_block);
+    let lines: Vec<String> = list
+        .iter()
+        .map(|(r, k)| key_line(r, k, lan_block))
+        .collect();
+    let old = read_text(&path)?;
+    if old.as_deref().is_some_and(unclosed_block) {
+        return Err(format!(
+            "{} has `{BEGIN}` with no `{END}` after it, so it was left alone",
+            path.display()
+        ));
+    }
+    if old.is_some() || !lines.is_empty() {
+        let new = replace_block(
+            old.as_deref().unwrap_or(""),
+            render_block(&lines).as_deref(),
+        );
+        put(env, &path, &new, false)?;
+    }
+    Ok(())
+}
+
+fn config_and_conf(
+    env: &Env,
+    probe: &dyn Probe,
+    list: &[(Record, String)],
+    on: bool,
+) -> Result<()> {
+    let windows = probe.os() == Os::Windows;
     let config_path = env.home.ssh.join("config");
     let config = read_text(&config_path)?;
     let conf_path = env.home.ssh.join(CONF);
-    if on {
+    let conf_err = if on {
         let mine = user_hosts(config.as_deref().unwrap_or(""));
         let mut conf = String::new();
-        let names = host_names(&list, &mine);
+        let names = host_names(list, &mine);
         let lan_ok = !windows && probe.has_nc();
         for ((r, _), name) in list.iter().zip(&names) {
             conf.push_str(&format!(
@@ -564,19 +617,17 @@ pub fn apply(env: &Env, probe: &dyn Probe, on: bool) -> Result<()> {
                 ));
             }
         }
-        put(&conf_path, &conf)?;
         // Even with no peers yet the file exists (empty) so the Include never dangles.
-        if conf.is_empty() {
-            put(&conf_path, "\n")?;
-        }
+        let conf = if conf.is_empty() { "\n".into() } else { conf };
+        put(env, &conf_path, &conf, false).err()
     } else {
-        put(&conf_path, "")?;
-    }
+        put(env, &conf_path, "", false).err()
+    };
     if config.is_some() || on {
         let new = with_include(config.as_deref().unwrap_or(""), on);
-        put(&config_path, &new)?;
+        put(env, &config_path, &new, true)?;
     }
-    Ok(())
+    conf_err.map_or(Ok(()), Err)
 }
 
 /// One pass: publish this machine, then apply the others.
