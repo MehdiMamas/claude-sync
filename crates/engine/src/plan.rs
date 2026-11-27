@@ -107,7 +107,7 @@ pub fn plan(remote: &FileSet, base: &FileSet, local: &FileSet, o: &Opts) -> Plan
         let (b, l, r) = (base.get(p), local.get(p), remote.get(p));
         if personal && l.is_some_and(|x| x.len() > MAX_FILE) {
             out.notes
-                .push(format!("'{p}': not synced, it is over 256 KiB"));
+                .push(format!("{p}: not synced, it is over 256 KiB"));
             continue; // stays local, not tracked
         }
         let keep = |out: &mut Plan, v: Option<&Vec<u8>>| {
@@ -179,7 +179,7 @@ fn push_edit(
     if matches!(o.scope, Scope::Personal) {
         if *total + bytes.len() > MAX_TOTAL {
             out.notes
-                .push(format!("'{p}': not synced, the 16 MiB limit is reached"));
+                .push(format!("{p}: not synced, personal memory is over 16 MiB"));
             return stay(out);
         }
         *total += bytes.len();

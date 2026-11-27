@@ -1975,6 +1975,62 @@ mod personal {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn new_devices_join_switch_is_written_to_the_repo_and_the_offer_follows() {
+        let git = new_git();
+        let a = device("laptop", &git).await;
+        a.h.send(Command::PersonalOn).await.unwrap();
+        assert!(a.personal().await.new_devices_join);
+        a.h.send(Command::PersonalJoinAuto { on: false })
+            .await
+            .unwrap();
+        assert!(!a.personal().await.new_devices_join);
+        assert!(git.lock().unwrap().files()["claude-sync-personal.json"].contains("false"));
+        // a new device is offered the repo, not joined
+        let b = device("desktop", &git).await;
+        b.sync().await;
+        let pb = b.personal().await;
+        assert!(!pb.on && pb.offer, "{pb:?}");
+        a.h.send(Command::PersonalJoinAuto { on: true })
+            .await
+            .unwrap();
+        assert!(a.personal().await.new_devices_join);
+        assert!(git.lock().unwrap().files()["claude-sync-personal.json"].contains("true"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn files_that_stay_on_this_device_are_listed_with_v1_wording() {
+        let git = new_git();
+        let a = device("laptop", &git).await;
+        a.h.send(Command::PersonalOn).await.unwrap();
+        let big = a.memory().replace("MEMORY.md", "big.md");
+        a.write(&big, &"x".repeat(300 * 1024));
+        a.write(
+            "CLAUDE.md",
+            "# Mine\ntoken ghp_abcdefghijklmnopqrstuvwxyz0123456789\n",
+        );
+        a.sync().await;
+        let stays = a.personal().await.stays;
+        assert!(
+            stays
+                .iter()
+                .any(|s| s.ends_with("/big.md: not synced, it is over 256 KiB")),
+            "{stays:?}"
+        );
+        assert!(
+            stays
+                .iter()
+                .any(|s| s.starts_with("CLAUDE.md: not synced, line 2 looks like a secret (")),
+            "{stays:?}"
+        );
+        assert!(!git
+            .lock()
+            .unwrap()
+            .files()
+            .values()
+            .any(|v| v.contains("ghp_abc")));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_repo_that_turns_public_stops_the_sync() {
         let git = new_git();
         let a = device("laptop", &git).await;

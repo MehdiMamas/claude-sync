@@ -290,7 +290,7 @@ impl Core {
             let ok = self.sync_now().is_ok() && self.pstate().error.is_none();
             st = self.pstate();
             if ok {
-                let _ = self.stop_new_devices();
+                let _ = self.set_new_devices(false);
                 st.new_devices_join = Some(false);
             }
         }
@@ -300,7 +300,8 @@ impl Core {
         Ok(Event::Done)
     }
 
-    fn stop_new_devices(&self) -> Result<()> {
+    /// Whether this person's next new device turns personal memory on by itself (Parity 43).
+    fn set_new_devices(&self, join: bool) -> Result<()> {
         let r = self.remote_of()?;
         let Some(h) = r.head(None)? else {
             return Ok(());
@@ -310,15 +311,23 @@ impl Core {
             return Err(Error::new(msg::not_personal(&self.me_repo()?)));
         };
         let mut doc = PersonalFile::open(b)?;
-        doc.value.new_devices_join = false;
+        doc.value.new_devices_join = join;
         let mut put = BTreeMap::new();
         put.insert(FILE.to_string(), Some(doc.to_bytes()?));
         r.push(
             &h.sha,
             &put,
-            &format!("{}: stop new devices joining", self.sig()),
+            &format!("{}: set new devices join", self.sig()),
         )?;
         Ok(())
+    }
+
+    pub(crate) fn personal_join_auto(&mut self, on: bool) -> Result<Event> {
+        self.set_new_devices(on)?;
+        let mut st = self.pstate();
+        st.new_devices_join = Some(on);
+        self.save_pstate(&st)?;
+        Ok(Event::Done)
     }
 
     pub(crate) fn personal_kind(&mut self, kind: &str, on: bool) -> Result<Event> {
@@ -565,6 +574,7 @@ impl Core {
             on: st.enabled,
             offer: !st.enabled && !st.decided && st.new_devices_join == Some(false),
             repo: self.me_repo().unwrap_or_default(),
+            new_devices_join: st.new_devices_join != Some(false),
             kinds_off: p.kinds_off.into_iter().collect(),
             devices: st
                 .devices

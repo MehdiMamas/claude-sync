@@ -132,6 +132,8 @@ ts! {
         /// The other devices share personal memory and this one was not asked yet.
         pub offer: bool,
         pub repo: String,
+        /// The next new device turns personal memory on by itself (the repo's `newDevicesJoin`).
+        pub new_devices_join: bool,
         /// `claudeMd`, `memory`, `state`, `settings` switched off.
         pub kinds_off: Vec<String>,
         pub devices: Vec<DeviceView>,
@@ -516,6 +518,10 @@ pub enum Command {
     PersonalOff,
     /// "Not now" on the offer: the check stays quiet.
     PersonalDismiss,
+    /// Whether new devices join automatically (Parity 43); written to the personal repo.
+    PersonalJoinAuto {
+        on: bool,
+    },
     PersonalKind {
         kind: String,
         on: bool,

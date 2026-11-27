@@ -312,6 +312,19 @@ function Personal(c: SettingsCtx & { sub: string[] }) {
                     </Row>
                   );
                 })}
+                <Row
+                  act={
+                    <Toggle
+                      on={p.newDevicesJoin}
+                      label={`New devices join automatically: ${p.newDevicesJoin ? "turn off" : "turn on"}`}
+                      set={() =>
+                        void run({ kind: "personalJoinAuto", data: { on: !p.newDevicesJoin } })
+                      }
+                    />
+                  }
+                >
+                  New devices join automatically
+                </Row>
               </div>
               <div className="card">
                 <h2>Your machines</h2>
@@ -886,7 +899,7 @@ function Conflicts(c: SettingsCtx) {
     "conflicts",
   );
   const act = async (x: ConflictView, kind: "conflictOpen" | "conflictDelete") => {
-    const r = await c.call({ kind, data: { repo: x.repo, path: x.path, savedAt: x.savedAt } });
+    const r = await c.call({ kind, data: { repo: x.repo, path: x.path, saved_at: x.savedAt } });
     if ("err" in r) c.toast(r.err);
     else if (kind === "conflictDelete") reload();
     else if (r.ev.kind === "path" && r.ev.data) await backend.openTarget(r.ev.data);

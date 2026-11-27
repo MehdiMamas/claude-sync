@@ -343,11 +343,12 @@ impl Pass<'_> {
         )?;
         // what stays on this device, as the window lists it (Parity 44)
         let mut stays = p.notes.clone();
-        stays.extend(
-            p.secrets
-                .iter()
-                .map(|(f, _)| format!("{f}: not synced, it looks like a secret")),
-        );
+        stays.extend(p.secrets.iter().map(|(f, h)| {
+            format!(
+                "{f}: not synced, line {} looks like a secret ({})",
+                h.line, h.pattern
+            )
+        }));
         let _ = Store::write(
             self.db,
             "personal/stays",

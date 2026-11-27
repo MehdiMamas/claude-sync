@@ -209,6 +209,7 @@ impl Core {
             PersonalOn => self.personal_on(),
             PersonalOff => self.personal_off(),
             PersonalDismiss => self.personal_dismiss(),
+            PersonalJoinAuto { on } => self.personal_join_auto(on),
             PersonalKind { kind, on } => self.personal_kind(&kind, on),
             DeviceRename { id, name } => {
                 self.device_edit(crate::personal::Pending::Rename { id, name })

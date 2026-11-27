@@ -10,6 +10,10 @@ export type PersonalView = { on: boolean,
  */
 offer: boolean, repo: string, 
 /**
+ * The next new device turns personal memory on by itself (the repo's `newDevicesJoin`).
+ */
+newDevicesJoin: boolean, 
+/**
  * `claudeMd`, `memory`, `state`, `settings` switched off.
  */
 kindsOff: Array<string>, devices: Array<DeviceView>, 

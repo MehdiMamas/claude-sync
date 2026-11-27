@@ -72,6 +72,7 @@ const base = (): Snapshot => ({
     on: false,
     offer: false,
     repo: "alex-host/claude-sync-personal",
+    newDevicesJoin: true,
     kindsOff: [],
     devices: [
       { id: "d1", name: "Laptop", os: "macOS", lastSeen: sec(), this: true },
@@ -319,9 +320,7 @@ function scenario(name: string): Snapshot {
       s.personalOn = true;
       s.personal.on = true;
       s.personal.lastSync = sec() - 120;
-      s.personal.stays = [
-        "memory/big-notes.md: 300 KiB, over the 256 KiB limit per file (16 MiB in all)",
-      ];
+      s.personal.stays = ["memory/big-notes.md: not synced, it is over 256 KiB"];
       if (name === "settings-public")
         s.personal.error =
           "Stopped: alex-host/claude-sync-personal is public now. Nothing more is pushed until it is private again.";
@@ -611,6 +610,9 @@ export function fakeBackend(search: string): Backend {
         return done;
       case "personalDismiss":
         set({ personal: { ...snap.personal, offer: false } });
+        return done;
+      case "personalJoinAuto":
+        set({ personal: { ...snap.personal, newDevicesJoin: cmd.data.on } });
         return done;
       case "personalKind": {
         const off = snap.personal.kindsOff.filter((k) => k !== cmd.data.kind);

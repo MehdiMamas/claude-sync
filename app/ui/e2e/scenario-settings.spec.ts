@@ -16,6 +16,10 @@ test("personal memory: use the offered repo, switch a kind, rename and remove a 
   await expect(page.getByText("Synced", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Memory: turn off" }).click();
   await expect(page.getByRole("button", { name: "Memory: turn on" })).toBeVisible();
+  await page.getByRole("button", { name: "New devices join automatically: turn off" }).click();
+  await expect(
+    page.getByRole("button", { name: "New devices join automatically: turn on" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Rename" }).click();
   await page.getByLabel("New name").fill("Work laptop");
   await page.getByLabel("New name").press("Enter");
@@ -49,7 +53,7 @@ test("personal memory: not now turns the offer off, the switch turns it on and o
 test("personal memory: files that stay and a public repo stop with words", async ({ page }) => {
   await page.goto(at("settings-personal", "/personal"));
   await expect(page.getByText("memory/big-notes.md")).toBeVisible();
-  await expect(page.getByText("over the 256 KiB limit per file")).toBeVisible();
+  await expect(page.getByText("not synced, it is over 256 KiB")).toBeVisible();
   await expect(page.getByText("Conflicts: 1 file changed on two devices")).toBeVisible();
 
   await page.goto(at("settings-public", "/personal"));
