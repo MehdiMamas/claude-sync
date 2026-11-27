@@ -22,6 +22,8 @@ scripts/check.sh                                                        # macOS,
 
 They run `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, the relay's tests and typecheck, and the UI tests and build. They print a summary and exit non-zero if anything failed.
 
+Run `pnpm -C app/ui install` and then `pnpm -C app/ui exec lefthook install` once per clone. The pre-push hook then runs `cargo fmt --all -- --check` and the UI unit tests (a few seconds); clippy, `cargo test` and the relay stay in `scripts/check.sh` and CI.
+
 To run one part on its own:
 
 ```

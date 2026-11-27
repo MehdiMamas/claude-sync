@@ -147,6 +147,8 @@ pnpm -C app install
 pnpm -C app tauri dev
 ```
 
+Run `pnpm -C app/ui exec lefthook install` once per clone to get the pre-push check (Rust format and UI tests).
+
 The layout:
 
 - `crates/core`: the sync engine (Rust library `claude-sync-core`).

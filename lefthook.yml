@@ -1,0 +1,9 @@
+# Runs before every push. Install once per clone: pnpm -C app/ui exec lefthook install
+# Quick subset of scripts/check.sh: Rust format and the UI unit tests. Clippy, cargo test and the relay stay in CI and check.sh.
+pre-push:
+  parallel: true
+  commands:
+    cargo-fmt:
+      run: cargo fmt --all -- --check
+    ui-tests:
+      run: pnpm -C app/ui test
