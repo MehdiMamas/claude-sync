@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { Snapshot } from "../generated/Snapshot";
-import { Chip, Logo, Toast } from "../ui";
+import { Banner, Chip, Logo, Toast } from "../ui";
 
 const items = [
   ["groups", "Groups"],
@@ -20,8 +20,11 @@ export function Shell(p: {
   snap: Snapshot;
   route: string;
   toast?: string | null;
+  /** Marks the notification read, which hides the banner. */
+  dismiss?: (id: number) => void;
   children: ReactNode;
 }) {
+  const reload = p.snap.notifications.find((n) => n.kind === "plugins" && !n.read);
   const section = p.route.split("/")[0];
   return (
     <div className="w">
@@ -46,7 +49,21 @@ export function Shell(p: {
           {p.snap.login}
         </div>
       </nav>
-      <main className="cnt">{p.children}</main>
+      <main className="cnt">
+        {reload && (
+          <Banner
+            kind="info"
+            actions={
+              <button type="button" onClick={() => p.dismiss?.(reload.id)}>
+                Dismiss
+              </button>
+            }
+          >
+            {reload.text}
+          </Banner>
+        )}
+        {p.children}
+      </main>
       {p.toast && <Toast text={p.toast} />}
     </div>
   );

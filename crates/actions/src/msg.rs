@@ -171,3 +171,7 @@ pub const LOCAL_EDIT_TITLE: &str = "Local change to a shared file";
 pub fn invitation_note(inviter: &str, repo: &str) -> String {
     format!("Invitation to a claude-sync group: {inviter} invited you to {repo}. Open claude-sync to accept.")
 }
+
+/// v1 text of the reload hint (notification and banner).
+pub const PLUGINS_CHANGED: &str =
+    "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them.";

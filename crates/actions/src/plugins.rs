@@ -362,9 +362,22 @@ impl Core {
 
     /// Forget a group that was left (its plugins stay installed).
     pub(crate) fn forget_plugins(&mut self, repo: &str) {
+        if !self.plugin_state(repo).marketplaces.is_empty() {
+            self.plugins_changed(repo);
+        }
         let _ = Store::write(&self.db, &key(repo), b"");
         let _ = Store::write(&self.db, &format!("plugin-skipped/{repo}"), b"");
         self.plugin_backoff.remove(repo);
+    }
+
+    /// The window shows the notice above every screen while this notification is unread.
+    fn plugins_changed(&mut self, repo: &str) {
+        let _ = self.db.add_notification(
+            "plugins",
+            crate::msg::PLUGINS_CHANGED,
+            Some(repo),
+            self.now(),
+        );
     }
 
     /// What the group screen lists: the last run's warnings and the files the size cap kept out.
@@ -459,6 +472,12 @@ impl Core {
             .filter(|(n, f)| force || prev.marketplaces.get(*n) != Some(*f))
             .map(|(n, _)| n)
             .collect();
+        // v1 `plugins_changed`: marketplace files were written or removed, or a marketplace left
+        if mps.iter().any(|(n, f)| prev.marketplaces.get(n) != Some(f))
+            || prev.marketplaces.keys().any(|n| !mps.contains_key(n))
+        {
+            self.plugins_changed(repo);
+        }
         let added = enabled.iter().any(|id| !prev.enabled.contains(id));
         let current: BTreeMap<String, (String, Option<String>)> = enabled
             .iter()

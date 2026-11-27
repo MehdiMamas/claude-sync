@@ -4205,6 +4205,22 @@ mod plugins {
         let before = calls(&log).len();
         h.send(Command::SyncNow).await.unwrap();
         assert_eq!(calls(&log).len(), before);
+        // v1: the placed marketplace raised one "Plugins changed" notice, not one per pass
+        let n = h
+            .snapshot()
+            .notifications
+            .iter()
+            .filter(|n| n.kind == "plugins")
+            .map(|n| (n.text.clone(), n.repo.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            n,
+            [(
+                "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them."
+                    .to_string(),
+                Some("zed/team".to_string())
+            )]
+        );
 
         // Retry runs it now; the install works this time and only the cap problem is left
         std::fs::remove_file(t.dir.path().join("fail")).unwrap();

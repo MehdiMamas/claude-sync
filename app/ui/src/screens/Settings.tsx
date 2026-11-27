@@ -824,7 +824,9 @@ function Packs(c: SettingsCtx) {
                   <b>{p.title}</b> {chip}
                   <div className="sm muted">
                     {p.unsupported ? "not for this machine" : p.tail || p.summary}
-                    {p.checkedAt ? ` · checked ${new Date(p.checkedAt * 1000).toLocaleString()}` : ""}
+                    {p.checkedAt
+                      ? ` · checked ${new Date(p.checkedAt * 1000).toLocaleString()}`
+                      : ""}
                   </div>
                 </Row>
               );

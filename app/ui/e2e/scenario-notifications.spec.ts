@@ -31,3 +31,14 @@ test("notifications: a button opens its screen and marks the notice read", async
   await expect(page).toHaveURL(/group\/alex-host\/claude-group\/review/);
   await expect(nav(page)).toContainText("1");
 });
+
+// Parity 27: the reload hint shows above every screen until dismissed.
+test("plugins changed: a banner on every screen, Dismiss hides it", async ({ page }) => {
+  await page.goto("/?scenario=plugins-changed#/groups");
+  const hint = page.getByText("Plugins changed. Run /reload-plugins");
+  await expect(hint).toBeVisible();
+  await page.getByRole("link", { name: "Feedback" }).click();
+  await expect(hint).toBeVisible();
+  await page.getByRole("button", { name: "Dismiss" }).click();
+  await expect(hint).toHaveCount(0);
+});

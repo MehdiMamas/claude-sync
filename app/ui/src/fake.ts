@@ -185,6 +185,17 @@ function scenario(name: string): Snapshot {
       ];
       s.unread = 2;
       return s;
+    case "plugins-changed":
+      s.notifications = [
+        note(
+          1,
+          "plugins",
+          "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them.",
+          "alex-host/claude-group",
+        ),
+      ];
+      s.unread = 1;
+      return s;
     case "notifications-empty":
       return { ...s, unread: 0 };
     case "groups-empty":

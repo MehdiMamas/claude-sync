@@ -1,12 +1,11 @@
 {
-  "name": "stale-error-121",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "claude-sync-repo",
+  "private": true,
+  "description": "Repo tooling only: git hooks (lefthook.yml).",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "prepare": "lefthook install"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  "devDependencies": {
+    "lefthook": "2.2.4"
+  }
 }

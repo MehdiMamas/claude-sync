@@ -194,7 +194,12 @@ export function App() {
     body = <Feedback call={call} toast={(toast) => patch({ toast })} />;
   }
   return (
-    <Shell snap={snap} route={route} toast={flash.toast}>
+    <Shell
+      snap={snap}
+      route={route}
+      toast={flash.toast}
+      dismiss={(id) => void call({ kind: "markRead", data: { id } })}
+    >
       {body}
     </Shell>
   );
