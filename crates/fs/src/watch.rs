@@ -39,7 +39,10 @@ pub fn watch(
         if let Ok(events) = r {
             if events
                 .iter()
-                .any(|e| !e.path.to_string_lossy().contains(".claude-sync-tmp-"))
+                // a folder's own event (macOS replays a just-made one) is no edit; its files report
+                .any(|e| {
+                    !e.path.to_string_lossy().contains(".claude-sync-tmp-") && !e.path.is_dir()
+                })
             {
                 on_change();
             }
