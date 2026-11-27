@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 use crate::model::{CopyItem, CopyPreviewView, CopyRequest, Event};
 use crate::msg;
 use claude_sync_engine::plan::FileSet;
-use claude_sync_engine::secrets::{scan, ALLOW_MARKER};
+use claude_sync_engine::secrets::scan;
 use claude_sync_engine::traits::Remote;
 use claude_sync_fs::redact::redact;
 use std::collections::{BTreeMap, BTreeSet};
@@ -149,10 +149,8 @@ impl Core {
         }
         for (p, b) in &put {
             let t = String::from_utf8_lossy(b);
-            if !t.contains(ALLOW_MARKER) {
-                if let Some(h) = scan(&t).first() {
-                    return Err(Error::new(msg::secret_found(p, h.line, h.pattern)));
-                }
+            if let Some(h) = scan(&t).first() {
+                return Err(Error::new(msg::secret_found(p, h.line, h.pattern)));
             }
         }
         let files = put.len();

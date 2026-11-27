@@ -1314,6 +1314,44 @@ async fn keep_mine_undo_and_a_secret_blocks_sharing() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_allow_marker_on_one_line_does_not_unblock_a_secret_on_another() {
+    let t = T::new().await;
+    let h = t
+        .group_with("h1", &[("skills/s/SKILL.md", "---\nname: s\n---\nhello\n")])
+        .await;
+    h.send(Command::SyncNow).await.unwrap();
+    let token = format!("ghp_{}", "a".repeat(36));
+    std::fs::write(
+        t.file("skills/s/SKILL.md"),
+        format!("ok {token} # claude-sync: allow-secret\nreal {token}\n"),
+    )
+    .unwrap();
+    let e = h
+        .send(Command::ShareEdit {
+            repo: "zed/team".into(),
+            path: "skills/s/SKILL.md".into(),
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        e.0.starts_with("secret found in skills/s/SKILL.md:2 ("),
+        "{}",
+        e.0
+    );
+    let Event::SharePreview { secret, .. } = h
+        .send(Command::SharePreview {
+            repo: "zed/team".into(),
+            path: "skills/s/SKILL.md".into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(secret.as_deref(), Some(e.0.as_str()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_file_changed_on_both_sides_is_listed_as_a_conflict() {
     let t = T::new().await;
     let h = t.group_with("h1", &[("skills/s/SKILL.md", "a\n")]).await;

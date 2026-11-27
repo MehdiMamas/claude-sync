@@ -8,7 +8,7 @@ use crate::msg;
 use claude_sync_engine::claude_md::strip;
 use claude_sync_engine::paths::is_planned_path;
 use claude_sync_engine::plan::FileSet;
-use claude_sync_engine::secrets::{scan, ALLOW_MARKER};
+use claude_sync_engine::secrets::scan;
 use claude_sync_engine::traits::{Disk, Remote, Store};
 use claude_sync_fs::exec::utc_stamp;
 use claude_sync_fs::{FsDisk, Scope};
@@ -235,10 +235,8 @@ impl Core {
     ) -> Result<Event> {
         for (p, b) in &files {
             let text = String::from_utf8_lossy(b);
-            if !text.contains(ALLOW_MARKER) {
-                if let Some(h) = scan(&text).first() {
-                    return Err(Error::new(msg::secret_found(p, h.line, h.pattern)));
-                }
+            if let Some(h) = scan(&text).first() {
+                return Err(Error::new(msg::secret_found(p, h.line, h.pattern)));
             }
         }
         if self.proposal_mode(repo) {
@@ -283,13 +281,9 @@ impl Core {
             .filter(|l| !old.contains(l))
             .map(claude_sync_fs::redact::redact)
             .collect();
-        let secret = (!text.contains(ALLOW_MARKER))
-            .then(|| {
-                scan(&text)
-                    .first()
-                    .map(|h| msg::secret_found(path, h.line, h.pattern))
-            })
-            .flatten();
+        let secret = scan(&text)
+            .first()
+            .map(|h| msg::secret_found(path, h.line, h.pattern));
         Ok(Event::SharePreview { added, secret })
     }
 
