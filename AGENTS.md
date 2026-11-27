@@ -13,6 +13,8 @@ Every setting lives in exactly one scope: group, personal or project. There are 
 - Env vars at build time: `CLAUDE_SYNC_GITHUB_CLIENT_ID` (sign-in), `CLAUDE_SYNC_RELAY_URL` (feedback). A release build (`pnpm -C app tauri build`) also needs `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
 ## Checks
+- Git hooks (lefthook, installed by `pnpm install` at the repo root): every commit runs gitleaks, `cargo fmt --check`, clippy, biome and `tsc` on what is staged; every push runs `scripts/check.sh`. Never skip them with `--no-verify`.
+- Every PR: CI green on ubuntu, macOS and Windows (watch `gh pr checks`), and a fresh-eyes review before merge.
 - All checks before a PR: `scripts/check.sh` (macOS, Linux, Git Bash) or `scripts/check.ps1` (Windows).
 - Single parts: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `pnpm -C relay test`, `pnpm -C relay typecheck`, `pnpm -C app/ui test`, `pnpm -C app/ui build`, `pnpm -C app/ui e2e` (Playwright screens).
 - CI (`.github/workflows/ci.yml`) runs the same; `release.yml` builds releases (steps in `docs/releasing.md`; `scripts/bump-version.mjs` bumps versions).
