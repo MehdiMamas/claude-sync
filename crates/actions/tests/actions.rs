@@ -785,6 +785,40 @@ async fn clashes_between_own_text_and_a_group_are_listed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn two_groups_setting_one_value_differently_are_listed_as_a_setting_clash() {
+    let t = T::new().await;
+    let h = t.signed_in().await;
+    let gf = json!({"schema": 1, "name": "Team", "members": ["ann"], "sync": {"settings": true}});
+    t.join_served(
+        &h,
+        "zed/one",
+        "h1",
+        &[("settings.shared.json", r#"{"model":"opus"}"#)],
+        gf.clone(),
+        true,
+    )
+    .await;
+    t.join_served(
+        &h,
+        "zed/two",
+        "h2",
+        &[("settings.shared.json", r#"{"model":"sonnet"}"#)],
+        gf,
+        false,
+    )
+    .await;
+    h.send(Command::SyncNow).await.unwrap();
+    let Event::Clashes(c) = h.send(Command::Clashes).await.unwrap() else {
+        panic!()
+    };
+    let s: Vec<_> = c.iter().filter(|x| x.kind == "setting").collect();
+    assert_eq!(s.len(), 1, "{c:?}");
+    assert_eq!(s[0].target.as_deref(), Some("/model"));
+    assert_eq!(s[0].a.source.as_deref(), Some("zed/one"));
+    assert_eq!(s[0].b.source.as_deref(), Some("zed/two"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn edit_line_of_the_own_text_rewrites_it_with_a_backup() {
     let t = T::new().await;
     std::fs::create_dir_all(t.dir.path().join(".claude")).unwrap();

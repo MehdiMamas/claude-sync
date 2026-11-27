@@ -4,4 +4,8 @@ import type { ClashSide } from "./ClashSide";
 /**
  * Two lines of CLAUDE.md that say the same thing (`duplicate`) or the opposite (`contradiction`).
  */
-export type ClashView = { kind: string, a: ClashSide, b: ClashSide, };
+export type ClashView = { kind: string, 
+/**
+ * For a `setting` clash: the setting's JSON pointer.
+ */
+target: string | null, a: ClashSide, b: ClashSide, };

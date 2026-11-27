@@ -8,7 +8,7 @@ use crate::core::Core;
 use crate::error::{Error, Result};
 use crate::model::{ClashSide, ClashView, Event, ReviewLine};
 use crate::msg;
-use claude_sync_engine::clashes::{clashes, Text};
+use claude_sync_engine::clashes::{clashes, settings_clashes, SettingsFile, Text};
 use claude_sync_engine::claude_md::strip;
 use claude_sync_engine::review::{notification, Kind, ReviewState, Step};
 use claude_sync_engine::traits::{Remote, Store};
@@ -287,11 +287,32 @@ impl Core {
             name: s.name,
             text: s.text,
         };
+        // settings two groups set differently, in rank order (the earlier group applies)
+        let mut files = vec![];
+        for g in self.db.groups()?.into_iter().filter(|g| !g.off) {
+            let on = crate::groups::cached(&self.db, &g.repo).is_none_or(|f| f.sync.settings);
+            let json = std::fs::read(claude_sync_fs::apply::copy_path(
+                &self.home,
+                &g.repo,
+                "settings.shared.json",
+            ))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok());
+            if let (true, Some(json)) = (on, json) {
+                files.push(SettingsFile {
+                    name: g.repo.rsplit('/').next().unwrap_or(&g.repo).into(),
+                    source: g.repo,
+                    json,
+                });
+            }
+        }
+        let mut all = clashes(&texts);
+        all.extend(settings_clashes(&files));
         Ok(Event::Clashes(
-            clashes(&texts)
-                .into_iter()
+            all.into_iter()
                 .map(|c| ClashView {
                     kind: format!("{:?}", c.kind).to_lowercase(),
+                    target: c.target,
                     a: side(c.a),
                     b: side(c.b),
                 })

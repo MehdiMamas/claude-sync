@@ -316,6 +316,8 @@ ts! {
     #[serde(rename_all = "camelCase")]
     pub struct ClashView {
         pub kind: String,
+        /// For a `setting` clash: the setting's JSON pointer.
+        pub target: Option<String>,
         pub a: ClashSide,
         pub b: ClashSide,
     }

@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import pkg from "../../package.json";
+import type { ClashView } from "../generated/ClashView";
 import type { ConflictView } from "../generated/ConflictView";
 import type { PackView } from "../generated/PackView";
 import type { Snapshot } from "../generated/Snapshot";
@@ -901,6 +902,11 @@ function Conflicts(c: SettingsCtx) {
     () => data(c.call, { kind: "conflicts" }, "conflicts") as Promise<ConflictView[]>,
     "conflicts",
   );
+  const [clashes] = useLoad(
+    () => data(c.call, { kind: "clashes" }, "clashes") as Promise<ClashView[]>,
+    "conflicts-settings",
+  );
+  const same = (clashes ?? []).filter((x) => x.kind === "setting");
   const act = async (x: ConflictView, kind: "conflictOpen" | "conflictDelete") => {
     const r = await c.call({ kind, data: { repo: x.repo, path: x.path, saved_at: x.savedAt } });
     if ("err" in r) c.toast(r.err);
@@ -914,7 +920,15 @@ function Conflicts(c: SettingsCtx) {
       sub="When a file changed on both sides, the group version wins and your copy is saved here."
     >
       <div className="card">
-        {list?.length === 0 && <p className="muted">No conflicts saved.</p>}
+        {list?.length === 0 && same.length === 0 && <p className="muted">No conflicts saved.</p>}
+        {same.map((x) => (
+          <Row key={`${x.target}|${x.b.source}`}>
+            <span className="mono">{`${x.target}: set by group ${x.a.name}; not applied`}</span>
+            <div className="sm muted">
+              {x.b.name} sets {x.b.text}; {x.a.name} sets {x.a.text} and comes first.
+            </div>
+          </Row>
+        ))}
         {list?.map((x) => (
           <Row
             key={`${x.repo}/${x.path}`}

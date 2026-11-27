@@ -27,6 +27,8 @@ const NEGATIONS: &[&str] = &[
 pub enum Kind {
     Duplicate,
     Contradiction,
+    /// Two groups set the same plain setting to different values.
+    Setting,
 }
 
 /// One CLAUDE.md to compare. `source` is the group repo, `None` for the user's own text.
@@ -49,6 +51,8 @@ pub struct Side {
 #[serde(rename_all = "camelCase")]
 pub struct Clash {
     pub kind: Kind,
+    /// For a setting: its JSON pointer.
+    pub target: Option<String>,
     pub a: Side,
     pub b: Side,
 }
@@ -149,6 +153,7 @@ pub fn clashes(texts: &[Text]) -> Vec<Clash> {
                     };
                     let c = Clash {
                         kind,
+                        target: None,
                         a: side(ta, ra),
                         b: side(tb, rb),
                     };
@@ -158,6 +163,69 @@ pub fn clashes(texts: &[Text]) -> Vec<Clash> {
                     if out.len() >= MAX {
                         return out;
                     }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A group's `settings.shared.json` as last synced.
+pub struct SettingsFile {
+    pub source: String,
+    pub name: String,
+    pub json: serde_json::Value,
+}
+
+/// The plain values of a settings object by JSON pointer. Arrays are left out (merged by union
+/// on apply), objects are walked into.
+fn leaves(v: &serde_json::Value, at: &str, out: &mut Vec<(String, serde_json::Value)>) {
+    match v {
+        serde_json::Value::Object(m) => {
+            for (k, v) in m {
+                let k = k.replace('~', "~0").replace('/', "~1");
+                leaves(v, &format!("{at}/{k}"), out);
+            }
+        }
+        serde_json::Value::Array(_) => {}
+        v => out.push((at.to_string(), v.clone())),
+    }
+}
+
+/// Values two groups set differently, in join order (v1): side `a` is the earlier group, whose
+/// value applies on this device.
+pub fn settings_clashes(files: &[SettingsFile]) -> Vec<Clash> {
+    let all: Vec<Vec<(String, serde_json::Value)>> = files
+        .iter()
+        .map(|f| {
+            let mut o = vec![];
+            leaves(&f.json, "", &mut o);
+            o
+        })
+        .collect();
+    let mut out = vec![];
+    for (i, fa) in files.iter().enumerate() {
+        for (j, fb) in files.iter().enumerate().skip(i + 1) {
+            for (ptr, va) in &all[i] {
+                let Some((_, vb)) = all[j].iter().find(|(p, _)| p == ptr) else {
+                    continue;
+                };
+                if va == vb {
+                    continue;
+                }
+                let side = |f: &SettingsFile, v: &serde_json::Value| Side {
+                    source: Some(f.source.clone()),
+                    name: f.name.clone(),
+                    text: v.to_string(),
+                };
+                out.push(Clash {
+                    kind: Kind::Setting,
+                    target: Some(ptr.clone()),
+                    a: side(fa, va),
+                    b: side(fb, vb),
+                });
+                if out.len() >= MAX {
+                    return out;
                 }
             }
         }
@@ -203,5 +271,35 @@ mod tests {
             .collect();
         let c = clashes(&[t(None, &many), t(Some("a/b"), &many)]);
         assert_eq!(c.len(), MAX);
+    }
+
+    #[test]
+    fn two_groups_that_set_one_plain_value_differently_clash_and_arrays_never_do() {
+        let f = |src: &str, j: serde_json::Value| SettingsFile {
+            source: src.into(),
+            name: src.into(),
+            json: j,
+        };
+        let a = f(
+            "a/x",
+            serde_json::json!({"model": "opus", "env": {"K": "1"}, "list": [1]}),
+        );
+        let b = f(
+            "b/x",
+            serde_json::json!({"model": "sonnet", "env": {"K": "1"}, "list": [2]}),
+        );
+        let c = settings_clashes(&[a, b]);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].kind, Kind::Setting);
+        assert_eq!(c[0].target.as_deref(), Some("/model"));
+        assert_eq!(
+            (c[0].a.text.as_str(), c[0].b.text.as_str()),
+            ("\"opus\"", "\"sonnet\"")
+        );
+        assert_eq!(
+            c[0].a.source.as_deref(),
+            Some("a/x"),
+            "the earlier group is side a"
+        );
     }
 }

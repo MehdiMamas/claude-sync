@@ -831,6 +831,7 @@ export function fakeBackend(search: string): Backend {
             ? [
                 {
                   kind: "contradiction",
+                  target: null,
                   a: { source: null, name: "Your CLAUDE.md", text: "Use two spaces." },
                   b: {
                     source: snap.groups[0]?.repo ?? "",
