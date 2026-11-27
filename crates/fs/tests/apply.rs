@@ -163,3 +163,38 @@ fn the_sync_lock_is_shared_and_a_second_pass_finds_it_busy() {
     drop(a);
     assert!(SyncLock::acquire(&h.lock_file(), Duration::ZERO).is_ok());
 }
+
+#[test]
+fn v1_owned_file_is_converted_so_the_first_pass_keeps_user_edits_and_drops_old_keys() {
+    use claude_sync_store::{import_v1, DaemonLockHeld};
+    let (t, h, db) = setup();
+    let sync = t.path().join("v1sync");
+    std::fs::create_dir_all(&sync).unwrap();
+    std::fs::write(
+        sync.join("settings-owned.json"),
+        r#"{"acme/team":{"values":{"/model":"m1","/old":"x"},"array_items":{}}}"#,
+    )
+    .unwrap();
+    import_v1(&db, &sync, &t.path().join("c"), &DaemonLockHeld::claim()).unwrap();
+    std::fs::create_dir_all(&h.claude).unwrap();
+    std::fs::write(
+        h.claude.join("settings.json"),
+        r#"{"model":"mine","old":"x"}"#,
+    )
+    .unwrap();
+    let (none, pin) = (BTreeMap::new(), BTreeSet::new());
+    apply_settings(
+        &h,
+        &db,
+        "acme/team",
+        Some(br#"{"model":"m1"}"#),
+        &none,
+        &pin,
+        10,
+    )
+    .unwrap();
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(h.claude.join("settings.json")).unwrap()).unwrap();
+    assert_eq!(v["model"], "mine"); // the user's edit of a group-owned key survives
+    assert!(v.get("old").is_none()); // a key the group dropped is removed
+}

@@ -204,13 +204,30 @@ impl Reader<'_> {
             "app.json",
             "activity.json",
             "ssh-peers.json",
-            "settings-owned.json",
             "plugins.json",
             "packs.json",
             "personal/state.json",
             "personal/base/head.json",
         ] {
             self.json_raw(tx, f)?;
+        }
+        // v1 `settings-owned.json` (`owner/repo` -> what that group set) is the same shape as
+        // v2's `owned/<repo>` record, so the first pass tells the user's edits from the group's.
+        let owned = self.json_raw(tx, "settings-owned.json")?;
+        for (repo, v) in owned
+            .as_ref()
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            if let Ok(o) = serde_json::from_value::<claude_sync_engine::settings::Owned>(v.clone())
+            {
+                put(
+                    tx,
+                    &format!("owned/{repo}"),
+                    &json!({"values": o.values, "array_items": o.array_items}),
+                )?;
+            }
         }
 
         // Each group's folder, read once.
