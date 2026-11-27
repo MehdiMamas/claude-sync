@@ -1,2 +1,8 @@
 allowBuilds:
   lefthook: true
+  esbuild: true
+packages:
+  - app
+  - app/ui
+  - relay
+sharedWorkspaceLockfile: false
