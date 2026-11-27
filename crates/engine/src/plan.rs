@@ -141,7 +141,34 @@ pub fn plan(remote: &FileSet, base: &FileSet, local: &FileSet, o: &Opts) -> Plan
             both_changed(&mut out, o, p, (b, l, r), &mut total);
         }
     }
+    hold_secrets(&mut out, base);
     out
+}
+
+/// The one secret scan: every push, whichever branch made it, is scanned here. A hit stays
+/// local (not pushed, base kept as it was so the next pass tries again).
+fn hold_secrets(out: &mut Plan, base: &FileSet) {
+    let hits: Vec<(String, Hit)> = out
+        .pushes
+        .iter()
+        .filter_map(|(p, v)| {
+            let hit = scan(&String::from_utf8_lossy(v.as_ref()?))
+                .into_iter()
+                .next()?;
+            Some((p.clone(), hit))
+        })
+        .collect();
+    for (p, hit) in hits {
+        out.pushes.remove(&p);
+        match base.get(&p) {
+            Some(b) => out.new_base.insert(p.clone(), b.clone()),
+            None => out.new_base.remove(&p),
+        };
+        if !out.local_edits.contains(&p) {
+            out.local_edits.push(p.clone());
+        }
+        out.secrets.push((p, hit));
+    }
 }
 
 /// The user changed `p`, the group did not.
@@ -167,10 +194,6 @@ fn push_edit(
         out.pushes.insert(p.to_string(), None);
         return;
     };
-    if let Some(hit) = scan(&String::from_utf8_lossy(l)).into_iter().next() {
-        out.secrets.push((p.to_string(), hit));
-        return stay(out);
-    }
     let bytes = if is_memory_index(p) {
         lf(&String::from_utf8_lossy(l))
     } else {
@@ -243,7 +266,7 @@ fn both_changed(out: &mut Plan, o: &Opts, p: &str, (b, l, r): Triple, total: &mu
         }
         (Some(l), None) => {
             // the group deleted it, the user changed it: the user's file is never deleted
-            if o.push && scan(&String::from_utf8_lossy(l)).is_empty() {
+            if o.push {
                 out.pushes.insert(p.to_string(), Some(l.clone()));
                 out.new_base.insert(p.to_string(), l.clone());
             } else {
