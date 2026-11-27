@@ -44,6 +44,28 @@ impl SecretStore for FileSecrets {
     }
 }
 
+/// A sign-in held in memory only: nothing on disk, nothing in the keychain.
+#[derive(Default)]
+pub struct MemSecrets(std::sync::Mutex<std::collections::HashMap<String, String>>);
+
+impl SecretStore for MemSecrets {
+    fn get(&self, a: &str) -> Result<Option<String>> {
+        Ok(self.0.lock().ok().and_then(|m| m.get(a).cloned()))
+    }
+    fn set(&self, a: &str, s: &str) -> Result<()> {
+        if let Ok(mut m) = self.0.lock() {
+            m.insert(a.into(), s.into());
+        }
+        Ok(())
+    }
+    fn delete(&self, a: &str) -> Result<()> {
+        if let Ok(mut m) = self.0.lock() {
+            m.remove(a);
+        }
+        Ok(())
+    }
+}
+
 /// `gh auth token` (argument list, no shell, no console window): the token of the `gh`
 /// sign-in, or `None` when gh is missing or signed out. As v1.
 pub fn gh_token() -> Option<String> {

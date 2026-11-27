@@ -12,11 +12,11 @@ const CURRENT: &str = "@current";
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tokens {
     pub access_token: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_token_expires_at: Option<i64>,
 }
 

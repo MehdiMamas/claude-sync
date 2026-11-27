@@ -34,6 +34,8 @@ fn ctx() -> Ctx {
         name: "claude-sync",
         remove_jobs: true,
         refresh: std::env::current_exe().ok(),
+        // the app's sign-in is in the keychain, for the window and for `claude-sync status` alike
+        secrets: Some(Secrets(Arc::new(claude_sync_github::secrets::Keychain))),
         ..Ctx::cli()
     }
 }
@@ -238,8 +240,7 @@ fn start(app: &AppHandle, background: bool) -> Result<(), String> {
     let ctx = ctx();
     let home = std::env::home_dir().ok_or("cannot find the home directory")?;
     let state = claude_sync_fs::Home::from_env(&home).state;
-    let secrets = Secrets(Arc::new(claude_sync_github::secrets::Keychain));
-    let env = claude_sync_cli::env_with(&ctx, secrets)?;
+    let env = claude_sync_cli::env(&ctx)?;
     let h = tauri::async_runtime::block_on(claude_sync_actions::spawn(env, Duration::from_secs(1)))
         .map_err(|e| e.0)?;
     // The hand-over from a v1 daemon ran when the core opened; a live v2 daemon that holds the

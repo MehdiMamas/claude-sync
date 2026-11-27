@@ -19,7 +19,7 @@ use claude_sync_github::Config;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-pub use run::{env_with, status_json, v1_daemon_message, Out};
+pub use run::{env, status_json, v1_daemon_message, Out};
 pub use tree::{command_names, Cli, Cmd};
 
 /// What differs between the binaries that embed the tree, and between a person and a test.
@@ -36,6 +36,9 @@ pub struct Ctx {
     pub remove_jobs: bool,
     /// The app binary, for `--refresh` after a change the window shows; the app sets this.
     pub refresh: Option<PathBuf>,
+    /// Where the sign-in lives; `None`: the token file `<state>/token` (the headless CLI, as v1).
+    /// The app sets the OS keychain, so `claude-sync status` reads the app's own sign-in.
+    pub secrets: Option<claude_sync_actions::Secrets>,
 }
 
 impl Ctx {
@@ -47,6 +50,7 @@ impl Ctx {
             cfg: None,
             remove_jobs: false,
             refresh: None,
+            secrets: None,
         }
     }
 }

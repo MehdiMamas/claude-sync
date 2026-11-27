@@ -64,7 +64,7 @@ fn place(ctx: &Ctx) -> Result<Where, Fail> {
     Ok(Where { home })
 }
 
-pub(crate) fn env(ctx: &Ctx) -> Result<Env, Fail> {
+pub(crate) fn env_in(ctx: &Ctx) -> Result<Env, Fail> {
     let w = place(ctx)?;
     let mut cfg: Config = ctx.cfg.clone().unwrap_or_else(Config::github);
     if cfg.client_id.is_empty() {
@@ -73,7 +73,10 @@ pub(crate) fn env(ctx: &Ctx) -> Result<Env, Fail> {
     Ok(Env {
         cfg,
         app_client_id: APP_CLIENT_ID.into(),
-        secrets: daemon::file_secrets(&w.state()),
+        secrets: ctx
+            .secrets
+            .clone()
+            .unwrap_or_else(|| daemon::file_secrets(&w.state())),
         now: Arc::new(|| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -90,13 +93,11 @@ pub(crate) fn env(ctx: &Ctx) -> Result<Env, Fail> {
     })
 }
 
-/// The core's environment for a shell that keeps the sign-in elsewhere (the app: the OS keychain).
-pub fn env_with(ctx: &Ctx, secrets: claude_sync_actions::Secrets) -> Result<Env, String> {
-    let mut e = env(ctx).map_err(|f| match f {
+/// The core's environment: the sign-in in `ctx.secrets` (the app's keychain), else the token file.
+pub fn env(ctx: &Ctx) -> Result<Env, String> {
+    env_in(ctx).map_err(|f| match f {
         Fail::Usage(m) | Fail::Run(m) => m,
-    })?;
-    e.secrets = secrets;
-    Ok(e)
+    })
 }
 
 /// The word for a v1 daemon that did not stop: its pid and the command that ends it here.
@@ -121,7 +122,7 @@ pub fn v1_daemon_message(pid: u32) -> String {
 }
 
 fn open_plain(ctx: &Ctx) -> Result<Core, Fail> {
-    let core = Core::open(env(ctx)?)?;
+    let core = Core::open(env_in(ctx)?)?;
     match core.snapshot().install {
         Some(claude_sync_actions::model::InstallNote::Daemon { pid, .. }) => {
             Err(Fail::Run(v1_daemon_message(pid)))
@@ -190,7 +191,7 @@ pub(crate) fn execute(ctx: &Ctx, cmd: Cmd) -> Res {
         Cmd::Review { cmd } => review(ctx, cmd),
         Cmd::Daemon => {
             let w = place(ctx)?;
-            let line = daemon::run(&w.state(), ctx.version, env(ctx)?)?;
+            let line = daemon::run(&w.state(), ctx.version, env_in(ctx)?)?;
             Ok(Out::done(line))
         }
         Cmd::Service { cmd } => Ok(Out::done(match cmd {
@@ -220,7 +221,7 @@ pub(crate) fn execute(ctx: &Ctx, cmd: Cmd) -> Res {
 
 fn login(ctx: &Ctx) -> Res {
     use claude_sync_actions::SignInState as S;
-    let env = env(ctx)?;
+    let env = env_in(ctx)?;
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -860,4 +861,78 @@ fn run_job(ctx: &Ctx, args: &[String], now: bool) -> Res {
         status.clone(),
         json!({ "ok": true, "status": status }),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// A v1 `~/.claude-sync/token` (login + tokens), as v1 wrote it.
+    const V1_TOKEN: &str = r#"{"login":"ann","tokens":{"access_token":"gho_sample"}}"#;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_v1_token_file_is_a_sign_in_and_its_token_reaches_github() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/user/repos"))
+            .and(header("authorization", "Bearer gho_sample"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+        let h = tempfile::tempdir().unwrap();
+        let state = h.path().join(".claude-sync");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("token"), V1_TOKEN).unwrap();
+        let mut cfg = Config::github();
+        cfg.api = server.uri();
+        let ctx = Ctx {
+            home: Some(h.path().to_path_buf()),
+            cfg: Some(cfg),
+            ..Ctx::cli()
+        };
+        let signed_in = tokio::task::spawn_blocking(move || {
+            let core = open(&ctx).map_err(|_| "open")?;
+            let l = core.snapshot().login;
+            Ok::<_, &str>((l, execute(&ctx, Cmd::Groups).is_ok()))
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(signed_in.0.as_deref(), Some("ann"));
+        let seen = server.received_requests().await.unwrap();
+        assert!(
+            !seen.is_empty(),
+            "groups asked GitHub with the file's token"
+        );
+    }
+
+    #[test]
+    fn the_app_ctx_reads_its_own_store_not_the_token_file_and_the_file_is_v1_json() {
+        use claude_sync_github::secrets::{save, Tokens};
+        let h = tempfile::tempdir().unwrap();
+        let state = h.path().join(".claude-sync");
+        let mem = crate::token::MemSecrets::default();
+        save(&mem, "bob", &Tokens::plain("gho_app")).unwrap();
+        let ctx = Ctx {
+            home: Some(h.path().to_path_buf()),
+            secrets: Some(claude_sync_actions::Secrets(Arc::new(mem))),
+            ..Ctx::cli()
+        };
+        assert_eq!(
+            open_plain(&ctx).unwrap().snapshot().login.as_deref(),
+            Some("bob")
+        );
+        assert!(!state.join("token").exists(), "the store is not the file");
+        // the file the headless CLI writes carries no null keys, as v1
+        let file = daemon::file_secrets(&state);
+        save(&file, "ann", &Tokens::plain("gho_x")).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(state.join("token"))
+                .unwrap()
+                .replace(char::is_whitespace, ""),
+            r#"{"login":"ann","tokens":{"access_token":"gho_x"}}"#
+        );
+    }
 }
