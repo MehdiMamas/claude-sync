@@ -419,12 +419,8 @@ function Notifications(c: SettingsCtx) {
       ? "Windows"
       : "Your system";
   const test = async () => {
-    const perm =
-      Notification.permission === "default"
-        ? await Notification.requestPermission()
-        : Notification.permission;
-    setBlocked(perm !== "granted");
-    if (perm === "granted") new Notification("claude-sync", { body: "Notifications work." });
+    await run({ kind: "testNotification" });
+    setBlocked((await backend.notifyPermission()) === "denied");
   };
   return (
     <Frame tab="notifications">

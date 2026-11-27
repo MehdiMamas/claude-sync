@@ -562,6 +562,23 @@ export function fakeBackend(search: string): Backend {
       case "startAtLogin":
         set({ startAtLogin: cmd.data.on });
         return done;
+      case "testNotification":
+        set({
+          unread: snap.unread + 1,
+          notifications: [
+            {
+              ...note(
+                Date.now(),
+                "test",
+                "Notifications from claude-sync show up like this.",
+                null,
+              ),
+              time: sec(),
+            },
+            ...snap.notifications,
+          ],
+        });
+        return done;
       case "markRead":
       case "markAllRead":
       case "clearNotifications": {
@@ -990,6 +1007,8 @@ export function fakeBackend(search: string): Backend {
       subs.add(cb);
       return () => void subs.delete(cb);
     },
+    // `?notify=denied` plays a system that blocks notifications
+    notifyPermission: async () => (q.get("notify") === "denied" ? "denied" : "granted"),
     openTarget: async (t) => {
       (window as unknown as { __opened?: string[] }).__opened = [
         ...((window as unknown as { __opened?: string[] }).__opened ?? []),

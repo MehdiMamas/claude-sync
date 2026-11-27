@@ -8,6 +8,8 @@ export interface Backend {
   snapshot(): Promise<Snapshot>;
   subscribe(cb: (s: Snapshot) => void): () => void;
   openTarget(target: string): Promise<void>;
+  /** `granted`, `denied`, `not_asked` or `unknown` (not macOS). */
+  notifyPermission(): Promise<string>;
 }
 
 export async function tauriBackend(): Promise<Backend> {
@@ -21,6 +23,7 @@ export async function tauriBackend(): Promise<Backend> {
       return () => void p.then((off) => off());
     },
     openTarget: (target) => invoke("open_target", { target }),
+    notifyPermission: () => invoke<string>("notification_permission"),
   };
 }
 

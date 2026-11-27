@@ -738,10 +738,14 @@ dependencies = [
 name = "claude-sync-app"
 version = "0.1.27"
 dependencies = [
+ "block2",
  "claude-sync-actions",
  "claude-sync-cli",
  "claude-sync-fs",
  "claude-sync-github",
+ "objc2",
+ "objc2-foundation",
+ "objc2-user-notifications",
  "serde_json",
  "tauri",
  "tauri-build",
@@ -3325,6 +3329,8 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9df9128cbbfef73cda168416ccf7f837b62737d748333bfe9ab71c245d76613e"
 dependencies = [
+ "bitflags 2.13.2",
+ "block2",
  "objc2",
  "objc2-foundation",
 ]

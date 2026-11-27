@@ -161,3 +161,5 @@ pub const BAD_KIND: &str = "kind must be bug or idea";
 pub const FEEDBACK_SIGN_IN: &str = "sign in to send feedback";
 pub const SHOT_TOO_LARGE: &str = "screenshot is larger than 3 MB";
 pub const SHOT_BAD: &str = "only PNG and JPEG images can be attached";
+
+pub const TEST_NOTIFICATION: &str = "Notifications from claude-sync show up like this.";

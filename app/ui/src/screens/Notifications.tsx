@@ -12,6 +12,7 @@ const titles: Record<string, string> = {
   personal: "Personal memory",
   rename: "Group renamed",
   signin: "Sign-in",
+  test: "Test notification",
 };
 
 /** Where a notification's button goes; none for plain notices. */

@@ -6,8 +6,13 @@
 //! claude-sync desktop shell (v2-Plan step 7): tray, one window, one instance. Every command
 //! word is answered by `claude-sync-cli` before Tauri starts; the app itself only draws what the
 //! actor (`claude-sync-actions`) publishes and sends it the commands it is given.
+#[cfg(target_os = "macos")]
+mod mac_notify;
 mod tray;
 mod window;
+
+/// The window route a clicked notification opens.
+const ROUTE: &str = "notifications";
 
 use claude_sync_actions::{Command, Event, Handle, Secrets, Snapshot};
 use claude_sync_cli::daemon::{single_instance, Instance};
@@ -70,6 +75,47 @@ fn open_target(app: AppHandle, target: String) -> Result<(), String> {
     }
 }
 
+/// macOS goes through `UNUserNotificationCenter`: the plugin's macOS path never asks for
+/// permission, so nothing would show (v1 found this); other systems use the plugin.
+fn desktop(app: &AppHandle, title: &str, body: &str) {
+    #[cfg(target_os = "macos")]
+    if mac_notify::show(title, body).is_ok() {
+        return;
+    }
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        eprintln!("claude-sync: notification failed: {e}");
+    }
+}
+
+/// Whether the system lets the app show notifications: `granted`, `denied`, `not_asked` or
+/// `unknown` (not macOS, or not running from an app bundle). The window shows help on `denied`.
+#[tauri::command]
+async fn notification_permission() -> &'static str {
+    #[cfg(target_os = "macos")]
+    return tauri::async_runtime::spawn_blocking(mac_notify::permission)
+        .await
+        .unwrap_or("unknown");
+    #[cfg(not(target_os = "macos"))]
+    "unknown"
+}
+
+/// Clicking a notification opens the window on the Notifications screen (macOS: the delegate in
+/// `mac_notify`; Windows: the plugin reports the click while the toast is on screen).
+fn on_click(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    mac_notify::init(app);
+    let a = app.clone();
+    let registered = app.notification().on_action(move |action| {
+        if action.action_id() == "tap" {
+            let b = a.clone();
+            let _ = a.run_on_main_thread(move || window::open(&b, Some(ROUTE)));
+        }
+    });
+    if let Err(e) = registered {
+        eprintln!("claude-sync: notification clicks are not handled: {e}");
+    }
+}
+
 /// Tell the window and the tray on every change, and show new notifications on the desktop.
 fn pump(app: AppHandle, h: Handle) {
     tauri::async_runtime::spawn(async move {
@@ -84,12 +130,7 @@ fn pump(app: AppHandle, h: Handle) {
                 let _ = app.emit("snapshot", &s);
                 for n in s.notifications.iter().filter(|n| Some(n.id) > seen) {
                     if !n.read && s.desktop_notifications {
-                        let _ = app
-                            .notification()
-                            .builder()
-                            .title("claude-sync")
-                            .body(&n.text)
-                            .show();
+                        desktop(&app, "claude-sync", &n.text);
                     }
                 }
                 seen = seen.max(s.notifications.iter().map(|n| n.id).max());
@@ -167,6 +208,7 @@ fn start(app: &AppHandle, background: bool) -> Result<(), String> {
     link_cli();
     let s = h.snapshot();
     tray::build(app, &s, now()).map_err(|e| e.to_string())?;
+    on_click(app);
     pump(app.clone(), h);
     if !background || s.login.is_none() {
         window::open(app, None);
@@ -203,7 +245,12 @@ fn main() {
         // shortcut: no updater plugin yet, step 9 adds it (tauri.conf.json keeps the pubkey).
         .manage(Owner::default())
         .manage(tray::Shown::default())
-        .invoke_handler(tauri::generate_handler![send, snapshot, open_target])
+        .invoke_handler(tauri::generate_handler![
+            send,
+            snapshot,
+            open_target,
+            notification_permission
+        ])
         .setup(move |app| start(app.handle(), background).map_err(Into::into))
         .build(tauri::generate_context!());
     let app = match app {

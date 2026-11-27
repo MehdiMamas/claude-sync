@@ -649,6 +649,8 @@ pub enum Command {
     DesktopNotifications {
         on: bool,
     },
+    /// Settings: Test. Adds a notice; the shell shows it on the desktop like any new one.
+    TestNotification,
     /// Settings: start at login (the shell turns the OS entry on or off).
     StartAtLogin {
         on: bool,

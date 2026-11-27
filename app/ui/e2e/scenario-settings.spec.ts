@@ -160,8 +160,23 @@ test("account: App coverage and the links to GitHub", async ({ page }) => {
   ]);
 });
 
-test("notifications: switch, and Test says when the system blocks them", async ({ page }) => {
+test("notifications: Test adds a notice and says nothing when the system allows them", async ({
+  page,
+}) => {
   await page.goto(at("groups-invite", "/notifications"));
+  await page.getByRole("button", { name: "Test" }).click();
+  await expect(page.getByRole("status")).toHaveCount(0);
+  await page.evaluate(() => {
+    location.hash = "#/notifications";
+  });
+  await expect(page.getByText("Test notification")).toBeVisible();
+  await expect(page.getByText("Notifications from claude-sync show up like this.")).toBeVisible();
+});
+
+test("notifications: switch, and Test says when the system blocks them", async ({ page }) => {
+  await page.goto(
+    `${at("groups-invite", "/notifications").replace("groups-invite", "groups-invite&notify=denied")}`,
+  );
   await page.getByRole("button", { name: "Turn off" }).click();
   await expect(page.getByRole("button", { name: "Turn on" })).toBeVisible();
   await page.getByRole("button", { name: "Test" }).click();

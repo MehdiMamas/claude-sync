@@ -363,7 +363,7 @@ export const frames: FrameCase[] = [
   })),
   {
     frame: "SettingsNotifyBlocked",
-    url: "/?scenario=groups-invite#/settings/notifications",
+    url: "/?scenario=groups-invite&notify=denied#/settings/notifications",
     steps: async (p) => {
       await p.getByRole("button", { name: "Test" }).click();
       await p.getByText("blocks notifications from claude-sync").waitFor();

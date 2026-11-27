@@ -248,6 +248,11 @@ impl Core {
             Pause => self.set_app(|a| a.paused = true),
             Resume => self.set_app(|a| a.paused = false),
             DesktopNotifications { on } => self.set_app(|a| a.desktop_notifications = Some(on)),
+            TestNotification => {
+                self.db
+                    .add_notification("test", msg::TEST_NOTIFICATION, None, self.now())?;
+                Ok(Event::Done)
+            }
             StartAtLogin { on } => self.set_app(|a| a.start_at_login = Some(on)),
             Refresh => Ok(Event::Done),
             SetInterval { secs } => self.set_app(|a| a.interval_secs = Some(secs)),

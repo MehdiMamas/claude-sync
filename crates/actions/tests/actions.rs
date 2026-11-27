@@ -1085,6 +1085,19 @@ async fn a_file_changed_on_both_sides_is_listed_as_a_conflict() {
     assert!(c.is_empty());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_test_notification_is_one_new_notice_for_the_shell_to_show() {
+    let t = T::new().await;
+    let h = t.signed_in().await;
+    h.send(Command::TestNotification).await.unwrap();
+    let s = h.snapshot();
+    assert_eq!(s.unread, 1);
+    assert_eq!(
+        (s.notifications[0].kind.as_str(), s.notifications[0].read),
+        ("test", false)
+    );
+}
+
 impl T {
     /// What each push to `zed/team` sent: blob contents in order.
     async fn pushed_blobs(&self) -> Vec<String> {
