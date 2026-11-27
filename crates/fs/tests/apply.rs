@@ -198,3 +198,20 @@ fn v1_owned_file_is_converted_so_the_first_pass_keeps_user_edits_and_drops_old_k
     assert_eq!(v["model"], "mine"); // the user's edit of a group-owned key survives
     assert!(v.get("old").is_none()); // a key the group dropped is removed
 }
+
+#[test]
+fn two_different_backups_of_one_path_in_one_second_are_both_kept() {
+    let (_t, h, _db) = setup();
+    std::fs::create_dir_all(&h.claude).unwrap();
+    std::fs::write(h.claude.join("CLAUDE.md"), "a\n").unwrap();
+    assert!(replace_own_line(&h, "a", "b", 5).unwrap());
+    assert!(replace_own_line(&h, "b", "c", 5).unwrap());
+    let mut all: Vec<String> = vec![];
+    for d in std::fs::read_dir(h.state.join("backups")).unwrap() {
+        for f in std::fs::read_dir(d.unwrap().path()).unwrap() {
+            all.push(std::fs::read_to_string(f.unwrap().path()).unwrap());
+        }
+    }
+    all.sort();
+    assert_eq!(all, ["a\n", "b\n"]);
+}

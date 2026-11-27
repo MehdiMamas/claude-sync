@@ -64,10 +64,16 @@ pub fn write_claude_md_copy(
     }
 }
 
-fn backup(home: &Home, now: i64, rel: &str, bytes: &[u8]) -> std::io::Result<()> {
-    let p = home.state.join("backups").join(utc_stamp(now)).join(rel);
-    if p.exists() {
-        return Ok(());
+pub(crate) fn backup(home: &Home, now: i64, rel: &str, bytes: &[u8]) -> std::io::Result<()> {
+    let base = home.state.join("backups").join(utc_stamp(now));
+    let mut p = base.join(rel);
+    // a second, different backup of one path in the same second gets a counter suffix
+    for n in 1.. {
+        match read_file(&p)? {
+            None => break,
+            Some(b) if b == bytes => return Ok(()),
+            Some(_) => p = base.join(format!("{rel}.{n}")),
+        }
     }
     write_atomic(&p, bytes)
 }
