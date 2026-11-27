@@ -3464,6 +3464,11 @@ mod copy_revert_history {
     /// ann hosts `ann/team`; main is at `cc`, the commit `bb` (parent `aa`) touched the skill
     /// and added an agent.
     async fn revert_rig(head_skill: &str) -> (T, Handle) {
+        revert_rig_with(head_skill, "one\n").await
+    }
+
+    /// `old_skill` is the skill before commit `bb`, the text a revert puts back.
+    async fn revert_rig_with(head_skill: &str, old_skill: &str) -> (T, Handle) {
         let t = T::new().await;
         let h = t.signed_in().await;
         let gfv = gf(&["ann"], false);
@@ -3496,7 +3501,7 @@ mod copy_revert_history {
         t.serve_repo(
             "ann/team",
             "aa",
-            &[("skills/s/SKILL.md", "one\n"), readme],
+            &[("skills/s/SKILL.md", old_skill), readme],
             gfv,
             false,
         )
@@ -3538,6 +3543,25 @@ mod copy_revert_history {
         .await;
         h.send(Command::SyncNow).await.unwrap();
         (t, h)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_revert_that_would_put_back_a_secret_is_refused() {
+        let old = format!("key ghp_{}\n", "a".repeat(36));
+        let (t, h) = revert_rig_with("two\n", &old).await;
+        let e = h
+            .send(Command::Revert {
+                repo: "ann/team".into(),
+                sha: "bb".into(),
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            e.0.starts_with("secret found in skills/s/SKILL.md:1 ("),
+            "{}",
+            e.0
+        );
+        assert!(t.sent("POST", "/repos/ann/team/git/trees").await.is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread")]

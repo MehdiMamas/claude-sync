@@ -6,6 +6,7 @@ use crate::model::{ContentItem, Event, HistoryItem, RevertFile, RevertPlan};
 use crate::msg;
 use claude_sync_engine::formats::group::{change_notes, CHANGE_NOTES_PATH};
 use claude_sync_engine::paths::{allowed_by, is_planned_path};
+use claude_sync_engine::secrets::scan;
 use claude_sync_engine::traits::Remote;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -253,6 +254,14 @@ impl Core {
         let (plan, pushes, head) = self.revert_work(repo, sha)?;
         if let Some(b) = plan.files.iter().find_map(|f| f.blocked.clone()) {
             return Err(Error::new(b));
+        }
+        for (p, v) in &pushes {
+            if let Some(h) = v
+                .as_ref()
+                .and_then(|b| scan(&String::from_utf8_lossy(b)).into_iter().next())
+            {
+                return Err(Error::new(msg::secret_found(p, h.line, h.pattern)));
+            }
         }
         let me = self.me()?;
         let note = format!(
