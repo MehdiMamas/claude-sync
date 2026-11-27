@@ -64,6 +64,8 @@ ts! {
         pub off: bool,
         /// Logins invited to this group that GitHub has not seen accepted (host only).
         pub pending_invites: Vec<String>,
+        /// Hand edits to this group's files, as the watcher last saw them (Parity 24).
+        pub edits: Vec<EditView>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

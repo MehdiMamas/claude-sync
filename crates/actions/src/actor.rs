@@ -66,6 +66,7 @@ pub async fn spawn_with(
     .map_err(|_| Error::new("could not start"))??;
     let (tx, mut rx) = mpsc::channel::<Msg>(32);
     core.tx = Some(tx.downgrade());
+    core.start_watch();
     let (stx, srx) = watch::channel(core.snapshot());
     core.publish = Some(stx.clone());
     tokio::spawn(async move {

@@ -35,6 +35,7 @@ const group = (repo: string, over: Partial<GroupView> = {}): GroupView => ({
   failedAt: null,
   off: false,
   pendingInvites: [],
+  edits: [],
   ...over,
 });
 const many = (n: number) => Array.from({ length: n }, (_, i) => `member-${i + 1}`);

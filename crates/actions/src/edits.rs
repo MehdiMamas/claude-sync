@@ -88,6 +88,50 @@ impl Core {
         }
     }
 
+    /// v1 `check_local_edits`: look at every group's edits after the watcher fired, keep them
+    /// for the snapshot and raise one notification for the edits that are new.
+    pub(crate) fn check_dirty(&mut self) {
+        if !self.dirty.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        // a folder the last pass created is watched from now on (v1 `refresh_watcher`)
+        if self.watch.is_some() {
+            self.start_watch();
+        }
+        let mut new: Vec<(String, String)> = vec![];
+        for g in self.db.groups().unwrap_or_default() {
+            let Ok(Event::Edits(now)) = self.edits_list(&g.repo) else {
+                self.edits.remove(&g.repo);
+                continue;
+            };
+            let old = self.edits.get(&g.repo);
+            new.extend(
+                now.iter()
+                    .filter(|e| !e.kept && old.is_none_or(|o| !o.contains(e)))
+                    .map(|e| (g.repo.clone(), e.path.clone())),
+            );
+            self.edits.insert(g.repo, now);
+        }
+        let Some((group, path)) = new.first() else {
+            return;
+        };
+        let body = if new.len() == 1 {
+            format!("{path} was changed on this machine. Share it with {group}?")
+        } else {
+            format!("{} shared files were changed on this machine.", new.len())
+        };
+        let one_group = new
+            .iter()
+            .all(|(g, _)| g == group)
+            .then_some(group.as_str());
+        let _ = self.db.add_notification(
+            "local-edit",
+            &format!("{}: {body}", msg::LOCAL_EDIT_TITLE),
+            one_group,
+            self.now(),
+        );
+    }
+
     pub(crate) fn edits_list(&self, repo: &str) -> Result<Event> {
         let kept = self.kept(repo);
         Ok(Event::Edits(

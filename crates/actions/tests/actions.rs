@@ -4319,3 +4319,37 @@ async fn a_v1_daemon_that_cannot_be_found_or_stopped_skips_the_import_and_says_s
     assert!(!db.has_import().unwrap());
     drop(lock);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hand_edit_shows_in_the_snapshot_and_notifies_once_without_a_sync() {
+    let t = T::new().await;
+    // the folder is there at start, so the watcher takes it
+    std::fs::create_dir_all(t.file("skills/demo")).unwrap();
+    let h = t
+        .group_with("h1", &[("skills/demo/SKILL.md", "---\nname: demo\n---\n")])
+        .await;
+    h.send(Command::SyncNow).await.unwrap();
+    assert!(h.snapshot().groups[0].edits.is_empty());
+    std::fs::write(t.file("skills/demo/SKILL.md"), "mine\n").unwrap();
+    let mut seen = false;
+    for _ in 0..100 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        seen = !h.snapshot().groups[0].edits.is_empty();
+        if seen {
+            break;
+        }
+    }
+    assert!(seen, "the watcher never reported the edit");
+    let s = h.snapshot();
+    assert_eq!(s.groups[0].edits[0].path, "skills/demo/SKILL.md");
+    let n: Vec<_> = s
+        .notifications
+        .iter()
+        .filter(|n| n.text.starts_with("Local change to a shared file"))
+        .collect();
+    assert_eq!(n.len(), 1, "{:?}", s.notifications);
+    assert!(n[0]
+        .text
+        .contains("skills/demo/SKILL.md was changed on this machine. Share it with zed/team?"));
+    assert_eq!(n[0].repo.as_deref(), Some("zed/team"));
+}

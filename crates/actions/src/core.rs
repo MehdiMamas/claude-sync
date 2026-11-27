@@ -79,7 +79,16 @@ pub struct Core {
     last_flush: i64,
     /// Set when the v1 import was skipped because `daemon.lock` was held by another process.
     daemon_note: Option<InstallNote>,
+    /// The file watcher (Parity 24); alive while this is set.
+    pub(crate) watch: Option<claude_sync_fs::watch::Watch>,
+    /// The watcher saw a change; the next command or tick looks at the edits.
+    pub(crate) dirty: Arc<AtomicBool>,
+    /// Per group: the local edits seen last (the snapshot shows them, v1 `last_edits`).
+    pub(crate) edits: std::collections::HashMap<String, Vec<EditView>>,
 }
+
+/// v1 §7: hand edits are looked at once the files have been quiet this long.
+const WATCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(2);
 
 pub(crate) type ProposalCached = ((String, String), ProposalView);
 
@@ -224,6 +233,9 @@ impl Core {
             proposal_cache: Default::default(),
             last_flush: 0,
             daemon_note: None,
+            watch: None,
+            dirty: Arc::default(),
+            edits: Default::default(),
         };
         c.import_v1_once(held);
         c.restore_session();
@@ -265,7 +277,28 @@ impl Core {
     pub fn handle(&mut self, cmd: Command) -> Result<Event> {
         let r = self.dispatch(cmd);
         self.note_expired();
+        self.check_dirty();
         r
+    }
+
+    /// Parity 24: watch `~/.claude` and the marketplaces. A change wakes the actor with a
+    /// `Refresh` (the daemon looks at the flag on its next tick). A folder a sync creates later
+    /// is watched after the next change (`check_dirty` calls this again).
+    pub fn start_watch(&mut self) {
+        let (dirty, tx) = (self.dirty.clone(), self.tx.clone());
+        let on_change = move || {
+            dirty.store(true, std::sync::atomic::Ordering::SeqCst);
+            if let Some(tx) = tx.as_ref().and_then(|t| t.upgrade()) {
+                let _ = tx.try_send(Msg {
+                    cmd: Command::Refresh,
+                    reply: None,
+                });
+            }
+        };
+        match claude_sync_fs::watch::watch(&self.home, WATCH_DEBOUNCE, on_change) {
+            Ok(w) => self.watch = Some(w),
+            Err(e) => tracing::warn!("file watcher not started: {e}"),
+        }
     }
 
     fn dispatch(&mut self, cmd: Command) -> Result<Event> {
@@ -408,6 +441,7 @@ impl Core {
             limited_until: self.client.limited_until(),
             repos: &repos,
         };
+        self.check_dirty();
         let due = self.schedule.due(&facts);
         if due.invites {
             self.load_invitations();
@@ -575,6 +609,7 @@ impl Core {
                     pending_review: crate::review::load(&self.db, &g.repo)
                         .map_or(0, |r| r.pending.len() as u32),
                     off: g.off,
+                    edits: self.edits.get(&g.repo).cloned().unwrap_or_default(),
                     pending_invites: self
                         .pending_invites
                         .get(&g.repo)

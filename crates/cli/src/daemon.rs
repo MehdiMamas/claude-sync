@@ -158,7 +158,14 @@ pub fn run(state: &Path, version: &str, env: Env) -> Result<String, String> {
     };
     let stop = Arc::new(AtomicBool::new(false));
     let _rt = stop_on_signal(stop.clone())?;
-    let open = || Core::open_locked(env.clone()).map_err(|e| e.to_string());
+    let open = || {
+        Core::open_locked(env.clone())
+            .map(|mut c| {
+                c.start_watch();
+                c
+            })
+            .map_err(|e| e.to_string())
+    };
     run_loop(
         state,
         &open,

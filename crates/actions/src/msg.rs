@@ -163,3 +163,6 @@ pub const SHOT_TOO_LARGE: &str = "screenshot is larger than 3 MB";
 pub const SHOT_BAD: &str = "only PNG and JPEG images can be attached";
 
 pub const TEST_NOTIFICATION: &str = "Notifications from claude-sync show up like this.";
+
+/// v1 title of the notification for an edit made by hand to a shared file.
+pub const LOCAL_EDIT_TITLE: &str = "Local change to a shared file";
