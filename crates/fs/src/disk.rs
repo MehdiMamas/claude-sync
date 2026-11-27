@@ -48,12 +48,23 @@ impl Home {
         Home {
             home: home.into(),
             claude: claude.map_or_else(|| home.join(".claude"), PathBuf::from),
-            state: state.map_or_else(|| home.join(".claude-sync"), PathBuf::from),
+            state: state.map_or_else(|| default_state(home), PathBuf::from),
             ssh: home.join(".ssh"),
         }
     }
     pub fn lock_file(&self) -> PathBuf {
         self.state.join("sync.lock")
+    }
+}
+
+/// `~/.claude-sync`, or `~/.claude-sync/app` when `~/.claude-sync/.git` exists (a v0 clone
+/// that could not be moved), as v1's `paths.rs`.
+pub fn default_state(home: &Path) -> PathBuf {
+    let dir = home.join(".claude-sync");
+    if dir.join(".git").exists() {
+        dir.join("app")
+    } else {
+        dir
     }
 }
 
@@ -419,4 +430,35 @@ fn merge_personal_settings(have: Option<&[u8]>, synced: &[u8]) -> IoResult<Vec<u
     let mut b = serde_json::to_vec_pretty(&out).map_err(|e| IoError(e.to_string()))?;
     b.push(b'\n');
     Ok(b)
+}
+
+#[cfg(test)]
+mod home_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_under_home() {
+        let home = tempfile::tempdir().unwrap();
+        let h = Home::under(home.path());
+        assert_eq!(h.claude, home.path().join(".claude"));
+        assert_eq!(h.state, home.path().join(".claude-sync"));
+    }
+
+    #[test]
+    fn v0_clone_moves_state_to_app() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join(".claude-sync/.git")).unwrap();
+        let h = Home::under(home.path());
+        assert_eq!(h.state, home.path().join(".claude-sync").join("app"));
+        assert_eq!(h.lock_file(), h.state.join("sync.lock"));
+    }
+
+    #[test]
+    fn overrides_win() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join(".claude-sync/.git")).unwrap();
+        let h = Home::with(home.path(), Some("/c".into()), Some("/s".into()));
+        assert_eq!(h.claude, PathBuf::from("/c"));
+        assert_eq!(h.state, PathBuf::from("/s"));
+    }
 }

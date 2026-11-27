@@ -48,7 +48,7 @@ fn context() -> tauri::Context {
         let state = claude_sync_fs::Home::from_env(&home).state;
         c.config_mut().identifier = claude_sync_cli::daemon::instance_id(
             &c.config().identifier,
-            &home.join(".claude-sync"),
+            &claude_sync_fs::disk::default_state(&home),
             &state,
         );
     }

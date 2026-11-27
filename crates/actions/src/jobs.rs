@@ -50,7 +50,7 @@ impl JobsEnv {
         let h = home.to_path_buf();
         JobsEnv {
             exe,
-            kind: os_kind(home),
+            kind: os_kind(home, &claude_sync_fs::Home::from_env(home).state),
             runner: Arc::new(SystemRunner),
             claude: Arc::new(move || find_claude(&h)),
             login_path: Arc::new(login_shell_path),
@@ -70,7 +70,7 @@ impl JobsEnv {
     }
 }
 
-fn os_kind(home: &Path) -> Kind {
+fn os_kind(home: &Path, state: &Path) -> Kind {
     let out = |p: &str, a: &[&str]| {
         claude_sync_fs::quiet(Command::new(p).args(a))
             .output()
@@ -79,7 +79,7 @@ fn os_kind(home: &Path) -> Kind {
     };
     if cfg!(windows) {
         Kind::Windows {
-            temp: home.join(".claude-sync").join("tmp"),
+            temp: state.join("tmp"),
             user: String::new(),
         }
     } else if cfg!(target_os = "macos") {
