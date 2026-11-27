@@ -51,12 +51,41 @@ impl Core {
         let disk = self.disk(repo);
         let mut out = vec![];
         for (p, b) in &base.files {
-            let local = disk.read(p).ok().flatten();
+            let mut local = disk.read(p).ok().flatten();
+            if p == "settings.shared.json" {
+                local = self.settings_local(repo, local);
+            }
             if local.as_ref() != Some(b) {
                 out.push((p.clone(), local));
             }
         }
         Ok(out)
+    }
+
+    /// v1: this machine's side of `settings.shared.json` is the applied copy with the person's
+    /// own changes to the values the group set (`reconstruct`); the copy itself when none.
+    fn settings_local(&self, repo: &str, copy: Option<Vec<u8>>) -> Option<Vec<u8>> {
+        let raw = copy?;
+        let rebuilt = (|| {
+            let copy: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+            let local: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(self.home.claude.join("settings.json")).ok()?,
+            )
+            .ok()?;
+            claude_sync_engine::settings_edits::reconstruct(
+                &copy,
+                &local,
+                &claude_sync_fs::apply::load_owned(&self.db, repo),
+                &self.pack_pinned(),
+            )
+        })();
+        match rebuilt {
+            Some(v) => serde_json::to_vec_pretty(&v).ok().map(|mut b| {
+                b.push(b'\n');
+                b
+            }),
+            None => Some(raw),
+        }
     }
 
     pub(crate) fn edits_list(&self, repo: &str) -> Result<Event> {

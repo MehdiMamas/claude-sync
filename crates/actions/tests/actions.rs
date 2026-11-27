@@ -964,6 +964,76 @@ async fn commit_marker_bytes_and_leave_removes_delivered_files() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_changed_group_setting_is_a_local_edit_of_settings_shared_json_as_in_v1() {
+    let t = T::new().await;
+    let h = t.signed_in().await;
+    let gf = json!({"schema": 1, "name": "Team", "members": ["ann"], "sync": {"settings": true}});
+    t.join_served(
+        &h,
+        "zed/team",
+        "h1",
+        &[("settings.shared.json", "{\"model\":\"opus\"}\n")],
+        gf,
+        true,
+    )
+    .await;
+    h.send(Command::SyncNow).await.unwrap();
+    let list = || async {
+        let Event::Edits(e) = h
+            .send(Command::EditsList {
+                repo: "zed/team".into(),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        e
+    };
+    assert!(std::fs::read_to_string(t.file("settings.json"))
+        .unwrap()
+        .contains("opus"));
+    assert!(list().await.is_empty());
+    std::fs::write(t.file("settings.json"), "{\"model\":\"haiku\"}").unwrap();
+    let e = list().await;
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert_eq!(e[0].path, "settings.shared.json");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn flags_turned_off_in_the_group_file_apply_in_the_same_pass() {
+    let t = T::new().await;
+    let h = t.signed_in().await;
+    let on = json!({"schema": 1, "name": "Team", "members": ["ann"], "sync": {"settings": true}});
+    t.join_served(
+        &h,
+        "zed/team",
+        "h1",
+        &[("settings.shared.json", "{\"model\":\"opus\"}\n")],
+        on,
+        true,
+    )
+    .await;
+    h.send(Command::SyncNow).await.unwrap();
+    assert!(std::fs::read_to_string(t.file("settings.json"))
+        .unwrap()
+        .contains("opus"));
+    let off = json!({"schema": 1, "name": "Team", "members": ["ann"], "sync": {"settings": false}});
+    t.serve_repo(
+        "zed/team",
+        "h2",
+        &[("settings.shared.json", "{\"model\":\"opus\"}\n")],
+        off,
+        true,
+    )
+    .await;
+    h.send(Command::SyncNow).await.unwrap();
+    assert!(!std::fs::read_to_string(t.file("settings.json"))
+        .unwrap_or_default()
+        .contains("opus"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn keep_mine_undo_and_a_secret_blocks_sharing() {
     let t = T::new().await;
     let orig = "---\nname: s\n---\nhello\n";
