@@ -34,6 +34,14 @@ updateChecked: number | null,
  */
 appUncovered: Array<string>, 
 /**
+ * The GitHub App's slug, for its install and manage pages.
+ */
+appSlug: string, 
+/**
+ * The sign-in screen starts the GitHub App sign-in (a v1 `githubApp` setting that was on).
+ */
+githubApp: boolean, 
+/**
  * Desktop notifications switch (Settings); on until turned off.
  */
 desktopNotifications: boolean, 

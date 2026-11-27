@@ -91,6 +91,8 @@ const base = (): Snapshot => ({
   update: "",
   updateChecked: sec() - 3600,
   appUncovered: [],
+  appSlug: "claude-sync-app-github",
+  githubApp: false,
   desktopNotifications: true,
   helper: true,
   startAtLogin: true,

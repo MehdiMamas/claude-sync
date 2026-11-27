@@ -23,6 +23,11 @@ pub const CLIENT_ID: &str = match option_env!("CLAUDE_SYNC_GITHUB_CLIENT_ID") {
     Some(id) => id,
     None => "",
 };
+/// Slug of the GitHub App for `https://github.com/apps/<slug>`; the build variable wins (as v1).
+pub const APP_SLUG: &str = match option_env!("CLAUDE_SYNC_GITHUB_APP_SLUG") {
+    Some(s) => s,
+    None => "claude-sync-app-github",
+};
 /// The relay, set at build time; the default is on the reserved `.invalid` TLD so a build
 /// without it never sends a token anywhere.
 pub const RELAY_URL: &str = match option_env!("CLAUDE_SYNC_RELAY_URL") {

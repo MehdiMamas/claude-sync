@@ -68,7 +68,7 @@ export function App() {
         state={snap.signIn}
         expired={snap.sessionExpired !== null}
         login={snap.login && approved ? snap.login : null}
-        start={() => void call({ kind: "signInStart", data: { app: false } })}
+        start={() => void call({ kind: "signInStart", data: { app: snap.githubApp } })}
         cancel={() => void call({ kind: "signInCancel" })}
         openUrl={(u) => void b.openTarget(u)}
         install={snap.install}

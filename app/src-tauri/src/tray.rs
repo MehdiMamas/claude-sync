@@ -315,6 +315,8 @@ mod tests {
             update: String::new(),
             update_checked: None,
             app_uncovered: Vec::new(),
+            app_slug: String::new(),
+            github_app: false,
             desktop_notifications: true,
             helper: true,
             start_at_login: None,

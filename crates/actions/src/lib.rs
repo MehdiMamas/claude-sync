@@ -46,3 +46,4 @@ pub use core::{Core, Env, Secrets};
 pub use error::{Error, Result};
 pub use model::*;
 pub use schedule::{Due, Schedule};
+pub use signin::Outcome;

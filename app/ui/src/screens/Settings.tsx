@@ -556,7 +556,9 @@ function Account(c: SettingsCtx & { sub: string[] }) {
                     <button
                       type="button"
                       className="b p"
-                      onClick={() => open("https://github.com/apps/claude-sync/installations/new")}
+                      onClick={() =>
+                        open(`https://github.com/apps/${snap.appSlug}/installations/new`)
+                      }
                     >
                       Install the App
                     </button>
@@ -579,7 +581,7 @@ function Account(c: SettingsCtx & { sub: string[] }) {
               <button
                 type="button"
                 className="b"
-                onClick={() => open("https://github.com/apps/claude-sync/installations/new")}
+                onClick={() => open(`https://github.com/apps/${snap.appSlug}/installations/new`)}
               >
                 Open
               </button>

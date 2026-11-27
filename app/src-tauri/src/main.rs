@@ -183,6 +183,33 @@ fn first_run_autostart(app: &AppHandle, h: &Handle) {
     });
 }
 
+/// Debug builds only: `CLAUDE_SYNC_DEV_TOKEN` signs in with that token so the app can be tried
+/// without an OAuth App; a token GitHub refuses is logged and ignored (as v1). Unlike v1 the
+/// token is saved like any sign-in.
+#[cfg(debug_assertions)]
+fn dev_token_sign_in(h: &Handle) {
+    let Some(t) = std::env::var("CLAUDE_SYNC_DEV_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty() && h.snapshot().login.is_none())
+    else {
+        return;
+    };
+    let h = h.clone();
+    tauri::async_runtime::spawn(async move {
+        let tokens = claude_sync_github::Tokens::plain(&t);
+        match h
+            .send(Command::SignInDone(claude_sync_actions::Outcome::Tokens(
+                tokens,
+            )))
+            .await
+        {
+            Ok(_) => tracing::info!("signed in with CLAUDE_SYNC_DEV_TOKEN"),
+            Err(e) => tracing::warn!("CLAUDE_SYNC_DEV_TOKEN was not accepted: {}", e.0),
+        }
+    });
+}
+
 /// macOS and Linux release builds: `~/.local/bin/claude-sync` points at this binary, only when
 /// that folder exists and the name is free (Parity 65).
 #[cfg(unix)]
@@ -228,6 +255,8 @@ fn start(app: &AppHandle, background: bool) -> Result<(), String> {
     }
     app.manage(h.clone());
     first_run_autostart(app, &h);
+    #[cfg(debug_assertions)]
+    dev_token_sign_in(&h);
     link_cli();
     let s = h.snapshot();
     tray::build(app, &s, now()).map_err(|e| e.to_string())?;
@@ -236,6 +265,8 @@ fn start(app: &AppHandle, background: bool) -> Result<(), String> {
     pump(app.clone(), h);
     if !background || s.login.is_none() {
         window::open(app, None);
+    } else {
+        window::closed(app);
     }
     Ok(())
 }
@@ -295,6 +326,11 @@ fn main() {
         RunEvent::ExitRequested {
             api, code: None, ..
         } => api.prevent_exit(),
+        RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } if label == window::LABEL => window::closed(app),
         RunEvent::Exit => {
             // the log is flushed when the guard goes
             drop(log.take());

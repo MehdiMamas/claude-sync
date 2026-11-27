@@ -322,6 +322,7 @@ fn old_fields_are_used_only_when_choices_json_is_missing() {
         serde_json::from_slice(&h.db().read("choices").unwrap().unwrap()).unwrap();
     assert_eq!(v["app"]["paused"], true);
     assert_eq!(v["app"]["intervalSecs"], 120);
+    assert_eq!(v["app"]["githubApp"], false);
     assert_eq!(v["groups"]["sample-org/team-data"]["autoRunJobs"], true);
     assert_eq!(
         v["groups"]["sample-org/friends-data"]["reviewClaudeMd"],
@@ -552,4 +553,18 @@ fn v1_review_state_becomes_the_v2_review_state() {
     assert!(Store::read(&db, "review/sample-org/team-data")
         .unwrap()
         .is_none());
+}
+
+#[test]
+fn a_v1_github_app_setting_that_was_on_is_kept_as_the_sign_in_choice() {
+    let h = Home::new();
+    let p = h.sync().join("state.json");
+    let s = std::fs::read_to_string(&p)
+        .unwrap()
+        .replace("\"githubApp\": false", "\"githubApp\": true");
+    std::fs::write(&p, s).unwrap();
+    h.import(&h.db());
+    let v: serde_json::Value =
+        serde_json::from_slice(&h.db().read("choices").unwrap().unwrap()).unwrap();
+    assert_eq!(v["app"]["githubApp"], true);
 }

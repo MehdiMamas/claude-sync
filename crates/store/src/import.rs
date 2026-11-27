@@ -247,10 +247,17 @@ impl Reader<'_> {
         .into();
         // `consents`: old accepted/auto-run values count only when there is no choices file at
         // all; an unreadable one must not bring back a consent that was taken back.
-        let eff = match choices {
+        let mut eff = match choices {
             Some(c) => c,
             None => old_choices(&state, &jobs, &reviews, !torn),
         };
+        // v1's "GitHub App" setting becomes the sign-in choice the sign-in screen starts with.
+        if let (Some(on), true) = (
+            state["githubApp"].as_bool(),
+            eff["app"]["githubApp"].is_null(),
+        ) {
+            eff["app"]["githubApp"] = json!(on);
+        }
         put(tx, "choices", &eff)?;
         put(tx, "choices.source", &json!(self.report.choices_from))?;
 

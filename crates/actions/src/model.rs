@@ -176,6 +176,10 @@ ts! {
         /// Groups the GitHub App is not installed on (App mode). Filled when the engine reads the
         /// app's installations; empty until then.
         pub app_uncovered: Vec<String>,
+        /// The GitHub App's slug, for its install and manage pages.
+        pub app_slug: String,
+        /// The sign-in screen starts the GitHub App sign-in (a v1 `githubApp` setting that was on).
+        pub github_app: bool,
         /// Desktop notifications switch (Settings); on until turned off.
         pub desktop_notifications: bool,
         /// Claude helper switch (Settings, Advanced); on until turned off.

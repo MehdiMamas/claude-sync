@@ -679,6 +679,8 @@ impl Core {
             update: self.update_state(),
             update_checked: self.update_checked(),
             app_uncovered: self.app_uncovered.clone(),
+            app_slug: claude_sync_github::APP_SLUG.into(),
+            github_app: c.app.github_app.unwrap_or(false),
             desktop_notifications: c.app.desktop_notifications.unwrap_or(true),
             helper: c.app.helper.unwrap_or(true),
             start_at_login: c.app.start_at_login,

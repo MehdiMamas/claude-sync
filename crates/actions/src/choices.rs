@@ -50,6 +50,8 @@ pub struct AppChoice {
     pub desktop_notifications: Option<bool>,
     /// The Claude helper (Explain); on until turned off.
     pub helper: Option<bool>,
+    /// v1's "GitHub App" setting: the sign-in screen starts the App sign-in when on.
+    pub github_app: Option<bool>,
     pub ts: u64,
     #[serde(flatten)]
     pub rest: Map<String, Value>,

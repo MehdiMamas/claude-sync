@@ -4470,3 +4470,11 @@ async fn a_device_name_follows_the_v1_rule() {
     .await
     .unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_snapshot_carries_the_github_app_slug_for_the_install_page() {
+    let t = T::new().await;
+    let h = t.signed_in().await;
+    assert_eq!(h.snapshot().app_slug, claude_sync_github::APP_SLUG);
+    assert!(!h.snapshot().app_slug.is_empty());
+}
