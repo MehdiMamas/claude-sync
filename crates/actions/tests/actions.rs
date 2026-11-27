@@ -4441,3 +4441,29 @@ async fn a_new_invitation_raises_one_notification_even_when_polled_again() {
     );
     assert_eq!(n[0].repo.as_deref(), Some("zed/t"));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_device_name_follows_the_v1_rule() {
+    let t = T::new().await;
+    let h = t.signed_in().await;
+    let id = "d1".to_string();
+    for bad in ["", "  ", "a/b", "a\\b", "a:b", "me@pc", &"x".repeat(65)] {
+        let r = h
+            .send(Command::DeviceRename {
+                id: id.clone(),
+                name: bad.into(),
+            })
+            .await;
+        assert_eq!(
+            r.unwrap_err().to_string(),
+            "device names can't contain / \\ : @ and are at most 64 characters",
+            "{bad:?}"
+        );
+    }
+    h.send(Command::DeviceRename {
+        id,
+        name: "x".repeat(64),
+    })
+    .await
+    .unwrap();
+}

@@ -353,6 +353,11 @@ impl Core {
         }
         match &p {
             Pending::Rename { id, name } => {
+                // v1 device-name rule (the name is part of commit signatures and ssh aliases)
+                if name.trim().is_empty() || name.len() > 64 || name.contains(['/', '\\', ':', '@'])
+                {
+                    return Err(Error::new(msg::DEVICE_NAME_INVALID));
+                }
                 if let Some(d) = st.devices.iter_mut().find(|d| d.id == *id) {
                     d.name = name.clone();
                 }

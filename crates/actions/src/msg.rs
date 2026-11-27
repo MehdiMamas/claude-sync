@@ -180,3 +180,7 @@ pub const PLUGINS_CHANGED: &str =
 pub fn update_ready(version: &str) -> String {
     format!("claude-sync {version} is ready. It installs at the next quiet moment.")
 }
+
+/// v1 text when a device name is refused.
+pub const DEVICE_NAME_INVALID: &str =
+    "device names can't contain / \\ : @ and are at most 64 characters";
