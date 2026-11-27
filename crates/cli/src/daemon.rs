@@ -136,13 +136,13 @@ pub fn run_loop(
         if core.is_none() || now != seen {
             match open() {
                 Ok(c) => core = Some(c),
-                Err(e) => eprintln!("claude-sync-cli: {e}"),
+                Err(e) => tracing::error!("{e}"),
             }
             seen = now;
         }
         if let Some(c) = core.as_mut() {
             if let Err(e) = c.tick() {
-                eprintln!("claude-sync-cli: {e}");
+                tracing::error!("sync tick failed: {e}");
             }
             if c.token_refused() && last_gh.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
                 last_gh = Some(std::time::Instant::now());

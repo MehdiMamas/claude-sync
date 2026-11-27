@@ -21,6 +21,7 @@ claude-sync-github = { path = "../github", default-features = false }
 claude-sync-store = { path = "../store" }
 serde.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 tokio = { workspace = true, features = ["signal", "rt", "time"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4.6.10", features = ["derive"] }

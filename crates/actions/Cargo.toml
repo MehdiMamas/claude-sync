@@ -20,6 +20,7 @@ claude-sync-store = { path = "../store" }
 claude-sync-fs = { path = "../fs" }
 serde.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }

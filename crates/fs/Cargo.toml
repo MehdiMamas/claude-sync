@@ -17,6 +17,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 sha2 = "0.10"
+tracing.workspace = true
+tracing-appender = "0.2.3"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 notify-debouncer-mini = { version = "0.7", default-features = false }
 

@@ -69,7 +69,7 @@ fn in_bundle() -> bool {
 /// Register the delegate and ask for permission (macOS shows its prompt the first time).
 pub fn init(app: &AppHandle) {
     if !in_bundle() {
-        eprintln!("claude-sync: not running from an app bundle: no macOS notifications");
+        tracing::warn!("not running from an app bundle: no macOS notifications");
         return;
     }
     let _ = APP.set(app.clone());
@@ -84,8 +84,7 @@ pub fn init(app: &AppHandle) {
             // macOS answers this way, without a prompt, once the app was denied (or
             // dismissed) before: the choice sticks to the bundle id until the user flips
             // it in System Settings > Notifications.
-            eprintln!(
-                "claude-sync: notification permission request failed: {e}. If notifications \
+            tracing::warn!("notification permission request failed: {e}. If notifications \
                  were denied earlier, turn them on in System Settings > Notifications > claude-sync"
             );
         } else {
@@ -113,7 +112,7 @@ pub fn show(title: &str, body: &str) -> Result<(), String> {
     let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&id, &content, None);
     let done = RcBlock::new(|err: *mut NSError| {
         if let Some(e) = unsafe { err.as_ref() } {
-            eprintln!("claude-sync: notification failed: {e}");
+            tracing::warn!("notification failed: {e}");
         }
     });
     UNUserNotificationCenter::currentNotificationCenter()

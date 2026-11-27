@@ -301,7 +301,7 @@ fn take_lock(state: &Path, job: &Job, now: i64) -> std::io::Result<Option<LockGu
                 if age <= u64::from(job.timeout) * 60 + STALE_GRACE_SECS {
                     return Ok(None);
                 }
-                eprintln!("claude-sync: breaking a stale job lock ({})", job.id);
+                tracing::warn!("breaking a stale job lock ({})", job.id);
                 let _ = std::fs::remove_file(&path);
             }
             Err(e) => return Err(e),

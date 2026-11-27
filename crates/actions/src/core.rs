@@ -157,7 +157,7 @@ impl Core {
             &claude_sync_store::DaemonLockHeld::claim(),
         );
         if let Err(e) = r {
-            eprintln!("claude-sync: v1 import failed: {e}");
+            tracing::error!("v1 import failed: {e}");
         }
         drop(lock);
     }

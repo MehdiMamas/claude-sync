@@ -26,6 +26,6 @@ pub fn open(app: &AppHandle, route: Option<&str>) {
         .center()
         .build();
     if let Err(e) = built {
-        eprintln!("claude-sync: could not open the window: {e}");
+        tracing::warn!("could not open the window: {e}");
     }
 }

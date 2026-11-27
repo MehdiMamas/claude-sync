@@ -10,6 +10,7 @@ pub mod apply;
 pub mod atomic;
 pub mod disk;
 pub mod exec;
+pub mod logging;
 pub mod pass;
 pub mod redact;
 pub mod ssh;

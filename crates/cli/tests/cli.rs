@@ -41,6 +41,17 @@ fn exit_codes() {
     ] {
         assert_eq!(go(p, &args), code, "{args:?}");
     }
+    // `sync` is one of the commands that write the log file (v1 names, `claude-sync.<day>.log`).
+    let logs: Vec<_> = std::fs::read_dir(p.join(".claude-sync/logs"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        logs.iter()
+            .any(|n| n.starts_with("claude-sync.") && n.ends_with(".log")),
+        "{logs:?}"
+    );
 }
 
 #[test]

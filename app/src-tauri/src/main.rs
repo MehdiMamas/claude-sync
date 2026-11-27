@@ -84,7 +84,7 @@ fn desktop(app: &AppHandle, title: &str, body: &str) {
         return;
     }
     if let Err(e) = app.notification().builder().title(title).body(body).show() {
-        eprintln!("claude-sync: notification failed: {e}");
+        tracing::warn!("notification failed: {e}");
     }
 }
 
@@ -113,7 +113,7 @@ fn on_click(app: &AppHandle) {
         }
     });
     if let Err(e) = registered {
-        eprintln!("claude-sync: notification clicks are not handled: {e}");
+        tracing::warn!("notification clicks are not handled: {e}");
     }
 }
 
@@ -201,8 +201,8 @@ fn start(app: &AppHandle, background: bool) -> Result<(), String> {
             let mut o = owner.0.lock().map_err(|e| e.to_string())?;
             *o = Some(i);
         }
-        Ok(None) => eprintln!("claude-sync: another daemon holds daemon.lock"),
-        Err(e) => eprintln!("claude-sync: {e}"),
+        Ok(None) => tracing::info!("another daemon holds daemon.lock"),
+        Err(e) => tracing::warn!("{e}"),
     }
     app.manage(h.clone());
     first_run_autostart(app, &h);
@@ -223,6 +223,8 @@ fn main() {
         std::process::exit(claude_sync_cli::run_status(args, &ctx()) as i32);
     }
     let background = args.iter().any(|a| a == BACKGROUND);
+    let log = std::env::home_dir()
+        .and_then(|h| claude_sync_fs::logging::init(&claude_sync_fs::Home::from_env(&h).state));
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // `--refresh`: another program changed the state; reload the screens, open nothing.
@@ -262,12 +264,15 @@ fn main() {
             std::process::exit(1);
         }
     };
-    app.run(|app, event| match event {
+    let mut log = log;
+    app.run(move |app, event| match event {
         // Closing the window never quits: the app lives in the tray. Quit calls exit(0).
         RunEvent::ExitRequested {
             api, code: None, ..
         } => api.prevent_exit(),
         RunEvent::Exit => {
+            // the log is flushed when the guard goes
+            drop(log.take());
             // removes daemon.owner
             let owner = app.state::<Owner>();
             let taken = owner.0.lock().map(|mut o| o.take());

@@ -103,6 +103,13 @@ pub fn run_status(mut args: Vec<String>, ctx: &Ctx) -> u8 {
         eprintln!("error: unrecognized subcommand 'remove-jobs'");
         return 2;
     }
+    // The commands that run for long or from the OS scheduler write the log file (as v1).
+    let _log = matches!(cli.cmd, Cmd::Daemon | Cmd::RunJob { .. } | Cmd::Sync)
+        .then(|| {
+            let home = ctx.home.clone().or_else(std::env::home_dir)?;
+            claude_sync_fs::logging::init(&claude_sync_fs::Home::from_env(&home).state)
+        })
+        .flatten();
     match run::execute(ctx, cli.cmd) {
         Ok(out) => {
             if cli.json {

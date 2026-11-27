@@ -175,7 +175,7 @@ fn run(app: &AppHandle, id: Id) {
     tauri::async_runtime::spawn(async move {
         for c in cmds {
             if let Err(e) = h.send(c).await {
-                eprintln!("claude-sync: {e}");
+                tracing::warn!("{e}");
             }
         }
     });
@@ -255,7 +255,7 @@ pub fn apply(app: &AppHandle, s: &Snapshot, now: i64) {
             let _ = tray.set_tooltip(Some(format!("claude-sync: {}", list[0].text)));
             *shown = list;
         }
-        Err(e) => eprintln!("claude-sync: tray menu: {e}"),
+        Err(e) => tracing::warn!("tray menu: {e}"),
     }
 }
 
