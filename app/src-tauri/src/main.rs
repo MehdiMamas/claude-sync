@@ -186,8 +186,9 @@ fn first_run_autostart(app: &AppHandle, h: &Handle) {
 }
 
 /// Debug builds only: `CLAUDE_SYNC_DEV_TOKEN` signs in with that token so the app can be tried
-/// without an OAuth App; a token GitHub refuses is logged and ignored (as v1). Unlike v1 the
-/// token is saved like any sign-in.
+/// without an OAuth App; a token GitHub refuses is logged and ignored (as v1). The sign-in is
+/// kept in memory (`claude_sync_cli::token::dev_token` makes the core's store a memory one), never
+/// in the keychain.
 #[cfg(debug_assertions)]
 fn dev_token_sign_in(h: &Handle) {
     let Some(t) = std::env::var("CLAUDE_SYNC_DEV_TOKEN")

@@ -64,7 +64,21 @@ fn place(ctx: &Ctx) -> Result<Where, Fail> {
     Ok(Where { home })
 }
 
+/// A dev token wins over everything and is held in memory; else the app's keychain; else the file.
+fn secrets_for(ctx: &Ctx, state: &std::path::Path, dev: bool) -> claude_sync_actions::Secrets {
+    if dev {
+        return claude_sync_actions::Secrets(Arc::new(crate::token::MemSecrets::default()));
+    }
+    ctx.secrets
+        .clone()
+        .unwrap_or_else(|| daemon::file_secrets(state))
+}
+
 pub(crate) fn env_in(ctx: &Ctx) -> Result<Env, Fail> {
+    env_in_dev(ctx, crate::token::dev_token().is_some())
+}
+
+pub(crate) fn env_in_dev(ctx: &Ctx, dev: bool) -> Result<Env, Fail> {
     let w = place(ctx)?;
     let mut cfg: Config = ctx.cfg.clone().unwrap_or_else(Config::github);
     if cfg.client_id.is_empty() {
@@ -73,10 +87,7 @@ pub(crate) fn env_in(ctx: &Ctx) -> Result<Env, Fail> {
     Ok(Env {
         cfg,
         app_client_id: APP_CLIENT_ID.into(),
-        secrets: ctx
-            .secrets
-            .clone()
-            .unwrap_or_else(|| daemon::file_secrets(&w.state())),
+        secrets: secrets_for(ctx, &w.state(), dev),
         now: Arc::new(|| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -135,6 +146,7 @@ fn open_plain(ctx: &Ctx) -> Result<Core, Fail> {
 /// A test's injected home never asks the real `gh`.
 fn open(ctx: &Ctx) -> Result<Core, Fail> {
     let mut core = open_plain(ctx)?;
+    crate::token::dev_sign_in(&mut core, crate::token::dev_token());
     if ctx.home.is_none() {
         crate::token::recover(&mut core, crate::token::gh_token);
     }

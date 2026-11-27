@@ -66,6 +66,30 @@ impl SecretStore for MemSecrets {
     }
 }
 
+/// Debug builds only: `CLAUDE_SYNC_DEV_TOKEN` signs in with that token, held in memory
+/// (never the keychain, never the token file; sign-out leaves them alone), as v1's app.
+pub fn dev_token() -> Option<String> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::env::var("CLAUDE_SYNC_DEV_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
+/// Sign in with the dev token when nobody is signed in; a token GitHub refuses is logged, not used.
+pub fn dev_sign_in(core: &mut Core, token: Option<String>) -> bool {
+    let Some(t) = token.filter(|_| core.snapshot().login.is_none()) else {
+        return false;
+    };
+    let ok = core.recover_sign_in(&t);
+    if !ok {
+        tracing::warn!("CLAUDE_SYNC_DEV_TOKEN was not accepted");
+    }
+    ok
+}
+
 /// `gh auth token` (argument list, no shell, no console window): the token of the `gh`
 /// sign-in, or `None` when gh is missing or signed out. As v1.
 pub fn gh_token() -> Option<String> {
@@ -124,5 +148,63 @@ mod tests {
         assert_eq!(load(&s).unwrap().unwrap().0, "bob");
         delete(&s).unwrap();
         assert!(!s.0.exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_dev_token_signs_in_from_memory_and_writes_no_file() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/user"))
+            .and(header("authorization", "Bearer gho_dev"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"login": "ann", "id": 7})),
+            )
+            .mount(&server)
+            .await;
+        tokio::task::spawn_blocking(move || {
+            let h = tempfile::tempdir().unwrap();
+            let mut cfg = claude_sync_github::Config::github();
+            cfg.api = server.uri();
+            let ctx = crate::Ctx {
+                home: Some(h.path().to_path_buf()),
+                cfg: Some(cfg),
+                // a keychain that must never be touched
+                secrets: Some(claude_sync_actions::Secrets(std::sync::Arc::new(Untouched))),
+                ..crate::Ctx::cli()
+            };
+            let env = crate::run::env_in_dev(&ctx, true).unwrap();
+            let mut core = Core::open(env).unwrap();
+            assert!(core.snapshot().login.is_none());
+            assert!(!dev_sign_in(&mut core, None));
+            assert!(dev_sign_in(&mut core, Some("gho_dev".into())));
+            assert_eq!(core.snapshot().login.as_deref(), Some("ann"));
+            assert!(!h.path().join(".claude-sync/token").exists());
+            // a second call with someone signed in does nothing
+            assert!(!dev_sign_in(&mut core, Some("gho_dev".into())));
+        })
+        .await
+        .unwrap();
+    }
+
+    struct Untouched;
+    impl SecretStore for Untouched {
+        fn get(&self, _: &str) -> Result<Option<String>> {
+            Err(claude_sync_github::Error::Invalid(
+                "keychain touched".into(),
+            ))
+        }
+        fn set(&self, _: &str, _: &str) -> Result<()> {
+            Err(claude_sync_github::Error::Invalid(
+                "keychain touched".into(),
+            ))
+        }
+        fn delete(&self, _: &str) -> Result<()> {
+            Err(claude_sync_github::Error::Invalid(
+                "keychain touched".into(),
+            ))
+        }
     }
 }

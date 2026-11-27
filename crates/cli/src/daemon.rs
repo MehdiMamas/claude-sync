@@ -161,6 +161,7 @@ pub fn run(state: &Path, version: &str, env: Env) -> Result<String, String> {
     let open = || {
         Core::open_locked(env.clone())
             .map(|mut c| {
+                crate::token::dev_sign_in(&mut c, crate::token::dev_token());
                 c.start_watch();
                 c
             })
