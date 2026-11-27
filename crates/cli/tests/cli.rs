@@ -65,3 +65,34 @@ fn every_agents_md_command_is_in_the_tree() {
     }
     assert!(!names.iter().any(|n| n == "run-job" || n == "remove-jobs"));
 }
+
+#[test]
+fn a_v1_daemon_that_holds_the_lock_makes_every_command_exit_1_and_nothing_is_imported() {
+    let h = tempfile::tempdir().unwrap();
+    let state = h.path().join(".claude-sync");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(state.join("app.json"), "{}").unwrap();
+    let lock = std::fs::File::create(state.join("daemon.lock")).unwrap();
+    lock.lock().unwrap();
+    for args in [vec!["status"], vec!["status", "--json"], vec!["groups"]] {
+        assert_eq!(go(h.path(), &args), 1, "{args:?}");
+    }
+    assert!(!state.join("daemon.owner").exists());
+    drop(lock);
+    // once it lets go, the next command imports
+    assert_eq!(go(h.path(), &["status"]), 0);
+}
+
+#[test]
+fn the_stuck_daemon_message_names_the_pid_and_the_stop_command() {
+    let m = claude_sync_cli::v1_daemon_message(4242);
+    assert!(
+        m.contains("4242") && m.contains("did not stop in 30 s"),
+        "{m}"
+    );
+    assert!(m.contains(if cfg!(windows) {
+        "taskkill /PID 4242 /F"
+    } else {
+        "kill 4242"
+    }));
+}

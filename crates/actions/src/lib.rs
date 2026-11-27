@@ -26,6 +26,7 @@ mod error;
 mod extras;
 mod feedback;
 mod groups;
+pub mod handover;
 mod history;
 pub mod jobs;
 mod launch;

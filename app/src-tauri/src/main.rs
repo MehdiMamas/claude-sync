@@ -204,8 +204,8 @@ fn start(app: &AppHandle, background: bool) -> Result<(), String> {
     let env = claude_sync_cli::env_with(&ctx, secrets)?;
     let h = tauri::async_runtime::block_on(claude_sync_actions::spawn(env, Duration::from_secs(1)))
         .map_err(|e| e.0)?;
-    // shortcut: takes the daemon lock when it is free and goes on without it when another
-    // daemon holds it (sync.lock keeps passes apart); stopping a v1 daemon is steps 10 to 12.
+    // The hand-over from a v1 daemon ran when the core opened; a live v2 daemon that holds the
+    // lock keeps it and the app goes on without (sync.lock keeps passes apart).
     match single_instance(&state, ctx.version) {
         Ok(Some(i)) => {
             let owner = app.state::<Owner>();

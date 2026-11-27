@@ -67,6 +67,7 @@ impl T {
             secrets: claude_sync_actions::Secrets(self.secrets.clone()),
             now: Arc::new(move || clock.load(Ordering::SeqCst)),
             device: format!("ann@{}", self.device),
+            procs: Arc::new(claude_sync_actions::handover::NoProcs),
         }
     }
     async fn mock(&self, verb: &str, p: &str, status: u16, body: serde_json::Value) {
@@ -4158,25 +4159,24 @@ async fn the_first_open_imports_the_v1_state_once() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_held_daemon_lock_skips_the_import_and_says_so() {
+async fn a_v1_daemon_that_cannot_be_found_or_stopped_skips_the_import_and_says_so() {
     let t = T::new().await;
     let state = t.dir.path().join(".claude-sync");
     std::fs::create_dir_all(&state).unwrap();
     std::fs::write(state.join("app.json"), "{}").unwrap();
-    std::fs::write(
-        state.join("daemon.owner"),
-        r#"{"pid":4242,"version":"1.9.0"}"#,
-    )
-    .unwrap();
     let lock = std::fs::File::create(state.join("daemon.lock")).unwrap();
     lock.lock().unwrap();
     let h = t.signed_in().await;
     assert_eq!(
         h.snapshot().install,
         Some(InstallNote::Daemon {
-            pid: 4242,
-            version: "1.9.0".into()
+            pid: 0,
+            version: "1".into()
         })
     );
+    // nothing imported, nothing written
+    assert!(!state.join("daemon.owner").exists());
+    let db = claude_sync_store::Db::open(&state.join("claude-sync.db")).unwrap();
+    assert!(!db.has_import().unwrap());
     drop(lock);
 }

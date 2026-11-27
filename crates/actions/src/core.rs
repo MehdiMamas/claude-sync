@@ -26,6 +26,8 @@ pub struct Env {
     pub now: Arc<dyn Fn() -> i64 + Send + Sync>,
     /// `login@device` signature for commit messages.
     pub device: String,
+    /// The process list and the kill for the v1 daemon hand-over.
+    pub procs: Arc<dyn crate::handover::Procs>,
 }
 
 /// The keychain (or a test map) behind one clonable handle.
@@ -79,18 +81,6 @@ pub struct Core {
     daemon_note: Option<InstallNote>,
 }
 
-/// `daemon.owner` names the process that holds the lock (0 when it does not say).
-fn v1_daemon_note(state: &std::path::Path) -> InstallNote {
-    let o: serde_json::Value = std::fs::read(state.join("daemon.owner"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default();
-    InstallNote::Daemon {
-        pid: o["pid"].as_u64().unwrap_or(0) as u32,
-        version: o["version"].as_str().unwrap_or("1").to_string(),
-    }
-}
-
 pub(crate) type ProposalCached = ((String, String), ProposalView);
 
 impl Drop for Core {
@@ -125,29 +115,51 @@ impl Core {
         Self::open_with(env, true)
     }
 
-    /// Import the v1 state once. Without `held`, take `daemon.lock` for the import; when another
-    /// process holds it, skip and say so. shortcut: no hand-over of a v1 daemon here (it is
-    /// asked to stop and waited for in Plan steps 10 to 12); the note is all this does.
+    /// Import the v1 state once. Without `held`, hand over from a v1 daemon first (v2-Cutover),
+    /// then take `daemon.lock` and write `daemon.owner` for the import. A v1 daemon that does
+    /// not stop in 30 s leaves a note, nothing imported and nothing written.
     fn import_v1_once(&mut self, held: bool) {
+        use crate::handover::*;
         if self.db.import_report().ok().flatten().is_some() || self.db.has_import().unwrap_or(false)
         {
             return;
         }
+        self.daemon_note = None;
         let (state, claude) = (self.home.state.clone(), self.home.claude.clone());
+        let mut killed = false;
         let lock = if held {
             None
         } else {
+            let exe = std::env::current_exe().ok();
+            killed = match free_daemon_lock(
+                &state,
+                &*self.env.procs,
+                (std::process::id(), exe.as_deref()),
+                WAIT,
+                POLL,
+            ) {
+                Handover::Free { killed } => killed,
+                // the live v2 daemon imports
+                Handover::V2Holds => return,
+                Handover::Stuck { pid } => {
+                    self.daemon_note = Some(InstallNote::Daemon {
+                        pid,
+                        version: "1".into(),
+                    });
+                    return;
+                }
+            };
             let f = std::fs::File::options()
                 .create(true)
                 .truncate(false)
                 .write(true)
                 .open(state.join("daemon.lock"));
             match f {
-                Ok(f) if f.try_lock().is_ok() => Some(f),
-                _ => {
-                    self.daemon_note = Some(v1_daemon_note(&state));
-                    return;
+                Ok(f) if f.try_lock().is_ok() => {
+                    let _ = write_owner(&state, &own_owner(env!("CARGO_PKG_VERSION")));
+                    Some(f)
                 }
+                _ => return,
             }
         };
         let r = claude_sync_store::import_v1(
@@ -159,7 +171,14 @@ impl Core {
         if let Err(e) = r {
             tracing::error!("v1 import failed: {e}");
         }
-        drop(lock);
+        if let Some(f) = lock {
+            let _ = std::fs::remove_file(owner_path(&state));
+            let _ = f.unlock();
+            // a SIGTERM exit is clean, so the unit's Restart=on-failure would not start v2
+            if killed && self.env.procs.unit_installed() {
+                self.env.procs.restart_unit();
+            }
+        }
     }
 
     fn open_with(env: Env, held: bool) -> Result<Core> {
@@ -343,7 +362,12 @@ impl Core {
                 Ok(Event::Done)
             }
             StartAtLogin { on } => self.set_app(|a| a.start_at_login = Some(on)),
-            Refresh => Ok(Event::Done),
+            Refresh => {
+                if self.daemon_note.is_some() {
+                    self.import_v1_once(false);
+                }
+                Ok(Event::Done)
+            }
             SetInterval { secs } => self.set_app(|a| a.interval_secs = Some(secs)),
             WindowOpened => {
                 self.schedule.invites_now();
@@ -617,6 +641,76 @@ mod tests {
         }
     }
 
+    fn env_with(dir: &std::path::Path, procs: Arc<dyn crate::handover::Procs>) -> Env {
+        let mut e = Env {
+            home: dir.into(),
+            cfg: Config {
+                api: "http://127.0.0.1:9".into(),
+                login: "http://127.0.0.1:9".into(),
+                relay: "http://127.0.0.1:9".into(),
+                releases: String::new(),
+                client_id: String::new(),
+                retry_delay: std::time::Duration::from_millis(1),
+            },
+            app_client_id: String::new(),
+            secrets: Secrets(Arc::new(NoSecrets)),
+            now: Arc::new(|| 1),
+            device: "laptop".into(),
+            procs: Arc::new(crate::handover::NoProcs),
+        };
+        e.procs = procs;
+        e
+    }
+
+    /// A v1 daemon holds `daemon.lock`; stopping it drops the lock.
+    fn v1_holding_the_lock(
+        state: &std::path::Path,
+        unit: bool,
+    ) -> Arc<crate::handover::fake::FakeProcs> {
+        std::fs::create_dir_all(state).unwrap();
+        std::fs::write(state.join("app.json"), "{}").unwrap();
+        let lock = std::fs::File::create(state.join("daemon.lock")).unwrap();
+        lock.lock().unwrap();
+        let lock = std::sync::Mutex::new(Some(lock));
+        let fake = crate::handover::fake::FakeProcs {
+            procs: vec![crate::handover::fake::v1(4242, "/old/claude-sync-cli")],
+            unit,
+            ..Default::default()
+        };
+        *fake.on_kill.lock().unwrap() = Some(Box::new(move || drop(lock.lock().unwrap().take())));
+        Arc::new(fake)
+    }
+
+    #[test]
+    fn a_v1_daemon_is_stopped_then_its_state_is_imported_and_the_unit_restarted_if_there_is_one() {
+        for unit in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let state = dir.path().join(".claude-sync");
+            let fake = v1_holding_the_lock(&state, unit);
+            let c = Core::open(env_with(dir.path(), fake.clone())).unwrap();
+            assert_eq!(*fake.killed.lock().unwrap(), [4242]);
+            assert_eq!(
+                c.db.import_report().unwrap().unwrap().imported,
+                ["app.json"]
+            );
+            assert!(c.snapshot().install.is_none());
+            // the owner file lives only while the import runs
+            assert!(!state.join("daemon.owner").exists());
+            assert_eq!(*fake.restarts.lock().unwrap(), u32::from(unit));
+        }
+    }
+
+    #[test]
+    fn a_machine_with_no_v1_daemon_never_restarts_the_unit() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = Arc::new(crate::handover::fake::FakeProcs {
+            unit: true,
+            ..Default::default()
+        });
+        Core::open(env_with(dir.path(), fake.clone())).unwrap();
+        assert_eq!(*fake.restarts.lock().unwrap(), 0);
+    }
+
     #[test]
     fn a_failed_pass_is_offline_rate_limited_or_failed_by_its_text() {
         let dir = tempfile::tempdir().unwrap();
@@ -634,6 +728,7 @@ mod tests {
             secrets: Secrets(Arc::new(NoSecrets)),
             now: Arc::new(|| 1),
             device: "laptop".into(),
+            procs: Arc::new(crate::handover::NoProcs),
         };
         let c = Core::open(env).unwrap();
         c.db.add_group("zed/team", false).unwrap();

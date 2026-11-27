@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 const WINDOW: usize = 12;
 
 /// Spawns that never run on Windows: (file, program text on the spawn line; `None` = any).
-const UNIX_ONLY: [(&str, Option<&str>); 6] = [
+const UNIX_ONLY: [(&str, Option<&str>); 8] = [
     // systemd and crontab.
     ("crates/cli/src/service.rs", None),
     // `open`, macOS.
@@ -28,6 +28,15 @@ const UNIX_ONLY: [(&str, Option<&str>); 6] = [
     ),
     // `ps`, unix (the Windows branch uses `tasklist` with `creation_flags`).
     ("app/src-tauri/src/cli.rs", Some("Command::new(\"ps\")")),
+    // `systemctl --user restart`, and the unix-only test that spawns itself.
+    (
+        "crates/actions/src/handover.rs",
+        Some("Command::new(\"systemctl\")"),
+    ),
+    (
+        "crates/actions/src/handover.rs",
+        Some("Command::new(std::env::current_exe()"),
+    ),
 ];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {

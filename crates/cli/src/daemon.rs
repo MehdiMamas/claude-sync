@@ -5,44 +5,18 @@
 //! The token file is read on every pass: a `login` or `logout` in another terminal takes
 //! effect at the next pass without restarting the daemon.
 use crate::token::FileSecrets;
+use claude_sync_actions::handover::{own_owner, write_owner};
 use claude_sync_actions::{Core, Env};
-use serde::{Deserialize, Serialize};
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use sysinfo::{Pid, ProcessesToUpdate, System};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Owner {
-    pub pid: u32,
-    /// OS start time of the process, seconds since the epoch.
-    pub started: u64,
-    pub version: String,
-    pub exe: String,
-}
+pub use claude_sync_actions::handover::{live_owner, owner_path, Owner};
 
 pub fn lock_path(state: &Path) -> PathBuf {
     state.join("daemon.lock")
-}
-
-pub fn owner_path(state: &Path) -> PathBuf {
-    state.join("daemon.owner")
-}
-
-fn start_time(pid: u32) -> Option<u64> {
-    let pid = Pid::from_u32(pid);
-    let mut sys = System::new().ok()?;
-    sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
-    sys.process(pid).map(|p| p.start_time())
-}
-
-/// The daemon that is alive: the owner file names a process that exists and started when the
-/// file says (a reused pid starts later).
-pub fn live_owner(state: &Path) -> Option<Owner> {
-    let o: Owner = serde_json::from_slice(&std::fs::read(owner_path(state)).ok()?).ok()?;
-    (start_time(o.pid)? == o.started).then_some(o)
 }
 
 /// Holds the lock and the owner file; both go when it drops.
@@ -54,6 +28,9 @@ pub struct Instance {
 impl Drop for Instance {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.owner);
+        // flock goes with the open file description: a child forked right now (another thread
+        // spawning a process) would keep the lock after our fd closes, so release it by hand
+        let _ = self._lock.unlock();
     }
 }
 
@@ -72,22 +49,37 @@ pub fn single_instance(state: &Path, version: &str) -> Result<Option<Instance>, 
         Err(TryLockError::WouldBlock) => return Ok(None),
         Err(TryLockError::Error(e)) => return Err(format!("cannot lock daemon.lock: {e}")),
     }
-    let pid = std::process::id();
-    let owner = Owner {
-        pid,
-        started: start_time(pid).unwrap_or_default(),
-        version: version.into(),
-        exe: std::env::current_exe()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default(),
-    };
+    write_owner(state, &own_owner(version))?;
     let path = owner_path(state);
-    let bytes = serde_json::to_vec_pretty(&owner).map_err(|e| e.to_string())?;
-    std::fs::write(&path, bytes).map_err(|e| format!("cannot write daemon.owner: {e}"))?;
     Ok(Some(Instance {
         _lock: lock,
         owner: path,
     }))
+}
+
+/// The lock for this daemon; a v1 daemon holding it is handed over from first (v2-Cutover).
+/// `Ok(None)`: a live v2 daemon has it.
+pub fn take(
+    state: &Path,
+    version: &str,
+    procs: &dyn claude_sync_actions::handover::Procs,
+) -> Result<Option<Instance>, String> {
+    use claude_sync_actions::handover::*;
+    if let Some(i) = single_instance(state, version)? {
+        return Ok(Some(i));
+    }
+    let exe = std::env::current_exe().ok();
+    match free_daemon_lock(
+        state,
+        procs,
+        (std::process::id(), exe.as_deref()),
+        WAIT,
+        POLL,
+    ) {
+        Handover::Free { .. } => single_instance(state, version),
+        Handover::V2Holds => Ok(None),
+        Handover::Stuck { pid } => Err(crate::run::v1_daemon_message(pid)),
+    }
 }
 
 /// Sets `stop` on SIGTERM or Ctrl-C. The runtime lives as long as the returned value.
@@ -161,7 +153,7 @@ pub fn run_loop(
 
 /// The `daemon` command. Returns the line to print.
 pub fn run(state: &Path, version: &str, env: Env) -> Result<String, String> {
-    let Some(_one) = single_instance(state, version)? else {
+    let Some(_one) = take(state, version, &*env.procs)? else {
         return Ok("claude-sync-cli daemon is already running.".into());
     };
     let stop = Arc::new(AtomicBool::new(false));

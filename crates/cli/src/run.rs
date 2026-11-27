@@ -81,6 +81,12 @@ pub(crate) fn env(ctx: &Ctx) -> Result<Env, Fail> {
         }),
         device: sysinfo::System::host_name().unwrap_or_else(|_| "cli".into()),
         home: w.home,
+        // a test's injected home never touches the real process list
+        procs: if ctx.home.is_some() {
+            Arc::new(claude_sync_actions::handover::NoProcs)
+        } else {
+            claude_sync_actions::handover::system()
+        },
     })
 }
 
@@ -93,8 +99,35 @@ pub fn env_with(ctx: &Ctx, secrets: claude_sync_actions::Secrets) -> Result<Env,
     Ok(e)
 }
 
+/// The word for a v1 daemon that did not stop: its pid and the command that ends it here.
+pub fn v1_daemon_message(pid: u32) -> String {
+    let (who, cmd) = if pid == 0 {
+        ("A v1 claude-sync-cli daemon".to_string(), None)
+    } else {
+        (
+            format!("The v1 claude-sync-cli daemon (process {pid})"),
+            Some(pid),
+        )
+    };
+    let how = match (cmd, cfg!(windows)) {
+        (Some(p), true) => format!("taskkill /PID {p} /F"),
+        (Some(p), false) => {
+            format!("kill {p}   (with systemd: systemctl --user restart claude-sync)")
+        }
+        (None, true) => "taskkill /IM claude-sync-cli.exe /F".to_string(),
+        (None, false) => "systemctl --user restart claude-sync".to_string(),
+    };
+    format!("{who} is still running and did not stop in 30 s, so nothing was imported. Stop it with: {how}")
+}
+
 fn open_plain(ctx: &Ctx) -> Result<Core, Fail> {
-    Ok(Core::open(env(ctx)?)?)
+    let core = Core::open(env(ctx)?)?;
+    match core.snapshot().install {
+        Some(claude_sync_actions::model::InstallNote::Daemon { pid, .. }) => {
+            Err(Fail::Run(v1_daemon_message(pid)))
+        }
+        _ => Ok(core),
+    }
 }
 
 /// Opens the core; with an expired sign-in (not after logout) tries `gh auth token` first (as v1).
