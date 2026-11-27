@@ -332,6 +332,27 @@ pub fn apply(text: &str, item: &Item) -> Option<String> {
     }
 }
 
+/// `items` patched into `text` in order; items with nothing to do are skipped.
+pub fn apply_all(text: &str, items: &[Item]) -> String {
+    items
+        .iter()
+        .fold(text.to_string(), |t, i| apply(&t, i).unwrap_or(t))
+}
+
+/// The person's own edits (`from` -> `to`) applied to `onto`: how a local edit is shared on
+/// top of the group's text, and how it survives accepted changes (v1 `rebase`).
+pub fn rebase(from: &str, to: &str, onto: &str) -> String {
+    let step = Step {
+        text: to.into(),
+        mine: true,
+        author: String::new(),
+        commit: String::new(),
+        message: String::new(),
+        at_unix: 0,
+    };
+    apply_all(onto, &items_between(from, to, &step))
+}
+
 fn split(t: &str) -> Vec<&str> {
     t.split_inclusive('\n').collect()
 }

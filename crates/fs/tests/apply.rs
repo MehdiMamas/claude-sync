@@ -48,7 +48,7 @@ fn the_block_holds_group_imports_and_the_users_text_stays() {
     let (_t, h, _db) = setup();
     std::fs::create_dir_all(&h.claude).unwrap();
     std::fs::write(h.claude.join("CLAUDE.md"), "my own rules\n").unwrap();
-    write_claude_md_copy(&h, "acme/team", Some(b"team rules\n")).unwrap();
+    write_claude_md_copy(&h, "acme/team", Some(b"team rules\n"), None, &[], 1).unwrap();
     assert!(update_block(&h, &[("acme/team".into(), false)], 10).unwrap());
     let t = std::fs::read_to_string(h.claude.join("CLAUDE.md")).unwrap();
     assert!(
@@ -73,7 +73,7 @@ fn the_block_holds_group_imports_and_the_users_text_stays() {
 #[test]
 fn a_file_the_app_created_goes_away_when_the_block_empties() {
     let (_t, h, _db) = setup();
-    write_claude_md_copy(&h, "acme/team", Some(b"x\n")).unwrap();
+    write_claude_md_copy(&h, "acme/team", Some(b"x\n"), None, &[], 1).unwrap();
     update_block(&h, &[("acme/team".into(), false)], 10).unwrap();
     assert!(h.claude.join("CLAUDE.md").exists());
     update_block(&h, &[("acme/team".into(), true)], 11).unwrap();

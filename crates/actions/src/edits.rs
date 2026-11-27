@@ -15,6 +15,12 @@ use claude_sync_fs::{FsDisk, Scope};
 use claude_sync_store::{blob_sha, BaseRec};
 use std::collections::BTreeMap;
 
+const CLAUDE_MD: &str = "CLAUDE.md";
+
+fn disk_copy(home: &claude_sync_fs::Home, repo: &str) -> Option<Vec<u8>> {
+    std::fs::read(claude_sync_fs::apply::copy_path(home, repo, CLAUDE_MD)).ok()
+}
+
 fn kept_key(repo: &str) -> String {
     format!("kept-edits/{repo}")
 }
@@ -59,7 +65,24 @@ impl Core {
                 out.push((p.clone(), local));
             }
         }
+        // v1: the group's CLAUDE.md copy is an edit when it is not the text the app accepted
+        let syncs_md = crate::groups::cached(&self.db, repo).is_some_and(|f| f.sync.claude_md);
+        if let Some(st) = crate::review::load(&self.db, repo).filter(|_| syncs_md) {
+            let local = disk_copy(&self.home, repo);
+            if local.as_deref() != Some(st.accepted.as_bytes()) {
+                out.push((CLAUDE_MD.into(), local));
+            }
+        }
         Ok(out)
+    }
+
+    /// The group's side of an edited file: the base copy, or for the CLAUDE.md copy the text
+    /// the app accepted.
+    fn theirs(&self, repo: &str, path: &str) -> Result<Option<Vec<u8>>> {
+        if path == CLAUDE_MD {
+            return Ok(crate::review::load(&self.db, repo).map(|s| s.accepted.into_bytes()));
+        }
+        Ok(self.base(repo)?.files.get(path).cloned())
     }
 
     /// v1: this machine's side of `settings.shared.json` is the applied copy with the person's
@@ -167,12 +190,15 @@ impl Core {
     /// The group's version comes back; mine is saved under `<state>/backups` first.
     pub(crate) fn undo_edit(&mut self, repo: &str, path: &str) -> Result<Event> {
         let mine = self.edit_of(repo, path)?;
-        let base = self.base(repo)?;
-        let theirs = base
-            .files
-            .get(path)
+        let theirs = self
+            .theirs(repo, path)?
             .ok_or_else(|| Error::new(msg::not_an_edit(path)))?;
-        if let Some(m) = mine {
+        if path == CLAUDE_MD {
+            // the accepted text comes back; the edit is backed up by the replace
+            let st = crate::review::load(&self.db, repo)
+                .ok_or_else(|| Error::new(msg::not_an_edit(path)))?;
+            self.rewrite_copy(repo, &st, None)?;
+        } else if let Some(m) = mine {
             let to = self
                 .home
                 .state
@@ -182,7 +208,9 @@ impl Core {
                 .join(path);
             claude_sync_fs::atomic::write_atomic(&to, &m)?;
         }
-        self.disk(repo).write(path, theirs)?;
+        if path != CLAUDE_MD {
+            self.disk(repo).write(path, &theirs)?;
+        }
         let mut k = self.kept(repo);
         if k.remove(path).is_some() {
             self.set_kept(repo, &k);
@@ -247,12 +275,7 @@ impl Core {
             .edit_of(repo, path)?
             .ok_or_else(|| Error::new(msg::no_files_to_share(path)))?;
         let text = String::from_utf8_lossy(&mine);
-        let theirs = self
-            .base(repo)?
-            .files
-            .get(path)
-            .cloned()
-            .unwrap_or_default();
+        let theirs = self.theirs(repo, path)?.unwrap_or_default();
         let theirs = String::from_utf8_lossy(&theirs);
         let old: std::collections::BTreeSet<&str> = theirs.lines().collect();
         let added = text
@@ -274,6 +297,17 @@ impl Core {
         let mine = self
             .edit_of(repo, path)?
             .ok_or_else(|| Error::new(msg::no_files_to_share(path)))?;
+        let mine = match crate::review::load(&self.db, repo).filter(|_| path == CLAUDE_MD) {
+            // v1 rebase: only what the person changed goes onto the group's text, so lines
+            // they declined are not pushed back
+            Some(st) => claude_sync_engine::review::rebase(
+                &st.accepted,
+                &String::from_utf8_lossy(&mine),
+                &st.group,
+            )
+            .into_bytes(),
+            None => mine,
+        };
         self.push_files(repo, [(path.to_string(), mine)].into(), path)
     }
 

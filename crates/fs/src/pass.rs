@@ -59,8 +59,17 @@ impl Drop for SyncLock {
     }
 }
 
+/// What the review gate lets into the CLAUDE.md copy.
+pub struct Gated {
+    /// The accepted text: what the copy holds when the person has not edited it.
+    pub accepted: Vec<u8>,
+    /// The accepted text before this pass: a copy that differs from it is a local edit.
+    pub before: Vec<u8>,
+    /// The changes accepted this pass, patched into an edited copy.
+    pub applied: Vec<claude_sync_engine::review::Item>,
+}
 /// Review gate: gets the remote CLAUDE.md text, returns what may be imported.
-pub type Gate<'a> = dyn Fn(Option<&[u8]>) -> Option<Vec<u8>> + 'a;
+pub type Gate<'a> = dyn Fn(Option<&[u8]>) -> Option<Gated> + 'a;
 /// Committer date for a head sha (the `COMMIT` marker's second line).
 pub type CommitDate<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
@@ -289,12 +298,17 @@ impl Pass<'_> {
                 None
             };
             let gated = g.gate.and_then(|f| f(md));
-            let md = if g.gate.is_some() {
-                gated.as_deref()
-            } else {
-                md
+            let (md, before, applied) = match (&gated, g.gate.is_some()) {
+                (Some(x), _) => (
+                    Some(x.accepted.as_slice()),
+                    Some(x.before.as_slice()),
+                    &x.applied[..],
+                ),
+                (None, true) => (None, None, &[][..]),
+                (None, false) => (md, None, &[][..]),
             };
-            apply::write_claude_md_copy(self.home, g.repo, md).map_err(|e| e.to_string())?;
+            apply::write_claude_md_copy(self.home, g.repo, md, before, applied, self.now)
+                .map_err(|e| e.to_string())?;
             if let Ok(Some(b)) = self.db.load_base(g.repo, &self.home.state) {
                 let paths: BTreeSet<&String> = p.new_base.keys().collect();
                 let has_mp = paths.iter().any(|p| p.starts_with("plugins/"));

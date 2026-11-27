@@ -284,7 +284,7 @@ impl Core {
         // delivered files go; a file the person changed stays (as a local file)
         pass.leave(repo).map_err(Error::new)?;
         crate::review::clear(&self.db, repo);
-        claude_sync_fs::apply::write_claude_md_copy(&self.home, repo, None)?;
+        claude_sync_fs::apply::write_claude_md_copy(&self.home, repo, None, None, &[], now)?;
         self.db.remove_group(repo)?;
         let rest: Vec<(String, bool)> = self
             .db

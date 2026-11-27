@@ -8,6 +8,7 @@ use crate::disk::{Home, Scope};
 use crate::exec::utc_stamp;
 use claude_sync_engine::claude_md::{compose_block, GroupCopy};
 use claude_sync_engine::formats::text::CommitMarker;
+use claude_sync_engine::review::{apply_all, Item};
 use claude_sync_engine::settings::{merge, unapply, Owned};
 use claude_sync_engine::settings_edits::{edited_pointers, keep_overrides, restore};
 use claude_sync_engine::traits::Store;
@@ -24,11 +25,41 @@ pub fn copy_path(home: &Home, repo: &str, file: &str) -> PathBuf {
 }
 
 /// The group's CLAUDE.md copy: written when it differs, removed when the group dropped it.
-pub fn write_claude_md_copy(home: &Home, repo: &str, text: Option<&[u8]>) -> std::io::Result<()> {
+///
+/// `before` is the text the app accepted last time (v1 `write_claude_md`): a copy that differs
+/// from it is the person's unshared edit. It is never overwritten: it is backed up, and the
+/// changes accepted this pass (`applied`) are patched into it. `None`: the copy counts as in
+/// step, but a copy that is removed is still backed up first.
+pub fn write_claude_md_copy(
+    home: &Home,
+    repo: &str,
+    text: Option<&[u8]>,
+    before: Option<&[u8]>,
+    applied: &[Item],
+    now: i64,
+) -> std::io::Result<()> {
     let p = copy_path(home, repo, "CLAUDE.md");
-    match text {
-        Some(t) if read_file(&p)?.as_deref() != Some(t) => write_atomic(&p, t),
-        None if p.exists() => std::fs::remove_file(&p),
+    let cur = read_file(&p)?;
+    let rel = format!("{}/CLAUDE.md", Scope::Group(repo.into()).dir());
+    match (text, cur) {
+        (Some(_), Some(c)) if before.is_some_and(|b| b != c.as_slice()) => {
+            let patched = apply_all(&String::from_utf8_lossy(&c), applied);
+            if patched.as_bytes() != c.as_slice() {
+                backup(home, now, &rel, &c)?;
+                write_atomic(&p, patched.as_bytes())?;
+            }
+            Ok(())
+        }
+        (Some(t), c) if c.as_deref() != Some(t) => {
+            if let Some(c) = c.filter(|c| before.is_none() && !c.is_empty()) {
+                backup(home, now, &rel, &c)?; // replaced as a whole: the old text is kept
+            }
+            write_atomic(&p, t)
+        }
+        (None, Some(c)) => {
+            backup(home, now, &rel, &c)?;
+            std::fs::remove_file(&p)
+        }
         _ => Ok(()),
     }
 }

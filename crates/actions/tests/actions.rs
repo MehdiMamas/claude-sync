@@ -812,6 +812,106 @@ async fn claude_md_changes_are_held_for_review_then_accepted() {
     assert_eq!(h.snapshot().groups[0].pending_review, 0);
 }
 
+/// Serve the group with auto-accept on, so what the group changes is applied.
+async fn serve_auto(t: &T, head: &str, text: &str) {
+    let gf = json!({"schema": 1, "name": "Team", "members": ["ann"], "autoAcceptClaudeMd": true});
+    t.serve_repo("zed/team", head, &[("CLAUDE.md", text)], gf, true)
+        .await;
+}
+
+fn copy_file(t: &T) -> std::path::PathBuf {
+    let d = std::fs::read_dir(t.dir.path().join(".claude-sync/groups"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    d.join("CLAUDE.md")
+}
+
+fn backed_up(t: &T, needle: &str) -> bool {
+    fn walk(d: &std::path::Path, needle: &str) -> bool {
+        std::fs::read_dir(d)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|e| {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, needle)
+                } else {
+                    std::fs::read_to_string(&p).is_ok_and(|s| s.contains(needle))
+                }
+            })
+    }
+    walk(&t.dir.path().join(".claude-sync/backups"), needle)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_local_edit_of_the_claude_md_copy_survives_a_remote_change_and_is_backed_up() {
+    let t = T::new().await;
+    let h = t.group_with("h1", &[]).await;
+    serve_auto(&t, "h1", &md(&["- A", "- B"])).await;
+    h.send(Command::SyncNow).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(copy_file(&t)).unwrap(),
+        md(&["- A", "- B"])
+    );
+    // the person appends a line to the delivered copy; a pass with nothing new keeps it
+    let mut mine = std::fs::read_to_string(copy_file(&t)).unwrap();
+    mine.push_str("- mine\n");
+    std::fs::write(copy_file(&t), &mine).unwrap();
+    h.send(Command::SyncNow).await.unwrap();
+    assert_eq!(std::fs::read_to_string(copy_file(&t)).unwrap(), mine);
+    let Event::Edits(e) = h
+        .send(Command::EditsList {
+            repo: "zed/team".into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        e,
+        vec![EditView {
+            path: "CLAUDE.md".into(),
+            kept: false
+        }]
+    );
+    // the group changes; the edit stays and the change lands beside it
+    serve_auto(&t, "h2", &md(&["- A", "- B", "- C"])).await;
+    h.send(Command::SyncNow).await.unwrap();
+    let now = std::fs::read_to_string(copy_file(&t)).unwrap();
+    assert!(now.contains("- mine") && now.contains("- C"), "{now}");
+    assert!(backed_up(&t, "- mine"), "the edit was not backed up");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edit_of_a_line_the_group_also_changed_is_not_lost() {
+    let t = T::new().await;
+    let h = t.group_with("h1", &[]).await;
+    serve_auto(&t, "h1", &md(&["- A", "- B"])).await;
+    h.send(Command::SyncNow).await.unwrap();
+    std::fs::write(copy_file(&t), md(&["- A", "- B mine"])).unwrap();
+    serve_auto(&t, "h2", &md(&["- A", "- B group"])).await;
+    h.send(Command::SyncNow).await.unwrap();
+    let now = std::fs::read_to_string(copy_file(&t)).unwrap();
+    assert!(now.contains("- B mine"), "{now}");
+    assert!(backed_up(&t, "- B mine"));
+    // undo brings the group's text back and keeps the edit in backups
+    h.send(Command::UndoEdit {
+        repo: "zed/team".into(),
+        path: "CLAUDE.md".into(),
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(copy_file(&t)).unwrap(),
+        md(&["- A", "- B group"])
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn clashes_between_own_text_and_a_group_are_listed() {
     let t = T::new().await;

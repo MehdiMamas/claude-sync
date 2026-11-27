@@ -10,8 +10,9 @@ use crate::model::{ClashSide, ClashView, Event, ReviewLine};
 use crate::msg;
 use claude_sync_engine::clashes::{clashes, settings_clashes, SettingsFile, Text};
 use claude_sync_engine::claude_md::strip;
-use claude_sync_engine::review::{notification, Kind, ReviewState, Step};
+use claude_sync_engine::review::{notification, Item, Kind, ReviewState, Step};
 use claude_sync_engine::traits::{Remote, Store};
+use claude_sync_fs::pass::Gated;
 use claude_sync_store::Db;
 
 fn key(repo: &str) -> String {
@@ -62,9 +63,16 @@ impl Core {
             let Some(mut st) = load(&self.db, &repo) else {
                 let st = ReviewState::new(&text);
                 save(&self.db, &repo, &st);
-                return Some(st.accepted.into_bytes());
+                let b = st.accepted.into_bytes();
+                return Some(Gated {
+                    before: b.clone(),
+                    accepted: b,
+                    applied: vec![],
+                });
             };
             st.review = Some(review);
+            let before = st.accepted.clone();
+            let mut applied = vec![];
             if text != st.group {
                 let (author, message, commit) = self.head_commit(&repo);
                 let step = Step {
@@ -76,15 +84,20 @@ impl Core {
                     at_unix: now as u64,
                 };
                 let pulled = st.pull(&[step]);
+                applied = pulled.applied.clone();
                 if let Some(t) = notification(&repo, &pulled.new) {
                     let _ = self.db.add_notification("review", &t, Some(&repo), now);
                 }
             }
             if !review {
-                st.accept(None);
+                applied.extend(st.accept(None));
             }
             save(&self.db, &repo, &st);
-            Some(st.accepted.into_bytes())
+            Some(Gated {
+                accepted: st.accepted.into_bytes(),
+                before: before.into_bytes(),
+                applied,
+            })
         })
     }
 
@@ -112,12 +125,22 @@ impl Core {
     }
 
     /// Write the accepted text where Claude reads it and refresh the block.
-    fn rewrite_copy(&self, repo: &str, st: &ReviewState) -> Result<()> {
+    /// `kept`: `(accepted text before, changes applied)`: an edited copy keeps its edit and gets
+    /// those changes; `None` replaces the copy (the old one is backed up).
+    pub(crate) fn rewrite_copy(
+        &self,
+        repo: &str,
+        st: &ReviewState,
+        kept: Option<(&str, &[Item])>,
+    ) -> Result<()> {
         save(&self.db, repo, st);
         claude_sync_fs::apply::write_claude_md_copy(
             &self.home,
             repo,
             Some(st.accepted.as_bytes()),
+            kept.map(|k| k.0.as_bytes()),
+            kept.map_or(&[], |k| k.1),
+            self.now(),
         )?;
         let order: Vec<(String, bool)> = self
             .db
@@ -152,12 +175,14 @@ impl Core {
         accept: bool,
     ) -> Result<Event> {
         let mut st = self.state(repo)?;
+        let before = st.accepted.clone();
+        let mut applied = vec![];
         if accept {
-            st.accept(ids.as_deref());
+            applied = st.accept(ids.as_deref());
         } else {
             st.decline(ids.as_deref(), self.now() as u64);
         }
-        self.rewrite_copy(repo, &st)?;
+        self.rewrite_copy(repo, &st, Some((&before, &applied)))?;
         Ok(Event::Done)
     }
 
@@ -180,7 +205,9 @@ impl Core {
     pub(crate) fn drop_line(&mut self, repo: &str, line: &str) -> Result<Event> {
         let mut st = self.state(repo)?;
         let now = self.now();
-        st.drop_line(line, now as u64)
+        let before = st.accepted.clone();
+        let item = st
+            .drop_line(line, now as u64)
             .ok_or_else(|| Error::new(msg::group_line_gone(repo)))?;
         let mut c = self.choices();
         let g = c.group(repo, now as u64 * 1000);
@@ -188,7 +215,7 @@ impl Core {
             g.dropped_lines.push(line.trim().to_string());
         }
         c.save(&self.db)?;
-        self.rewrite_copy(repo, &st)?;
+        self.rewrite_copy(repo, &st, Some((&before, &[item])))?;
         Ok(Event::Done)
     }
 
@@ -257,7 +284,7 @@ impl Core {
             .dropped_lines
             .clear();
         c.save(&self.db)?;
-        self.rewrite_copy(repo, &st)?;
+        self.rewrite_copy(repo, &st, None)?;
         Ok(Event::Done)
     }
 
