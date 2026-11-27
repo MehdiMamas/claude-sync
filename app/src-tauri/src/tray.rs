@@ -317,6 +317,7 @@ mod tests {
             app_uncovered: Vec::new(),
             desktop_notifications: true,
             start_at_login: None,
+            install: None,
         }
     }
 

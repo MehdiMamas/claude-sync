@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Command } from "./generated/Command";
 import type { Event } from "./generated/Event";
+import { Feedback } from "./screens/Feedback";
 import { GroupPage } from "./screens/Group";
 import { type Flash, Groups } from "./screens/Groups";
 import { Join, NewGroup } from "./screens/GroupsForms";
+import { Notifications } from "./screens/Notifications";
 import { Settings } from "./screens/Settings";
-import { Later, Shell } from "./screens/Shell";
+import { Shell } from "./screens/Shell";
 import { SignIn } from "./screens/SignIn";
 import { useBackend, useSnapshot } from "./store";
 import { Go, go, useRoute } from "./ui";
@@ -67,6 +69,10 @@ export function App() {
         start={() => void call({ kind: "signInStart", data: { app: false } })}
         cancel={() => void call({ kind: "signInCancel" })}
         openUrl={(u) => void b.openTarget(u)}
+        install={snap.install}
+        toast={flash.toast}
+        note={(toast) => patch({ toast })}
+        retry={() => void call({ kind: "refresh" })}
         proceed={() => {
           setApproved(false);
           go("groups");
@@ -180,8 +186,10 @@ export function App() {
         route={route}
       />
     );
+  } else if (route === "notifications") {
+    body = <Notifications snap={snap} call={call} />;
   } else {
-    body = <Later title={route[0]?.toUpperCase() + route.slice(1)} part="8c" />;
+    body = <Feedback call={call} toast={(toast) => patch({ toast })} />;
   }
   return (
     <Shell snap={snap} route={route} toast={flash.toast}>

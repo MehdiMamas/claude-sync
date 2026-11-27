@@ -489,6 +489,7 @@ impl Core {
             app_uncovered: Vec::new(),
             desktop_notifications: c.app.desktop_notifications.unwrap_or(true),
             start_at_login: c.app.start_at_login,
+            install: None,
         }
     }
 }

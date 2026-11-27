@@ -3095,6 +3095,7 @@ mod feedback {
             e,
             Event::Feedback {
                 queued: false,
+                limited: false,
                 number: Some(7),
                 url: Some("https://example.test/i/7".into())
             }
@@ -3154,6 +3155,7 @@ mod feedback {
             e,
             Event::Feedback {
                 queued: true,
+                limited: true,
                 number: None,
                 ..
             }

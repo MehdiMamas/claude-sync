@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
+import type { InstallNote } from "../generated/InstallNote";
 import type { SignInState } from "../generated/SignInState";
 import { Banner, Logo, Spin, Toast } from "../ui";
 
@@ -10,22 +11,32 @@ type Props = {
   cancel: () => void;
   openUrl: (u: string) => void;
   proceed: () => void;
+  install: InstallNote | null;
+  /** Feedback needs a token, so from here it only explains. */
+  toast: string | null;
+  note: (t: string) => void;
+  retry: () => void;
 };
 
-const Card = ({ children, toast }: { children: React.ReactNode; toast?: string }) => (
-  <div className="w">
-    <div className="full">
-      <div className="card" style={{ width: 420, padding: "28px 30px", textAlign: "left" }}>
-        <div className="brand" style={{ padding: "0 0 14px" }}>
-          <Logo />
-          claude-sync
+const Said = createContext<string | null>(null);
+
+const Card = ({ children, toast }: { children: React.ReactNode; toast?: string }) => {
+  const said = useContext(Said);
+  return (
+    <div className="w">
+      <div className="full">
+        <div className="card" style={{ width: 420, padding: "28px 30px", textAlign: "left" }}>
+          <div className="brand" style={{ padding: "0 0 14px" }}>
+            <Logo />
+            claude-sync
+          </div>
+          {children}
         </div>
-        {children}
       </div>
+      {(toast ?? said) && <Toast text={(toast ?? said) as string} />}
     </div>
-    {toast && <Toast text={toast} />}
-  </div>
-);
+  );
+};
 
 const Start = ({
   label,
@@ -41,8 +52,59 @@ const Start = ({
   </button>
 );
 
-/** Every v2-ScreenSignIn* frame: the shell's `signIn` state picks one. */
-export function SignIn(p: Props) {
+const Mono = ({ children }: { children: string }) => (
+  <span style={{ fontFamily: "var(--font-mono)" }}>{children}</span>
+);
+
+const Log = ({ note }: { note: (t: string) => void }) => (
+  <button
+    type="button"
+    className="b g"
+    onClick={() => note("Sign in first: feedback is filed under your GitHub account.")}
+  >
+    Send feedback with the log
+  </button>
+);
+
+/** v2-ScreenInstallV1Daemon: the old daemon did not stop, nothing was imported. */
+function Daemon({
+  i,
+  retry,
+  note,
+}: {
+  i: Extract<InstallNote, { kind: "daemon" }>;
+  retry: () => void;
+  note: (t: string) => void;
+}) {
+  return (
+    <Card>
+      <Banner kind="warn">
+        An old claude-sync-cli {i.version} daemon (process {i.pid}) is still running. It was asked
+        to stop and did not within 30 seconds, so nothing was imported or changed yet.
+      </Banner>
+      <h1>Finish the switch to v2</h1>
+      <p className="sub">Stop it, then try again. Your v1 files are untouched.</p>
+      <p className="sub">
+        Linux with the service: <Mono>systemctl --user restart claude-sync</Mono>
+        <br />
+        Linux without systemd, and macOS (cron): <Mono>{`kill ${i.pid}`}</Mono>
+        <br />
+        Windows: <Mono>{`taskkill /PID ${i.pid} /F`}</Mono>
+      </p>
+      <Start label="Try again" onClick={retry} />
+      <Log note={note} />
+    </Card>
+  );
+}
+
+/** Every v2-ScreenSignIn* and v2-ScreenInstall* frame: the shell's `signIn` state picks one. */
+export const SignIn = (p: Props) => (
+  <Said.Provider value={p.toast}>
+    <SignInBody {...p} />
+  </Said.Provider>
+);
+
+function SignInBody(p: Props) {
   const [copied, setCopied] = useState(false);
   const s = p.state;
   if (p.login) {
@@ -59,6 +121,8 @@ export function SignIn(p: Props) {
       </Card>
     );
   }
+  if (p.install?.kind === "daemon" && s.kind !== "code")
+    return <Daemon i={p.install} retry={p.retry} note={p.note} />;
   if (p.expired && s.kind !== "code" && s.kind !== "starting") {
     return (
       <Card>
@@ -135,24 +199,38 @@ export function SignIn(p: Props) {
           <p className="sub">Download claude-sync from its GitHub Releases page.</p>
         </Card>
       );
-    default:
+    default: {
+      const skipped = p.install?.kind === "skipped" ? p.install : null;
       return (
         <Card>
+          {skipped && (
+            <Banner kind="warn">
+              Could not read {skipped.files.length} of {skipped.total} old v1 files (
+              {skipped.files.join(", ")}). {skipped.files.length === 1 ? "It was" : "They were"}{" "}
+              skipped and kept in ~/.claude-sync/backup/; nothing was deleted.
+            </Banner>
+          )}
           {s.kind === "failed" && <Banner kind="err">{s.message}</Banner>}
           <h1>Share your Claude Code setup</h1>
           <p className="sub">
-            Sign in with GitHub. claude-sync keeps your token in the system keychain and never sees
-            a password.
+            {skipped
+              ? "Sign in to continue. Skipped jobs show again after the first sync and ask for your yes."
+              : "Sign in with GitHub. claude-sync keeps your token in the system keychain and never sees a password."}
           </p>
           <Start
             label={s.kind === "starting" ? "Starting…" : "Sign in with GitHub"}
             onClick={p.start}
             busy={s.kind === "starting"}
           />
-          <p className="sm muted" style={{ margin: "14px 0 0" }}>
-            Needs a free GitHub account.
-          </p>
+          {skipped ? (
+            <Log note={p.note} />
+          ) : (
+            <p className="sm muted" style={{ margin: "14px 0 0" }}>
+              Needs a free GitHub account.
+            </p>
+          )}
         </Card>
       );
+    }
   }
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Banner, Chip, go, Spin, useLoad } from "../ui";
 import { type Ctx, data } from "./Group";
 
@@ -91,6 +91,14 @@ export function Share(c: Ctx) {
   );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // The engine retries by itself when someone else pushed first; that takes a moment, so a share
+  // still running after a second is shown as that retry (v2-ScreenGroupShareRetrying).
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!busy) return setSlow(false);
+    const t = setTimeout(() => setSlow(true), 1000);
+    return () => clearTimeout(t);
+  }, [busy]);
   const problem = err ?? pv?.secret ?? null;
   const hit = problem?.match(/secret found in (.+):(\d+) \((.+?)\);/);
   const send = async () => {
@@ -107,6 +115,12 @@ export function Share(c: Ctx) {
   };
   return (
     <>
+      {slow && (
+        <Banner kind="info">
+          <Spin />
+          Someone pushed first. Reading the new version and trying once more…
+        </Banner>
+      )}
       {problem && (
         <Banner kind="err">
           {hit
@@ -133,14 +147,16 @@ export function Share(c: Ctx) {
         )}
         {pv && !pv.secret && !err && <p className="sm muted">Checked for secrets: none found.</p>}
         <div className="acts">
-          {pv && !pv.secret && (
+          {pv && !pv.secret && !slow && (
             <button type="button" className="b p" disabled={busy} onClick={send}>
               Share with group
             </button>
           )}
-          <a className="b" href={link(c, "edits")}>
-            {pv?.secret ? "Back" : "Cancel"}
-          </a>
+          {!slow && (
+            <a className="b" href={link(c, "edits")}>
+              {pv?.secret ? "Back" : "Cancel"}
+            </a>
+          )}
         </div>
       </div>
     </>

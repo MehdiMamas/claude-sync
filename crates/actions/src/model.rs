@@ -176,6 +176,18 @@ ts! {
         pub desktop_notifications: bool,
         /// `None` until the first start decided it.
         pub start_at_login: Option<bool>,
+        /// What the v1 import left to say on the sign-in screen; `None` when all went well.
+        pub install: Option<InstallNote>,
+    }
+
+    /// A v1 import that needs a word (v2-Cutover): files skipped, or a v1 daemon that did not stop.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(tag = "kind", rename_all = "camelCase")]
+    pub enum InstallNote {
+        /// Files that could not be read; `total` is how many v1 files there were.
+        Skipped { files: Vec<String>, total: u32 },
+        /// The v1 daemon was asked to stop and did not in 30 s: nothing was imported.
+        Daemon { pid: u32, version: String },
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -663,9 +675,11 @@ pub enum Event {
     Proposed(u64),
     Packs(Vec<PackView>),
     Text(String),
-    /// Feedback was filed (`number`, `url`) or saved to send later (`queued`).
+    /// Feedback was filed (`number`, `url`) or saved to send later (`queued`; `limited` when the
+    /// reason is a 429 and not a lost connection).
     Feedback {
         queued: bool,
+        limited: bool,
         number: Option<u64>,
         url: Option<String>,
     },

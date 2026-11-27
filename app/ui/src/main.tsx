@@ -18,8 +18,8 @@ async function main() {
   const view = new URLSearchParams(location.search).get("view");
   let root: React.ReactNode = <App />;
   if (import.meta.env.DEV && view) {
-    const { TrayPreview } = await import("./screens/Tray");
-    root = <TrayPreview quit={view === "trayQuit"} />;
+    const { TrayPreview, UnsignedPreview } = await import("./screens/Tray");
+    root = view === "unsigned" ? <UnsignedPreview /> : <TrayPreview quit={view === "trayQuit"} />;
   }
   const el = document.getElementById("root");
   if (!el) return;

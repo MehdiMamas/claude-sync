@@ -91,6 +91,7 @@ const base = (): Snapshot => ({
   appUncovered: [],
   desktopNotifications: true,
   startAtLogin: true,
+  install: null,
 });
 
 const code = {
@@ -117,6 +118,15 @@ const job = (repo: string, over: Partial<JobView> = {}): JobView => ({
   ...over,
 });
 
+const note = (id: number, kind: string, text: string, repo: string | null) => ({
+  id,
+  kind,
+  text,
+  read: false,
+  time: sec() - 600,
+  repo,
+});
+
 /** The state each `?scenario=` starts in. */
 function scenario(name: string): Snapshot {
   const s = base();
@@ -141,6 +151,39 @@ function scenario(name: string): Snapshot {
       return { ...s, login: null, signIn: { kind: "offline" } };
     case "sign-in-unavailable":
       return { ...s, login: null, signIn: { kind: "unavailable" } };
+    case "install-import-failed":
+      return {
+        ...s,
+        login: null,
+        groups: [],
+        unread: 0,
+        install: { kind: "skipped", files: ["jobs.json"], total: 9 },
+      };
+    case "install-v1-daemon":
+      return {
+        ...s,
+        login: null,
+        groups: [],
+        unread: 0,
+        install: { kind: "daemon", pid: 4182, version: "0.1.27" },
+      };
+    case "notifications":
+      s.notifications = [
+        note(1, "review", "alex-host/claude-group: 3 lines to review", "alex-host/claude-group"),
+        note(2, "invitation", "sample-org/dev-rules invited you", null),
+        note(3, "update", "Version 2.0.1 installs when the app is idle", null),
+      ];
+      s.unread = 3;
+      return s;
+    case "notifications-plain":
+      s.notifications = [
+        note(1, "feedback", '"Group did not sync" was filed as #41.', null),
+        note(2, "signin", "GitHub no longer accepts your sign-in.", null),
+      ];
+      s.unread = 2;
+      return s;
+    case "notifications-empty":
+      return { ...s, unread: 0 };
     case "groups-empty":
       return { ...s, groups: [], invitations: [], unread: 0 };
     case "groups-loading":
@@ -517,6 +560,40 @@ export function fakeBackend(search: string): Backend {
       case "startAtLogin":
         set({ startAtLogin: cmd.data.on });
         return done;
+      case "markRead":
+      case "markAllRead":
+      case "clearNotifications": {
+        const list =
+          cmd.kind === "clearNotifications"
+            ? []
+            : snap.notifications.map((n) =>
+                cmd.kind === "markAllRead" || n.id === cmd.data.id ? { ...n, read: true } : n,
+              );
+        set({ notifications: list, unread: list.filter((n) => !n.read).length });
+        return done;
+      }
+      case "refresh":
+        set({ install: null });
+        return done;
+      case "sendFeedback": {
+        await sleep(150);
+        const w = window as unknown as { __sent?: unknown[] };
+        w.__sent = [...(w.__sent ?? []), cmd.data];
+        if (name === "feedback-queued" || name === "feedback-limited")
+          return {
+            kind: "feedback",
+            data: { queued: true, limited: name === "feedback-limited", number: null, url: null },
+          };
+        if (name === "feedback-refused")
+          throw new Error(
+            "GitHub refused the issue (403: your account cannot open issues on this repo)",
+          );
+        if (name === "feedback-large") throw new Error("request body is too large");
+        return {
+          kind: "feedback",
+          data: { queued: false, limited: false, number: 41, url: "https://example.test/i/41" },
+        };
+      }
       case "desktopNotifications":
         set({ desktopNotifications: cmd.data.on });
         return done;

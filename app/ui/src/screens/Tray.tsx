@@ -26,3 +26,28 @@ export function TrayPreview({ quit }: { quit: boolean }) {
     </div>
   );
 }
+
+/** v2-ScreenInstallUnsigned: the system's own warning before the first start. Not app code; this
+ * preview only exists in the dev server so the frame can be compared. */
+export function UnsignedPreview() {
+  return (
+    <div className="w" style={{ background: "var(--bg)" }}>
+      <div className="full" style={{ maxWidth: 560, margin: "0 auto", textAlign: "left" }}>
+        <h1>Windows protected your PC</h1>
+        <p className="muted">
+          SmartScreen shows this for a new app without a paid certificate. Choose <b>More info</b>,
+          then <b>Run anyway</b>. On macOS, Gatekeeper says the app cannot be checked: right-click
+          it, choose <b>Open</b>, then <b>Open</b> again. Each release lists its SHA-256 to compare.
+        </p>
+        <div className="acts">
+          <a className="b p" href="?view=tray">
+            Run anyway
+          </a>
+          <a className="b" href="?view=trayQuit">
+            Don't run
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}

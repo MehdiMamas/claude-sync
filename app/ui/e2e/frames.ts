@@ -21,6 +21,11 @@ const createGroup = async (p: Page) => {
   await p.getByText("Invite members").first().waitFor();
 };
 
+const fill = async (p: Page) => {
+  await p.getByLabel("Title").fill("Group did not sync after sleep");
+  await p.getByLabel("What happened").fill("The group did not sync after I woke the laptop.");
+};
+
 const members = `${base}/members`;
 const host = (p: Page) => p.getByLabel("GitHub name");
 const room = "/?scenario=members";
@@ -136,6 +141,14 @@ export const frames: FrameCase[] = [
     },
   },
   { frame: "GroupShare", url: `/?scenario=group#${base}/share/skills/release-notes/SKILL.md` },
+  {
+    frame: "GroupShareRetrying",
+    url: `/?scenario=group&hold#${base}/share/skills/release-notes/SKILL.md`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Share with group" }).click();
+      await p.getByText("Someone pushed first.").waitFor();
+    },
+  },
   { frame: "GroupShareBlocked", url: `/?scenario=group#${base}/share/settings.json` },
   {
     frame: "GroupShared",
@@ -356,4 +369,40 @@ export const frames: FrameCase[] = [
       await p.getByText("blocks notifications from claude-sync").waitFor();
     },
   },
+  { frame: "Notifications", url: "/?scenario=notifications#/notifications" },
+  { frame: "NotificationsEmpty", url: "/?scenario=notifications-empty#/notifications" },
+  {
+    frame: "Feedback",
+    url: "/?scenario=feedback#/feedback",
+    steps: fill,
+  },
+  {
+    frame: "FeedbackEmpty",
+    url: "/?scenario=feedback#/feedback",
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Send", exact: true }).click();
+      await p.getByText("Write a few words first.").waitFor();
+    },
+    max: 30, // the frame shows only the one field; the app keeps its whole form
+  },
+  ...(
+    [
+      ["FeedbackSent", "feedback", "Sent as issue #41."],
+      ["FeedbackQueued", "feedback-queued", "You are offline."],
+      ["FeedbackRateLimited", "feedback-limited", "Too many reports right now"],
+      ["FeedbackRefused", "feedback-refused", "Feedback not sent:"],
+      ["FeedbackTooLarge", "feedback-large", "The report is too large (413)."],
+    ] as const
+  ).map(([frame, scenario, text]) => ({
+    frame,
+    url: `/?scenario=${scenario}#/feedback`,
+    steps: async (p: Page) => {
+      await fill(p);
+      await p.getByRole("button", { name: "Send", exact: true }).click();
+      await p.getByText(text).waitFor();
+    },
+  })),
+  { frame: "InstallImportFailed", url: "/?scenario=install-import-failed" },
+  { frame: "InstallV1Daemon", url: "/?scenario=install-v1-daemon" },
+  { frame: "InstallUnsigned", url: "/?view=unsigned" },
 ];

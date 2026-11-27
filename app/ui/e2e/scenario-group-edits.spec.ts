@@ -135,3 +135,13 @@ test("share refused: a secret names the file and line, nothing is sent", async (
   await page.getByRole("link", { name: "Back", exact: true }).click();
   await expect(page.locator(".mono", { hasText: "settings.json" })).toBeVisible();
 });
+
+test("share: a share that takes long says it is retrying, then finishes", async ({ page }) => {
+  await page.goto(
+    "/?scenario=group&hold#/group/alex-host/claude-group/share/skills/release-notes/SKILL.md",
+  );
+  await page.getByRole("button", { name: "Share with group" }).click();
+  await expect(page.getByText("Someone pushed first. Reading the new version")).toBeVisible();
+  await page.evaluate(() => window.__fake.release());
+  await expect(page.getByText("Shared. Members get it on their next sync.")).toBeVisible();
+});

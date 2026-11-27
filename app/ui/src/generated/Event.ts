@@ -11,7 +11,7 @@ import type { ProposalView } from "./ProposalView";
 import type { RevertPlan } from "./RevertPlan";
 import type { ReviewLine } from "./ReviewLine";
 
-export type Event = { "kind": "proposed", "data": number } | { "kind": "packs", "data": Array<PackView> } | { "kind": "text", "data": string } | { "kind": "feedback", "data": { queued: boolean, number: number | null, url: string | null, } } | { "kind": "proposals", "data": Array<ProposalView> } | { "kind": "copyPreview", "data": CopyPreviewView } | { "kind": "copied", "data": { files: number, claude_md: boolean, 
+export type Event = { "kind": "proposed", "data": number } | { "kind": "packs", "data": Array<PackView> } | { "kind": "text", "data": string } | { "kind": "feedback", "data": { queued: boolean, limited: boolean, number: number | null, url: string | null, } } | { "kind": "proposals", "data": Array<ProposalView> } | { "kind": "copyPreview", "data": CopyPreviewView } | { "kind": "copied", "data": { files: number, claude_md: boolean, 
 /**
  * The target is in proposal mode: the proposal number.
  */

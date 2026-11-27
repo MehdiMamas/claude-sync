@@ -15,7 +15,9 @@ const MAX_LOG: usize = 200 * 1024;
 enum Sent {
     Filed(u64, String),
     /// Network trouble, a 429 or a 5xx: keep the report.
-    Later,
+    Later {
+        limited: bool,
+    },
     Refused(String),
 }
 
@@ -23,9 +25,11 @@ fn send(c: &claude_sync_github::Client, payload: &Value) -> Sent {
     match c.feedback(payload) {
         Ok(r) => Sent::Filed(r.number, r.url),
         Err(GhError::NotSignedIn) => Sent::Refused(msg::FEEDBACK_SIGN_IN.into()),
-        Err(GhError::Github { status, .. }) if status == 429 || status >= 500 => Sent::Later,
+        Err(GhError::Github { status: 429, .. }) => Sent::Later { limited: true },
+        Err(GhError::Github { status, .. }) if status >= 500 => Sent::Later { limited: false },
         Err(GhError::Github { message, .. }) => Sent::Refused(message),
-        Err(GhError::Network(_) | GhError::RateLimited { .. }) => Sent::Later,
+        Err(GhError::RateLimited { .. }) => Sent::Later { limited: true },
+        Err(GhError::Network(_)) => Sent::Later { limited: false },
         Err(e) => Sent::Refused(e.to_string()),
     }
 }
@@ -83,13 +87,15 @@ impl Core {
         match send(&self.client, &payload) {
             Sent::Filed(n, u) => Ok(Event::Feedback {
                 queued: false,
+                limited: false,
                 number: Some(n),
                 url: Some(u),
             }),
-            Sent::Later => {
+            Sent::Later { limited } => {
                 self.db.queue_feedback(&payload.to_string())?;
                 Ok(Event::Feedback {
                     queued: true,
+                    limited,
                     number: None,
                     url: None,
                 })
@@ -117,7 +123,7 @@ impl Core {
                     let t = format!("\"{title}\" was filed as #{n}.");
                     self.db.add_notification("feedback", &t, None, now)?;
                 }
-                Sent::Later => break,
+                Sent::Later { .. } => break,
                 Sent::Refused(e) => {
                     self.db.drop_feedback(id)?;
                     let t = format!("\"{title}\" was not filed: {e}");
