@@ -126,6 +126,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         for d in 1..=9 {
             std::fs::write(dir.join(format!("claude-sync.2026-01-0{d}.log")), "x\n").unwrap();
+            // the appender drops the oldest by creation time: keep them apart
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
         let (sub, guard) = build(&dir, LevelFilter::INFO).unwrap();
         tracing::subscriber::with_default(sub, || tracing::info!("today"));

@@ -1,8 +1,6 @@
-use claude_sync_engine::traits::Disk;
 use claude_sync_fs::apply::*;
-use claude_sync_fs::atomic::write_atomic;
 use claude_sync_fs::pass::SyncLock;
-use claude_sync_fs::{FsDisk, Home, Scope};
+use claude_sync_fs::Home;
 use claude_sync_store::Db;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -18,6 +16,9 @@ fn setup() -> (tempfile::TempDir, Home, Db) {
 #[cfg(unix)]
 #[test]
 fn nothing_is_written_through_a_link_and_the_mode_is_kept() {
+    use claude_sync_engine::traits::Disk;
+    use claude_sync_fs::atomic::write_atomic;
+    use claude_sync_fs::{FsDisk, Scope};
     use std::os::unix::fs::{symlink, PermissionsExt};
     let (t, h, _db) = setup();
     let outside = t.path().join("outside");

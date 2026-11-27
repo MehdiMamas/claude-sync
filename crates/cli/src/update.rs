@@ -147,6 +147,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// A `.tar.gz` holding a `claude-sync-cli` file with `body`, made with the system `tar`.
+    #[cfg(unix)]
     fn archive(dir: &Path, body: &str) -> Vec<u8> {
         let src = dir.join("src");
         std::fs::create_dir_all(&src).unwrap();
@@ -166,6 +167,7 @@ mod tests {
         std::fs::read(out).unwrap()
     }
 
+    #[cfg(unix)]
     async fn serve(bytes: Vec<u8>, listed: String) -> (MockServer, Config) {
         let server = MockServer::start().await;
         let name = "claude-sync-cli-test.tar.gz";
@@ -186,6 +188,7 @@ mod tests {
         (server, cfg)
     }
 
+    #[cfg(unix)]
     fn hash(b: &[u8]) -> String {
         Sha256::digest(b)
             .iter()
