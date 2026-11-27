@@ -1152,6 +1152,27 @@ async fn app_coverage_lists_joined_groups_the_app_cannot_reach() {
     assert!(h.snapshot().app_uncovered.is_empty());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn recent_logs_are_the_newest_file_redacted_and_cut() {
+    let t = T::new().await;
+    let h = t.signed_in().await;
+    assert_eq!(
+        h.send(Command::RecentLogs).await.unwrap(),
+        Event::Text(String::new())
+    );
+    let dir = t.dir.path().join(".claude-sync/logs");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("claude-sync.2026-01-01.log"), "old\n").unwrap();
+    let secret = format!("ghp_{}", "a".repeat(36));
+    let body = format!("{}\nwith token {secret}\n", "x".repeat(300 * 1024));
+    std::fs::write(dir.join("claude-sync.2026-01-02.log"), body).unwrap();
+    let Event::Text(out) = h.send(Command::RecentLogs).await.unwrap() else {
+        panic!()
+    };
+    assert!(out.len() <= 200 * 1024 + 64, "{}", out.len());
+    assert!(out.ends_with("[redacted]") && !out.contains(&secret) && !out.contains("old"));
+}
+
 impl T {
     /// What each push to `zed/team` sent: blob contents in order.
     async fn pushed_blobs(&self) -> Vec<String> {

@@ -48,6 +48,25 @@ fn logs(text: &str) -> String {
 }
 
 impl Core {
+    /// `<state>/logs/claude-sync.<date>.log`, the newest by name (v1's place and names).
+    pub(crate) fn recent_logs(&self) -> Result<Event> {
+        let dir = self.home.state.join("logs");
+        let newest = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                n.starts_with("claude-sync.") && n.ends_with(".log")
+            })
+            .max_by_key(|e| e.file_name());
+        let text = match newest {
+            Some(e) => String::from_utf8_lossy(&std::fs::read(e.path())?).into_owned(),
+            None => String::new(),
+        };
+        Ok(Event::Text(logs(&text)))
+    }
+
     pub(crate) fn notes(
         &mut self,
         f: impl FnOnce(&claude_sync_store::Db) -> claude_sync_store::Result<()>,

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import pkg from "../../package.json";
 import type { FeedbackInput } from "../generated/FeedbackInput";
+import { useBackend } from "../store";
 import { Banner } from "../ui";
 import type { Call } from "./Group";
 import { Toggle } from "./GroupMembers";
@@ -34,6 +35,7 @@ const base64 = (b: ArrayBuffer) => {
  * FeedbackRefused and FeedbackTooLarge. The form keeps its text through every failure.
  */
 export function Feedback(c: { call: Call; toast: (t: string) => void }) {
+  const backend = useBackend();
   const [kind, setKind] = useState<"bug" | "idea">("bug");
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
@@ -62,16 +64,7 @@ export function Feedback(c: { call: Call; toast: (t: string) => void }) {
   };
   const capture = async () => {
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      const v = document.createElement("video");
-      v.srcObject = stream;
-      await v.play();
-      const cv = document.createElement("canvas");
-      cv.width = v.videoWidth;
-      cv.height = v.videoHeight;
-      cv.getContext("2d")?.drawImage(v, 0, 0);
-      for (const t of stream.getTracks()) t.stop();
-      setShot(cv.toDataURL("image/png").split(",")[1] ?? null);
+      setShot(await backend.captureScreen());
     } catch {
       c.toast("Capture is not available here. Copy a screenshot and choose Paste.");
     }
@@ -81,14 +74,14 @@ export function Feedback(c: { call: Call; toast: (t: string) => void }) {
     if (!body) return setEmpty(true);
     setEmpty(false);
     setBusy(true);
+    const log = logs ? await c.call({ kind: "recentLogs" }) : null;
     const input: FeedbackInput = {
       kind,
       title: title.trim() || body.split("\n")[0]?.slice(0, 80) || body,
       description: body,
       appVersion: pkg.version,
       os,
-      // gap: the shell has no log command yet, so nothing is attached until it has one
-      logs: "",
+      logs: log && "ev" in log && log.ev.kind === "text" ? log.ev.data : "",
       screenshot: shot,
     };
     const r = await c.call({ kind: "sendFeedback", data: input });

@@ -596,6 +596,8 @@ export function fakeBackend(search: string): Backend {
       case "refresh":
         set({ install: null });
         return done;
+      case "recentLogs":
+        return { kind: "text", data: "INFO sync pass done: nothing changed" };
       case "sendFeedback": {
         await sleep(150);
         const w = window as unknown as { __sent?: unknown[] };
@@ -1011,6 +1013,9 @@ export function fakeBackend(search: string): Backend {
     },
     // `?notify=denied` plays a system that blocks notifications
     notifyPermission: async () => (q.get("notify") === "denied" ? "denied" : "granted"),
+    // a 1 x 1 PNG
+    captureScreen: async () =>
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
     openTarget: async (t) => {
       (window as unknown as { __opened?: string[] }).__opened = [
         ...((window as unknown as { __opened?: string[] }).__opened ?? []),

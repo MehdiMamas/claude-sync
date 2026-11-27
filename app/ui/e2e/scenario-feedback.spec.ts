@@ -33,6 +33,7 @@ test("feedback: kind, title, text, logs and a pasted screenshot are sent; the fo
   const [one] = await sent(page);
   expect(one).toMatchObject({ kind: "idea", title: "Group did not sync after sleep" });
   expect(typeof one?.screenshot).toBe("string");
+  expect(one?.logs).toBe("INFO sync pass done: nothing changed");
   await page.getByRole("button", { name: "Send another" }).click();
   await expect(page.getByLabel("Title")).toHaveValue("");
 });
@@ -104,4 +105,15 @@ test("feedback edge: rate limited and offline reports are saved and say so", asy
       "You are offline. Your report is saved and is sent when the connection is back.",
     ),
   ).toBeVisible();
+});
+
+test("feedback: Capture takes the screen through the shell and sends it", async ({ page }) => {
+  await page.goto(at("feedback"));
+  await fill(page);
+  await page.getByRole("button", { name: "Capture", exact: true }).click();
+  await expect(page.getByText(/Screenshot attached/)).toBeVisible();
+  await send(page);
+  await expect(page.getByText("Sent as issue #41.")).toBeVisible();
+  const [one] = await sent(page);
+  expect(String(one?.screenshot).startsWith("iVBORw0KGgo")).toBe(true);
 });

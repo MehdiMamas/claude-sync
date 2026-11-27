@@ -6,6 +6,7 @@
 //! claude-sync desktop shell (v2-Plan step 7): tray, one window, one instance. Every command
 //! word is answered by `claude-sync-cli` before Tauri starts; the app itself only draws what the
 //! actor (`claude-sync-actions`) publishes and sends it the commands it is given.
+mod capture;
 #[cfg(target_os = "macos")]
 mod mac_notify;
 mod tray;
@@ -249,7 +250,8 @@ fn main() {
             send,
             snapshot,
             open_target,
-            notification_permission
+            notification_permission,
+            capture::capture_screen
         ])
         .setup(move |app| start(app.handle(), background).map_err(Into::into))
         .build(tauri::generate_context!());

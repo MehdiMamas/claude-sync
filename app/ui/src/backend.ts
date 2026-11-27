@@ -10,6 +10,8 @@ export interface Backend {
   openTarget(target: string): Promise<void>;
   /** `granted`, `denied`, `not_asked` or `unknown` (not macOS). */
   notifyPermission(): Promise<string>;
+  /** The primary screen as base64 PNG or JPEG; the shell hides the window while it grabs it. */
+  captureScreen(): Promise<string>;
 }
 
 export async function tauriBackend(): Promise<Backend> {
@@ -24,6 +26,7 @@ export async function tauriBackend(): Promise<Backend> {
     },
     openTarget: (target) => invoke("open_target", { target }),
     notifyPermission: () => invoke<string>("notification_permission"),
+    captureScreen: () => invoke<string>("capture_screen"),
   };
 }
 

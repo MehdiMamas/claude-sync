@@ -623,6 +623,8 @@ pub enum Command {
     SendFeedback(FeedbackInput),
     /// Send the saved reports once the relay answers `/api/health`.
     RetryFeedback,
+    /// The tail of the newest log file, redacted, for the feedback form (`Event::Text`).
+    RecentLogs,
     /// Host only; writes nothing.
     RevertPreview {
         repo: String,

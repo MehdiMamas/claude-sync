@@ -244,6 +244,7 @@ impl Core {
             ClearNotifications => self.notes(|d| d.clear_notifications()),
             SendFeedback(f) => self.send_feedback(f),
             RetryFeedback => self.retry_feedback(),
+            RecentLogs => self.recent_logs(),
             RevertPreview { repo, sha } => self.revert_preview(&repo, &sha),
             Revert { repo, sha } => self.revert(&repo, &sha),
             History { repo, limit } => self.history(&repo, limit),
