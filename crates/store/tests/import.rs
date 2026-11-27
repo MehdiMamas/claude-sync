@@ -404,6 +404,21 @@ fn the_import_runs_once_and_never_touches_a_v1_file() {
 }
 
 #[test]
+fn a_late_import_never_overwrites_a_store_that_holds_data() {
+    let h = Home::new();
+    let db = h.db();
+    db.write("choices", br#"{"mine":true}"#).unwrap();
+    let r = h.import(&db);
+    assert_eq!(db.read("choices").unwrap().unwrap(), br#"{"mine":true}"#);
+    assert!(r.store_not_empty && r.imported.is_empty());
+    assert_eq!(one(&h, "SELECT count(*) FROM groups"), "0");
+    assert!(matches!(
+        import_v1(&db, &h.sync(), &h.claude(), &DaemonLockHeld::claim()).unwrap(),
+        Outcome::AlreadyDone
+    ));
+}
+
+#[test]
 fn a_machine_with_no_v1_files_imports_nothing_and_records_it() {
     let dir = tempfile::tempdir().unwrap();
     let db = Db::open(&dir.path().join("store.db")).unwrap();

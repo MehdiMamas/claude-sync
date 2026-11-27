@@ -17,9 +17,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const FILES = [
   { path: "Cargo.toml", re: /(^\[workspace\.package\][^[]*?^version = ")([^"]+)(")/m },
-  { path: "Cargo.lock", re: /(^name = "claude-sync-app"\r?\nversion = ")([^"]+)(")/m },
-  { path: "Cargo.lock", re: /(^name = "claude-sync-core"\r?\nversion = ")([^"]+)(")/m },
-  { path: "Cargo.lock", re: /(^name = "claude-sync-cli"\r?\nversion = ")([^"]+)(")/m },
+  ...["app", "core", "cli", "actions", "engine", "fs", "github", "store"].map((n) => ({
+    path: "Cargo.lock",
+    re: new RegExp(`(^name = "claude-sync-${n}"\\r?\\nversion = ")([^"]+)(")`, "m"),
+  })),
   { path: "app/package.json", re: /(^ {2}"version": ")([^"]+)(")/m },
   { path: "app/ui/package.json", re: /(^ {2}"version": ")([^"]+)(")/m },
 ];

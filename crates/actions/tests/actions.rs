@@ -2370,6 +2370,135 @@ mod personal {
         c.h.send(Command::PersonalDismiss).await.unwrap();
         assert!(!c.personal().await.offer);
     }
+
+    /// v2-Budgets: an idle hour (60 ticks, 3 groups + personal) costs at most 424 GitHub
+    /// requests, counted by the client (`take_counts`, flushed into the `requests` table), and
+    /// every one is conditional. The clock is tokio's paused one; the fake `now` follows it.
+    #[tokio::test(start_paused = true)]
+    async fn an_idle_hour_costs_at_most_424_requests() {
+        const GROUPS: [&str; 3] = ["zed/g1", "zed/g2", "zed/g3"];
+        let git = new_git();
+        let t = T::new().await;
+        mount(&t, &git).await;
+        let h = t.signed_in_tick(Duration::from_secs(60)).await;
+        // setup runs paused, so the loop's idle ticks do not mix in
+        h.send(Command::Pause).await.unwrap();
+        h.send(Command::SetInterval { secs: 60 }).await.unwrap();
+        for g in GROUPS {
+            t.mock(
+                "GET",
+                &format!("/repos/{g}"),
+                200,
+                json!({"name": "x", "full_name": g, "private": true}),
+            )
+            .await;
+            t.push_chain(g).await;
+            h.send(Command::Join { repo: g.into() }).await.unwrap();
+        }
+        for (i, g) in GROUPS.iter().enumerate() {
+            let gf = json!({"schema": 1, "name": "Team", "members": ["ann"]});
+            t.serve_repo(
+                g,
+                "h1",
+                &[("skills/a/SKILL.md", "---\nname: a\n---\n")],
+                gf,
+                i == 0,
+            )
+            .await;
+        }
+        mount(&t, &git).await;
+        h.send(Command::PersonalOn).await.unwrap();
+        assert!(h.snapshot().personal.on, "{:?}", h.snapshot().personal);
+        for _ in 0..3 {
+            t.clock.fetch_add(60, Ordering::SeqCst);
+            h.send(Command::SyncNow).await.unwrap();
+        }
+        // From here the repos are static: answer 304 to the ETag, 200 with it otherwise.
+        // The personal head moves when this device pushes, so its ETag is the head itself.
+        let g = git.clone();
+        Mock::given(method("GET"))
+            .and(path_regex(format!("^{REPO}/commits/main$")))
+            .respond_with(Fn1(move |r: &Request| {
+                let head = g.lock().unwrap().head.clone();
+                let tag = format!("\"{head}\"");
+                if r.headers
+                    .get("if-none-match")
+                    .is_some_and(|v| v == tag.as_str())
+                {
+                    ResponseTemplate::new(304)
+                } else {
+                    ResponseTemplate::new(200)
+                        .insert_header("etag", tag.as_str())
+                        .set_body_json(json!({"sha": head}))
+                }
+            }))
+            .with_priority(1)
+            .mount(&t.server)
+            .await;
+        let mut repos: Vec<(String, String)> = GROUPS
+            .iter()
+            .map(|g| (g.to_string(), "h1".into()))
+            .collect();
+        repos.push(("ann/claude-sync-personal".into(), String::new()));
+        for (r, head) in &repos {
+            let (o, n) = r.split_once('/').unwrap();
+            let group = !head.is_empty();
+            for (re, body) in [
+                (format!("^/repos/{r}/commits/main$"), json!({"sha": head})),
+                (format!("^/repos/{r}/pulls$"), json!([])),
+                (
+                    format!("^/repos/{r}$"),
+                    json!({"name": n, "full_name": r, "private": true, "owner": {"login": o}}),
+                ),
+            ] {
+                if !group && re.ends_with("commits/main$") {
+                    continue;
+                }
+                Mock::given(method("GET"))
+                    .and(path_regex(re.clone()))
+                    .and(wiremock::matchers::header("if-none-match", "\"e1\""))
+                    .respond_with(ResponseTemplate::new(304))
+                    .with_priority(1)
+                    .mount(&t.server)
+                    .await;
+                Mock::given(method("GET"))
+                    .and(path_regex(re))
+                    .respond_with(
+                        ResponseTemplate::new(200)
+                            .insert_header("etag", "\"e1\"")
+                            .set_body_json(body),
+                    )
+                    .with_priority(2)
+                    .mount(&t.server)
+                    .await;
+            }
+        }
+        // one warm pass learns the ETags, as a running app has
+        t.clock.fetch_add(60, Ordering::SeqCst);
+        h.send(Command::SyncNow).await.unwrap();
+        let db_path = t.dir.path().join(".claude-sync/claude-sync.db");
+        let counted = || -> u64 {
+            let db = claude_sync_store::Db::open(&db_path).unwrap();
+            db.requests().unwrap().iter().map(|r| r.n).sum()
+        };
+        h.send(Command::Resume).await.unwrap();
+        let (base_db, base_srv) = (counted(), t.server.received_requests().await.unwrap().len());
+        for _ in 0..60 {
+            t.clock.fetch_add(60, Ordering::SeqCst);
+            tokio::time::advance(Duration::from_secs(60)).await;
+            // the actor takes the timer branch first; then a no-op command answers only after
+            // the tick ended (the actor runs one thing at a time)
+            tokio::task::yield_now().await;
+            h.send(Command::SignInCancel).await.unwrap();
+        }
+        let (db, srv) = (
+            counted() - base_db,
+            t.server.received_requests().await.unwrap().len() - base_srv,
+        );
+        println!("idle hour: {db} counted requests, {srv} seen by the fake");
+        assert!(db <= 424, "{db} requests in an idle hour");
+        assert!(srv <= 424, "{srv} requests seen by the fake");
+    }
 }
 
 // ---- proposals, copy, revert, history (Parity 33-36, 83-85) ----

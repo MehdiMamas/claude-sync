@@ -277,6 +277,12 @@ jobs:
               ;;
           esac
           ls -l "$stage"
+          # v2-Budgets: the installer is at most 15 MB (Linux: the .deb; the AppImage carries its libraries).
+          case "${{ matrix.platform }}" in
+            windows) node scripts/check-installer-size.mjs "$stage"/*-setup.exe ;;
+            macos) node scripts/check-installer-size.mjs "$stage"/*.dmg ;;
+            linux) node scripts/check-installer-size.mjs "$stage"/*.deb ;;
+          esac
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -399,7 +405,10 @@ jobs:
             gh release upload "v$VERSION" "${files[@]}" --clobber
           else
             # Always a pre-release: it is not releases/latest, so no install updates to it yet.
+            # Hand-written notes when docs/release-notes/<version>.md exists, else generated.
+            notes=(--generate-notes)
+            if [ -f "docs/release-notes/$VERSION.md" ]; then notes=(--notes-file "docs/release-notes/$VERSION.md"); fi
             gh release create "v$VERSION" "${files[@]}" --prerelease --target "$COMMIT" \
-              --title "claude-sync $VERSION" --generate-notes
+              --title "claude-sync $VERSION" "${notes[@]}"
           fi
           echo "Pre-release v$VERSION is ready: try it, then mark it latest (docs/releasing.md)." >> "$GITHUB_STEP_SUMMARY"

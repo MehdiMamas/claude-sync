@@ -88,6 +88,10 @@ pub struct Report {
     pub unknown: Vec<String>,
     /// Where the choices came from: `file`, `old-fields` (no choices.json) or `unreadable`.
     pub choices_from: String,
+    /// The store already held data, so nothing was imported (a late import must never
+    /// overwrite the person's choices).
+    #[serde(default)]
+    pub store_not_empty: bool,
 }
 
 #[derive(Debug)]
@@ -113,6 +117,23 @@ pub fn import_v1(
         return Ok(Outcome::AlreadyDone);
     }
     let tx = conn.transaction()?;
+    let used: bool = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM settings) OR EXISTS (SELECT 1 FROM groups)",
+        [],
+        |r| r.get(0),
+    )?;
+    if used {
+        let report = Report {
+            store_not_empty: true,
+            ..Report::default()
+        };
+        tx.execute(
+            "INSERT INTO settings (key, value) VALUES ('import_v1', ?1)",
+            [serde_json::to_vec(&report).unwrap_or_default()],
+        )?;
+        tx.commit()?;
+        return Ok(Outcome::Done(report));
+    }
     let mut r = Reader {
         state: state_dir,
         report: Report::default(),
