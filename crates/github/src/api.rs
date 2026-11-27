@@ -182,6 +182,20 @@ pub struct Platform {
     pub signature: String,
 }
 
+/// A version goes into a download URL: only `1.2.3` is let through.
+fn check_version(v: &str) -> Result<()> {
+    let parts: Vec<&str> = v.split('.').collect();
+    let ok = parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    if ok {
+        Ok(())
+    } else {
+        Err(Error::Invalid(format!("bad version in latest.json: {v:?}")))
+    }
+}
+
 /// `latest.json` of the updater.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Latest {
@@ -625,11 +639,15 @@ impl Client {
                 message: "no update info".into(),
             });
         }
-        serde_json::from_slice(&body).map_err(|e| Error::Invalid(format!("bad latest.json: {e}")))
+        let l: Latest = serde_json::from_slice(&body)
+            .map_err(|e| Error::Invalid(format!("bad latest.json: {e}")))?;
+        check_version(&l.version)?;
+        Ok(l)
     }
 
     /// A file of release `v<version>` (the command line's archive and its `.sha256`).
     pub fn release_asset(&self, version: &str, name: &str) -> Result<Vec<u8>> {
+        check_version(version)?;
         let url = format!(
             "{}/download/v{version}/{name}",
             self.config().releases.trim_end_matches('/')

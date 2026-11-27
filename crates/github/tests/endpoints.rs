@@ -546,6 +546,23 @@ fn row17_latest_json() {
 }
 
 #[test]
+fn a_version_that_is_not_digits_and_dots_never_reaches_a_url() {
+    let s = Srv::new();
+    s.mount(
+        Mock::given(method("GET"))
+            .and(path("/releases/latest/download/latest.json"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"version": "2.0.0/../../x"})),
+            ),
+    );
+    let c = s.client();
+    assert!(c.latest().is_err());
+    assert!(c.release_asset("1.2.3/../x", "a.tar.gz").is_err());
+    assert!(c.release_asset("1.2", "a.tar.gz").is_err());
+    assert!(s.requests().len() == 1, "only latest.json was asked for");
+}
+
+#[test]
 fn row18_release_page_is_a_link_for_the_browser() {
     let s = Srv::new();
     assert_eq!(
