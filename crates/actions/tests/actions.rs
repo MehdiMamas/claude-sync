@@ -3867,6 +3867,34 @@ mod extras {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_pack_missing_a_field_is_named_with_the_reason_in_the_snapshot() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        // `setup` is required
+        let bad = r#"{"schema":1,"id":"half","title":"Half","summary":"A pack","check":{"run":["true"]}}"#;
+        t.serve("h1", &[("packs/half/pack.json", bad)]).await;
+        t.push_tail("zed/team").await;
+        h.send(Command::Join {
+            repo: "zed/team".into(),
+        })
+        .await
+        .unwrap();
+        h.send(Command::SyncNow).await.unwrap();
+        let p = h.snapshot().groups[0].plugin_problems.clone();
+        assert_eq!(p.len(), 1, "{p:?}");
+        assert!(
+            p[0].starts_with("pack half: pack.json is not valid") && p[0].contains("setup"),
+            "{p:?}"
+        );
+        // asking for the list keeps it
+        let Event::Packs(l) = h.send(Command::Packs { repo: None }).await.unwrap() else {
+            panic!()
+        };
+        assert!(l.is_empty());
+        assert_eq!(h.snapshot().groups[0].plugin_problems, p);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_pack_goes_on_only_after_its_check_passed_here() {
         let t = T::new().await;
         let h = t.signed_in().await;

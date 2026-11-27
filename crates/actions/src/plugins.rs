@@ -394,6 +394,7 @@ impl Core {
                 MAX_PLUGIN_FILE >> 20
             )
         }));
+        out.extend(self.pack_problems(repo));
         out
     }
 

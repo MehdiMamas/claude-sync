@@ -163,6 +163,11 @@ impl Core {
         let mut out = vec![];
         for r in repos {
             let Ok(cat) = self.catalog(&r) else { continue };
+            let bad: Vec<_> = cat
+                .iter()
+                .filter_map(|p| p.as_ref().err().cloned())
+                .collect();
+            self.set_pack_problems(&r, &bad);
             for p in cat.into_iter().flatten() {
                 let rec = st
                     .get(&r)
@@ -369,6 +374,36 @@ impl Core {
         claude_sync_fs::apply::copy_path(&self.home, repo, &format!("packs/{id}"))
     }
 
+    /// The packs skipped as not valid, kept for the group snapshot (`plugin_problems`) and
+    /// `packs list` (v1: "skipped <id>: <why>"). One `pack <id>: <why>` line each.
+    fn set_pack_problems(&self, repo: &str, problems: &[(String, String)]) {
+        let text: String = problems
+            .iter()
+            .map(|(id, why)| {
+                format!(
+                    "{}{id}: {}\n",
+                    crate::msg::PACK_PROBLEM,
+                    why.replace('\n', " ")
+                )
+            })
+            .collect();
+        let _ = Store::write(&self.db, &format!("pack-problems/{repo}"), text.as_bytes());
+    }
+
+    pub(crate) fn pack_problems(&self, repo: &str) -> Vec<String> {
+        Store::read(&self.db, &format!("pack-problems/{repo}"))
+            .ok()
+            .flatten()
+            .map(|b| {
+                String::from_utf8_lossy(&b)
+                    .lines()
+                    .filter(|l| !l.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// The packs of the head just read: keep the index, place each pack folder (the pack's
     /// `CLAUDE.md` is imported from there) and drop the folders of packs that are gone.
     fn refresh_packs(&self, repo: &str, all: &BTreeMap<String, Vec<u8>>) {
@@ -377,13 +412,20 @@ impl Core {
             .filter_map(|p| p.strip_prefix("packs/")?.split('/').next())
             .collect();
         let mut index = vec![];
+        let mut problems = vec![];
         for id in ids {
             let pre = format!("packs/{id}/");
             let files = all
                 .iter()
                 .filter_map(|(p, b)| Some((p.strip_prefix(&pre)?.to_string(), b.clone())))
                 .collect();
-            let Ok(p) = parse(id, files) else { continue };
+            let p = match parse(id, files) {
+                Ok(p) => p,
+                Err(e) => {
+                    problems.push((id.to_string(), e));
+                    continue;
+                }
+            };
             let dir = self.pack_dir(repo, id);
             for (rel, bytes) in &p.files {
                 let to = dir.join(rel);
@@ -399,6 +441,7 @@ impl Core {
                 claude_md: p.m.claude_md,
             });
         }
+        self.set_pack_problems(repo, &problems);
         let root = self.pack_dir(repo, "");
         for d in std::fs::read_dir(&root).into_iter().flatten().flatten() {
             if !index

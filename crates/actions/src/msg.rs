@@ -184,3 +184,6 @@ pub fn update_ready(version: &str) -> String {
 /// v1 text when a device name is refused.
 pub const DEVICE_NAME_INVALID: &str =
     "device names can't contain / \\ : @ and are at most 64 characters";
+
+/// Starts each line of a skipped pack in a group's `plugin_problems`: `pack <id>: <why>`.
+pub const PACK_PROBLEM: &str = "pack ";

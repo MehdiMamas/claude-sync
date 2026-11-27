@@ -593,12 +593,32 @@ fn packs(ctx: &Ctx, cmd: PacksCmd, group: Option<String>) -> Res {
     else {
         return Err("no packs answer".into());
     };
+    // Packs skipped as not valid, with the group and the reason (v1 "skipped <id>: <why>").
+    let bad: Vec<(String, String, String)> = core
+        .snapshot()
+        .groups
+        .iter()
+        .filter(|g| group.as_ref().is_none_or(|r| *r == g.repo))
+        .flat_map(|g| {
+            g.plugin_problems.iter().filter_map(|l| {
+                let (id, why) = l
+                    .strip_prefix(claude_sync_actions::msg::PACK_PROBLEM)?
+                    .split_once(": ")?;
+                Some((g.repo.clone(), id.to_string(), why.to_string()))
+            })
+        })
+        .collect();
     // The group to act on: --group, or the only joined group that has packs.
     let pick = |all: &[claude_sync_actions::PackView]| -> Result<String, Fail> {
         if let Some(g) = &group {
             return Ok(g.clone());
         }
-        let mut repos: Vec<&str> = all.iter().map(|p| p.repo.as_str()).collect();
+        let mut repos: Vec<&str> = all
+            .iter()
+            .map(|p| p.repo.as_str())
+            .chain(bad.iter().map(|b| b.0.as_str()))
+            .collect();
+        repos.sort_unstable();
         repos.dedup();
         match repos.as_slice() {
             [one] => Ok((*one).into()),
@@ -629,14 +649,24 @@ fn packs(ctx: &Ctx, cmd: PacksCmd, group: Option<String>) -> Res {
                     p.summary
                 ));
             }
-            if all.is_empty() {
+            for (repo, id, why) in &bad {
+                text.push_str(&format!("skipped {id} ({repo}): {why}\n"));
+            }
+            if all.is_empty() && bad.is_empty() {
                 text.push_str("No packs in your groups.");
             }
             let json = all
                 .iter()
                 .map(|p| json!({ "repo": p.repo, "id": p.id, "title": p.title, "summary": p.summary, "state": p.state, "unsupported": p.unsupported, "os": p.os, "checkedAt": p.checked_at, "tail": p.tail }))
                 .collect::<Vec<_>>();
-            Ok(Out::new(text.trim_end(), json!({ "packs": json })))
+            let problems = bad
+                .iter()
+                .map(|(g, id, why)| json!({ "group": g, "id": id, "message": why }))
+                .collect::<Vec<_>>();
+            Ok(Out::new(
+                text.trim_end(),
+                json!({ "packs": json, "problems": problems }),
+            ))
         }
         PacksCmd::Setup { id } => {
             let repo = pick(&all)?;

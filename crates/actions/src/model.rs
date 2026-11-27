@@ -55,7 +55,8 @@ ts! {
         pub host_lock: Option<String>,
         pub review_choice: crate::choices::ReviewChoice,
         pub pending_review: u32,
-        /// Plugins that could not install and files the size cap kept out (Parity 26-28).
+        /// Plugins that could not install, files the size cap kept out (Parity 26-28) and packs
+        /// skipped as not valid (`pack <id>: <why>`).
         pub plugin_problems: Vec<String>,
         /// This group is being synced right now.
         pub syncing: bool,
