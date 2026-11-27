@@ -3770,6 +3770,7 @@ mod plugins {
         std::fs::write(t.dir.path().join("fail"), "").unwrap();
         *t.jobs.lock().unwrap() = Some(jobs_env(&t, Some(claude)));
         let h = synced(&t).await;
+        until(|| h.snapshot().groups[0].plugin_problems.len() == 2).await;
 
         // the marketplace is registered with Claude Code before the install is tried
         let c = calls(&log);
@@ -3815,8 +3816,42 @@ mod plugins {
         })
         .await
         .unwrap();
+        until(|| h.snapshot().groups[0].plugin_problems.len() == 1).await;
         assert!(calls(&log).len() > before);
-        assert_eq!(h.snapshot().groups[0].plugin_problems.len(), 1);
+    }
+
+    async fn until(f: impl Fn() -> bool) {
+        for _ in 0..200 {
+            if f() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("did not happen in 5 s");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_slow_claude_does_not_block_the_actor() {
+        let t = T::new().await;
+        let claude = t.dir.path().join("claude");
+        let done = t.dir.path().join("done");
+        std::fs::write(
+            &claude,
+            format!(
+                "#!/bin/sh\nsleep 1\ntouch '{}'\ncase \"$*\" in *' list --json') echo '[]';; esac\n",
+                done.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        *t.jobs.lock().unwrap() = Some(jobs_env(&t, Some(claude)));
+        let h = synced(&t).await;
+        // the sync answered while claude still sleeps, and the actor takes the next command
+        h.send(Command::Pause).await.unwrap();
+        assert!(h.snapshot().paused);
+        assert!(!done.exists());
+        // the task ends on its own and the actor records it
+        until(|| done.exists()).await;
     }
 
     #[tokio::test(flavor = "multi_thread")]

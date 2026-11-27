@@ -375,6 +375,10 @@ pub enum Command {
     #[cfg_attr(feature = "ts", ts(skip))]
     SignInDone(crate::signin::Outcome),
     SignOut,
+    /// Sent by a plugin install task when it ends, never by the window.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    PluginsDone(crate::plugins::Done),
     // groups
     ReorderGroups(Vec<String>),
     CreateGroup {

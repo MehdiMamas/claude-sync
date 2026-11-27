@@ -271,6 +271,77 @@ fn entry(state: &Path, id: &str) -> Option<(String, Option<String>)> {
     Some((sha256_hex(format!("{e}\n{files}").as_bytes()), version))
 }
 
+/// What a plugin task needs, owned so it can leave the actor.
+struct Work {
+    cli: Cli,
+    state: PathBuf,
+    changed: Vec<String>,
+    enabled: Vec<String>,
+    current: BTreeMap<String, (String, Option<String>)>,
+    prev_entries: BTreeMap<String, String>,
+}
+
+/// The end of one plugin task: what to record for the group.
+#[derive(Debug, Clone)]
+pub struct Done {
+    repo: String,
+    now: i64,
+    work: String,
+    record: State,
+}
+
+impl Work {
+    fn run(self) -> Vec<String> {
+        let Work {
+            cli,
+            state,
+            changed,
+            enabled,
+            current,
+            prev_entries,
+        } = self;
+        let mut warnings = Vec::new();
+        for name in &changed {
+            let dir = state.join("marketplaces").join(name);
+            let dir = std::path::absolute(&dir).unwrap_or(dir);
+            if let Err(e) = cli.add_or_update(&dir, name) {
+                warnings.push(format!("couldn't update the {name} marketplace: {e}"));
+            }
+        }
+        if enabled.is_empty() {
+            return warnings;
+        }
+        match cli.list() {
+            Err(e) => warnings.push(format!("couldn't list the installed plugins: {e}")),
+            Ok(installed) => {
+                for id in &enabled {
+                    let have = installed
+                        .iter()
+                        .find(|i| &i.0 == id && i.2.as_deref().is_none_or(|s| s == "user"));
+                    let args = |verb: &'static str| ["plugin", verb, id, "--scope", "user"];
+                    let Some(have) = have else {
+                        if let Err(e) = cli.run(&args("install")) {
+                            warnings.push(format!("couldn't install {id}: {e}"));
+                        }
+                        continue;
+                    };
+                    let cur = current.get(id);
+                    let entry_changed = cur.is_some_and(|(h, _)| prev_entries.get(id) != Some(h));
+                    let version_differs = cur
+                        .and_then(|(_, v)| v.as_deref())
+                        .is_some_and(|v| have.1.as_deref().is_some_and(|iv| iv != v));
+                    if entry_changed || version_differs {
+                        if let Err(e) = cli.run(&args("update")) {
+                            warnings.push(format!("couldn't update {id}: {e}"));
+                        }
+                    }
+                }
+            }
+        }
+        warnings
+    }
+}
+
 impl Core {
     fn plugin_state(&self, repo: &str) -> State {
         Store::read(&self.db, &key(repo))
@@ -413,6 +484,9 @@ impl Core {
             return Ok(prev.warnings);
         }
 
+        if self.plugins_running.contains(repo) {
+            return Ok(prev.warnings); // its task is still running; Retry after it ends
+        }
         let now = self.now();
         let work = sha256_hex(format!("{mps:?}\n{enabled:?}\n{current:?}").as_bytes());
         match self.plugin_backoff.get(repo) {
@@ -430,56 +504,63 @@ impl Core {
             self.save_plugin_state(repo, &st)?;
             return Ok(st.warnings);
         };
-        let cli = Cli {
-            claude,
-            config_dir: (self.home.claude != self.home.home.join(".claude"))
-                .then(|| self.home.claude.clone()),
+        let job = Work {
+            cli: Cli {
+                claude,
+                config_dir: (self.home.claude != self.home.home.join(".claude"))
+                    .then(|| self.home.claude.clone()),
+            },
+            state: state.clone(),
+            changed: changed.into_iter().cloned().collect(),
+            enabled: enabled.clone(),
+            current: current.clone(),
+            prev_entries: prev.entries.clone(),
         };
-        let mut warnings = Vec::new();
-        for name in changed {
-            let dir = state.join("marketplaces").join(name);
-            let dir = std::path::absolute(&dir).unwrap_or(dir);
-            if let Err(e) = cli.add_or_update(&dir, name) {
-                warnings.push(format!("couldn't update the {name} marketplace: {e}"));
+        let repo_s = repo.to_string();
+        let base = record(Vec::new());
+        let run = move || {
+            let warnings = job.run();
+            Done {
+                repo: repo_s,
+                now,
+                work,
+                record: State { warnings, ..base },
             }
-        }
-        if !enabled.is_empty() {
-            match cli.list() {
-                Err(e) => warnings.push(format!("couldn't list the installed plugins: {e}")),
-                Ok(installed) => {
-                    for id in &enabled {
-                        let have = installed
-                            .iter()
-                            .find(|i| &i.0 == id && i.2.as_deref().is_none_or(|s| s == "user"));
-                        let args = |verb: &'static str| ["plugin", verb, id, "--scope", "user"];
-                        let Some(have) = have else {
-                            if let Err(e) = cli.run(&args("install")) {
-                                warnings.push(format!("couldn't install {id}: {e}"));
-                            }
-                            continue;
-                        };
-                        let cur = current.get(id);
-                        let entry_changed =
-                            cur.is_some_and(|(h, _)| prev.entries.get(id) != Some(h));
-                        let version_differs = cur
-                            .and_then(|(_, v)| v.as_deref())
-                            .is_some_and(|v| have.1.as_deref().is_some_and(|iv| iv != v));
-                        if entry_changed || version_differs {
-                            if let Err(e) = cli.run(&args("update")) {
-                                warnings.push(format!("couldn't update {id}: {e}"));
-                            }
-                        }
-                    }
-                }
+        };
+        // The `claude` calls take up to 120 s each: a task runs them and sends `PluginsDone`.
+        // Without an actor loop (the headless job runner) they run here.
+        let Some(weak) = self.tx.clone() else {
+            let d = run();
+            let w = d.record.warnings.clone();
+            self.plugins_done(d)?;
+            return Ok(w);
+        };
+        self.plugins_running.insert(repo.to_string());
+        std::thread::spawn(move || {
+            let d = run();
+            if let Some(tx) = weak.upgrade() {
+                let _ = tx.blocking_send(crate::actor::Msg {
+                    cmd: crate::model::Command::PluginsDone(d),
+                    reply: None,
+                });
             }
+        });
+        Ok(prev.warnings)
+    }
+
+    /// The task ended: only now the back-off and the group's plugin state change.
+    pub(crate) fn plugins_done(&mut self, d: Done) -> Result<Event> {
+        self.plugins_running.remove(&d.repo);
+        if !self.db.groups()?.iter().any(|g| g.repo == d.repo) {
+            return Ok(Event::Done); // the group was left meanwhile
         }
-        if warnings.is_empty() {
-            self.plugin_backoff.remove(repo);
+        if d.record.warnings.is_empty() {
+            self.plugin_backoff.remove(&d.repo);
         } else {
-            self.plugin_failed(repo, now, work);
+            self.plugin_failed(&d.repo, d.now, d.work);
         }
-        self.save_plugin_state(repo, &record(warnings.clone()))?;
-        Ok(warnings)
+        self.save_plugin_state(&d.repo, &d.record)?;
+        Ok(Event::Done)
     }
 
     fn plugin_failed(&mut self, repo: &str, now: i64, work: String) {

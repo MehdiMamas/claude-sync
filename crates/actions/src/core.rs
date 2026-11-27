@@ -65,6 +65,8 @@ pub struct Core {
     /// The group the pass is syncing now.
     pub(crate) current: std::sync::Mutex<Option<String>>,
     pub(crate) syncing: bool,
+    /// Groups whose `claude` calls run in a task now (only the actor changes state).
+    pub(crate) plugins_running: std::collections::HashSet<String>,
     pub(crate) plugin_backoff: std::collections::HashMap<String, crate::plugins::Backoff>,
     pub(crate) jobs_env: crate::jobs::JobsEnv,
     /// Lets a long command show its state before it ends (the actor sets it).
@@ -109,6 +111,7 @@ impl Core {
             pending_invites: Default::default(),
             current: Default::default(),
             syncing: false,
+            plugins_running: Default::default(),
             plugin_backoff: Default::default(),
             jobs_env: crate::jobs::JobsEnv::system(&home_path),
             publish: None,
@@ -168,6 +171,7 @@ impl Core {
             AppCoverage => self.app_coverage(),
             SignInDone(o) => self.sign_in_done(o),
             SignOut => self.sign_out(),
+            PluginsDone(d) => self.plugins_done(d),
             ReorderGroups(l) => self.reorder(l),
             CreateGroup { name, repo } => self.create_group(&name, &repo),
             Discover => self.discover(),
