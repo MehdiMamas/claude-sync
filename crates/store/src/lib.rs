@@ -151,6 +151,11 @@ impl Db {
         Ok(v.and_then(|b| serde_json::from_slice(&b).ok()))
     }
 
+    /// Whether the v1 import ran (its report may be unreadable and still count).
+    pub fn has_import(&self) -> Result<bool> {
+        Ok(self.get("import_v1")?.is_some())
+    }
+
     fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
         Ok(self
             .lock()

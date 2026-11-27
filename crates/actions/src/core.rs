@@ -75,6 +75,20 @@ pub struct Core {
     pub(crate) proposal_cache: std::collections::HashMap<(String, u64), ProposalCached>,
     /// Unix seconds of the last request-count flush (Parity 23: once a minute and on exit).
     last_flush: i64,
+    /// Set when the v1 import was skipped because `daemon.lock` was held by another process.
+    daemon_note: Option<InstallNote>,
+}
+
+/// `daemon.owner` names the process that holds the lock (0 when it does not say).
+fn v1_daemon_note(state: &std::path::Path) -> InstallNote {
+    let o: serde_json::Value = std::fs::read(state.join("daemon.owner"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    InstallNote::Daemon {
+        pid: o["pid"].as_u64().unwrap_or(0) as u32,
+        version: o["version"].as_str().unwrap_or("1").to_string(),
+    }
 }
 
 pub(crate) type ProposalCached = ((String, String), ProposalView);
@@ -88,7 +102,9 @@ impl Drop for Core {
 impl Core {
     /// What the v1 import left to say: the files it could not read and those it did not know.
     fn install_note(&self) -> Option<InstallNote> {
-        let r = self.db.import_report().ok()??;
+        let Some(r) = self.db.import_report().ok().flatten() else {
+            return self.daemon_note.clone();
+        };
         let total = u32::try_from(r.imported.len() + r.skipped.len() + r.unknown.len()).ok()?;
         let files: Vec<String> = r
             .skipped
@@ -99,7 +115,54 @@ impl Core {
         (!files.is_empty()).then_some(InstallNote::Skipped { files, total })
     }
 
+    /// Opens the core; the first start also imports the v1 state, under `daemon.lock`.
     pub fn open(env: Env) -> Result<Core> {
+        Self::open_with(env, false)
+    }
+
+    /// [`open`](Self::open) for a caller that already holds `daemon.lock` (the daemon).
+    pub fn open_locked(env: Env) -> Result<Core> {
+        Self::open_with(env, true)
+    }
+
+    /// Import the v1 state once. Without `held`, take `daemon.lock` for the import; when another
+    /// process holds it, skip and say so. shortcut: no hand-over of a v1 daemon here (it is
+    /// asked to stop and waited for in Plan steps 10 to 12); the note is all this does.
+    fn import_v1_once(&mut self, held: bool) {
+        if self.db.import_report().ok().flatten().is_some() || self.db.has_import().unwrap_or(false)
+        {
+            return;
+        }
+        let (state, claude) = (self.home.state.clone(), self.home.claude.clone());
+        let lock = if held {
+            None
+        } else {
+            let f = std::fs::File::options()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(state.join("daemon.lock"));
+            match f {
+                Ok(f) if f.try_lock().is_ok() => Some(f),
+                _ => {
+                    self.daemon_note = Some(v1_daemon_note(&state));
+                    return;
+                }
+            }
+        };
+        let r = claude_sync_store::import_v1(
+            &self.db,
+            &state,
+            &claude,
+            &claude_sync_store::DaemonLockHeld::claim(),
+        );
+        if let Err(e) = r {
+            eprintln!("claude-sync: v1 import failed: {e}");
+        }
+        drop(lock);
+    }
+
+    fn open_with(env: Env, held: bool) -> Result<Core> {
         let home = Home::from_env(&env.home);
         let home_path = env.home.clone();
         std::fs::create_dir_all(&home.state)?;
@@ -130,7 +193,9 @@ impl Core {
             publish: None,
             proposal_cache: Default::default(),
             last_flush: 0,
+            daemon_note: None,
         };
+        c.import_v1_once(held);
         c.restore_session();
         Ok(c)
     }

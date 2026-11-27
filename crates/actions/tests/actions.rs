@@ -3899,3 +3899,53 @@ mod plugins {
         assert!(calls(&log).is_empty(), "no work, no claude call");
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_open_imports_the_v1_state_once() {
+    let t = T::new().await;
+    let state = t.dir.path().join(".claude-sync");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(state.join("app.json"), r#"{"paused":true}"#).unwrap();
+    let env = t.env("");
+    let first = tokio::task::spawn_blocking({
+        let e = env.clone();
+        move || Core::open(e).map(|_| ())
+    });
+    first.await.unwrap().unwrap();
+    let db = claude_sync_store::Db::open(&state.join("claude-sync.db")).unwrap();
+    let report = db.import_report().unwrap().unwrap();
+    assert_eq!(report.imported, ["app.json"]);
+    // a v1 file that shows up later is not read: the import ran once
+    std::fs::write(state.join("jobs.json"), "{}").unwrap();
+    drop(db);
+    tokio::task::spawn_blocking(move || Core::open(env).map(|_| ()))
+        .await
+        .unwrap()
+        .unwrap();
+    let db = claude_sync_store::Db::open(&state.join("claude-sync.db")).unwrap();
+    assert_eq!(db.import_report().unwrap().unwrap().imported, ["app.json"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_held_daemon_lock_skips_the_import_and_says_so() {
+    let t = T::new().await;
+    let state = t.dir.path().join(".claude-sync");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(state.join("app.json"), "{}").unwrap();
+    std::fs::write(
+        state.join("daemon.owner"),
+        r#"{"pid":4242,"version":"1.9.0"}"#,
+    )
+    .unwrap();
+    let lock = std::fs::File::create(state.join("daemon.lock")).unwrap();
+    lock.lock().unwrap();
+    let h = t.signed_in().await;
+    assert_eq!(
+        h.snapshot().install,
+        Some(InstallNote::Daemon {
+            pid: 4242,
+            version: "1.9.0".into()
+        })
+    );
+    drop(lock);
+}
