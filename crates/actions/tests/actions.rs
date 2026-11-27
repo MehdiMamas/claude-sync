@@ -713,6 +713,9 @@ async fn a_pass_names_its_groups_and_a_failure_has_its_own_time() {
     assert!(!g.syncing && g.failed_at.is_none());
     // the next pass fails: the failure time is set, the last good sync stays
     t.server.reset().await;
+    // a 5xx, not a 404: a refused head means access is gone and removes the group
+    t.mock("GET", "/repos/zed/team/commits/main", 500, json!({}))
+        .await;
     t.clock.fetch_add(100, Ordering::SeqCst);
     let e = h.send(Command::SyncNow).await.unwrap();
     assert!(matches!(e, Event::Synced { failed: 1, .. }), "{e:?}");
