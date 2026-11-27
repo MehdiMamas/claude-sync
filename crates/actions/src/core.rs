@@ -154,12 +154,23 @@ impl Core {
                 .truncate(false)
                 .write(true)
                 .open(state.join("daemon.lock"));
-            match f {
-                Ok(f) if f.try_lock().is_ok() => {
+            // The lock was free a moment ago. A process another thread is spawning holds a copy
+            // of every open file until it execs, and so holds a flock too: wait that out, or the
+            // import is skipped and a later one overwrites the choices made in between.
+            let got = f.ok().filter(|f| {
+                (0..50).any(|_| {
+                    f.try_lock().is_ok() || {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        false
+                    }
+                })
+            });
+            match got {
+                Some(f) => {
                     let _ = write_owner(&state, &own_owner(env!("CARGO_PKG_VERSION")));
                     Some(f)
                 }
-                _ => return,
+                None => return,
             }
         };
         let r = claude_sync_store::import_v1(

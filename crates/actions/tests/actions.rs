@@ -1910,6 +1910,8 @@ mod personal {
         head: String,
         blobs: HashMap<String, Vec<u8>>,
         snaps: HashMap<String, BTreeMap<String, String>>,
+        /// commit -> its parent, so a ref move can be refused when it is not a fast forward
+        parents: HashMap<String, String>,
         n: u32,
     }
 
@@ -2087,6 +2089,7 @@ mod personal {
                     g.n += 1;
                     let id = format!("c{}", g.n);
                     g.snaps.insert(id.clone(), snap);
+                    g.parents.insert(id.clone(), g.head.clone());
                     ResponseTemplate::new(201).set_body_json(json!({"sha": id}))
                 }),
             ),
@@ -2095,7 +2098,14 @@ mod personal {
                 format!("^{REPO}/git/refs/heads/main$"),
                 Box::new(move |g, r| {
                     let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
-                    g.head = v["sha"].as_str().unwrap().to_string();
+                    let sha = v["sha"].as_str().unwrap().to_string();
+                    // as on GitHub, an unforced ref move to a commit that is not on top of the
+                    // head loses a race: without this, two passes at once silently lost a push
+                    if g.parents.get(&sha) != Some(&g.head) {
+                        return ResponseTemplate::new(422)
+                            .set_body_json(json!({"message": "Update is not a fast forward"}));
+                    }
+                    g.head = sha;
                     ResponseTemplate::new(200).set_body_json(json!({}))
                 }),
             ),

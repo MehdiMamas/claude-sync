@@ -71,13 +71,22 @@ pub async fn spawn_with(
     tokio::spawn(async move {
         let mut core = Some(core);
         let mut timer = tokio::time::interval(tick);
+        // The first tick of an interval is ready at once. Left to `select!`, it lost to queued
+        // commands at random and ran a whole pass later, in the middle of whatever came next
+        // (two devices pushing at once, a job file removed under it): run it first, always.
+        let mut first = true;
         loop {
-            let (cmd, reply) = tokio::select! {
-                m = rx.recv() => match m {
-                    Some(m) => (Some(m.cmd), m.reply),
-                    None => break,
-                },
-                _ = timer.tick() => (None, None),
+            let (cmd, reply) = if std::mem::take(&mut first) {
+                timer.tick().await;
+                (None, None)
+            } else {
+                tokio::select! {
+                    m = rx.recv() => match m {
+                        Some(m) => (Some(m.cmd), m.reply),
+                        None => break,
+                    },
+                    _ = timer.tick() => (None, None),
+                }
             };
             let Some(mut c) = core.take() else { break };
             let joined = tokio::task::spawn_blocking(move || {
