@@ -175,3 +175,8 @@ pub fn invitation_note(inviter: &str, repo: &str) -> String {
 /// v1 text of the reload hint (notification and banner).
 pub const PLUGINS_CHANGED: &str =
     "Plugins changed. Run /reload-plugins in open Claude Code sessions, or restart them.";
+
+/// v1 text of the desktop notification when an update has downloaded.
+pub fn update_ready(version: &str) -> String {
+    format!("claude-sync {version} is ready. It installs at the next quiet moment.")
+}

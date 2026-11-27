@@ -3994,6 +3994,19 @@ mod extras {
         // the release list does not undo a verified download
         h.send(Command::CheckUpdate).await.unwrap();
         assert_eq!(h.snapshot().update, "ready:999.0.0");
+        set("ready:999.0.0").await.unwrap();
+        // v1: one "update ready" notice, not one per report
+        let ready: Vec<_> = h
+            .snapshot()
+            .notifications
+            .iter()
+            .filter(|n| n.kind == "update")
+            .map(|n| n.text.clone())
+            .collect();
+        assert_eq!(
+            ready,
+            ["claude-sync 999.0.0 is ready. It installs at the next quiet moment."]
+        );
         set("failed:999.0.0").await.unwrap();
         assert_eq!(h.snapshot().update, "failed:999.0.0");
         // a ready version that is now the running one reads as updated, and an up-to-date

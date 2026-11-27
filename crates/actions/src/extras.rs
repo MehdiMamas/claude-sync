@@ -186,6 +186,12 @@ impl Core {
         } else {
             state
         };
+        // v1: one "update ready" notice when a verified download first waits
+        if let Some(v) = state.strip_prefix("ready:").filter(|_| kept != state) {
+            let _ =
+                self.db
+                    .add_notification("update", &crate::msg::update_ready(v), None, self.now());
+        }
         Store::write(&self.db, "update", state.as_bytes())?;
         Store::write(
             &self.db,
