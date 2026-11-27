@@ -77,7 +77,7 @@ impl Core {
                 let (author, message, commit) = self.head_commit(&repo);
                 let step = Step {
                     text,
-                    mine: !me.is_empty() && author == me,
+                    mine: !me.is_empty() && author.eq_ignore_ascii_case(&me),
                     author,
                     commit,
                     message,
@@ -112,7 +112,11 @@ impl Core {
             .and_then(|v| v.into_iter().next());
         match c {
             Some(c) => (
-                c.author.map(|a| a.login).unwrap_or_default(),
+                // v1: the GitHub login, else the git author name
+                c.author
+                    .map(|a| a.login)
+                    .or_else(|| c.commit.author.map(|a| a.name))
+                    .unwrap_or_default(),
                 c.commit.message.lines().next().unwrap_or("").to_string(),
                 c.sha,
             ),

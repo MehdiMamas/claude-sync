@@ -35,6 +35,8 @@ struct T {
     jobs: Mutex<Option<claude_sync_actions::jobs::JobsEnv>>,
     device: &'static str,
     no_auto: std::sync::atomic::AtomicBool,
+    /// Served commits have no GitHub account behind the author (only a git name).
+    anon: std::sync::atomic::AtomicBool,
 }
 
 impl T {
@@ -50,6 +52,7 @@ impl T {
             secrets: Arc::default(),
             jobs: Mutex::new(None),
             no_auto: Default::default(),
+            anon: Default::default(),
         }
     }
     fn env(&self, client_id: &str) -> Env {
@@ -588,7 +591,12 @@ impl T {
         )
         .await;
         let who = json!({"name": "Zed", "date": "2026-01-02T03:04:05Z"});
-        self.mock("GET", &format!("{r}/commits"), 200, json!([{"sha": head, "commit": {"message": "edit\n\nmore", "author": who, "committer": who}, "author": {"login": "zed"}}])).await;
+        let account = if self.anon.load(Ordering::SeqCst) {
+            json!(null)
+        } else {
+            json!({"login": "zed"})
+        };
+        self.mock("GET", &format!("{r}/commits"), 200, json!([{"sha": head, "commit": {"message": "edit\n\nmore", "author": who, "committer": who}, "author": account}])).await;
         let gf = serde_json::to_string_pretty(&gf).unwrap();
         let mut tree = vec![
             json!({"path": "claude-sync.json", "mode": "100644", "type": "blob", "sha": "gf"}),
@@ -910,6 +918,34 @@ async fn an_edit_of_a_line_the_group_also_changed_is_not_lost() {
         std::fs::read_to_string(copy_file(&t)).unwrap(),
         md(&["- A", "- B group"])
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_review_item_by_a_commit_with_no_github_login_names_the_git_author() {
+    let t = T::new().await;
+    t.anon.store(true, Ordering::SeqCst);
+    let h = t
+        .group_with("h1", &[("CLAUDE.md", &md(&["- Be kind"]))])
+        .await;
+    h.send(Command::SyncNow).await.unwrap();
+    t.serve("h2", &[("CLAUDE.md", &md(&["- Be kind", "- Use tabs"]))])
+        .await;
+    h.send(Command::SyncNow).await.unwrap();
+    let Event::Review(l) = h
+        .send(Command::ReviewList {
+            repo: "zed/team".into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(l[0].author, "Zed");
+    assert!(h
+        .snapshot()
+        .notifications
+        .iter()
+        .any(|n| n.text.contains("Zed changed zed/team's CLAUDE.md")));
 }
 
 #[tokio::test(flavor = "multi_thread")]
