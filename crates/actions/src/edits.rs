@@ -298,4 +298,44 @@ impl Core {
                 .collect(),
         ))
     }
+
+    /// `state/conflicts/<group dir>/<stamp>/<path>`, where the pass saved the copy; the path is
+    /// checked so a bad row can never point outside that folder.
+    fn conflict_file(&self, repo: &str, path: &str, saved_at: i64) -> Result<std::path::PathBuf> {
+        use std::path::Component;
+        let rel = std::path::Path::new(path);
+        if path.is_empty() || !rel.components().all(|c| matches!(c, Component::Normal(_))) {
+            return Err(Error::new("that is not a saved copy"));
+        }
+        let scope = if repo.is_empty() || repo == claude_sync_store::PERSONAL {
+            Scope::Personal
+        } else {
+            Scope::Group(repo.to_string())
+        };
+        Ok(self
+            .home
+            .state
+            .join("conflicts")
+            .join(scope.dir())
+            .join(utc_stamp(saved_at))
+            .join(rel))
+    }
+
+    pub(crate) fn conflict_open(&self, repo: &str, path: &str, saved_at: i64) -> Result<Event> {
+        let f = self.conflict_file(repo, path, saved_at)?;
+        Ok(Event::Path(
+            f.is_file().then(|| f.to_string_lossy().into_owned()),
+        ))
+    }
+
+    pub(crate) fn conflict_delete(&self, repo: &str, path: &str, saved_at: i64) -> Result<Event> {
+        let f = self.conflict_file(repo, path, saved_at)?;
+        match std::fs::remove_file(&f) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(Error::new(e.to_string())),
+        }
+        self.db.delete_conflict(repo, path, saved_at)?;
+        Ok(Event::Done)
+    }
 }

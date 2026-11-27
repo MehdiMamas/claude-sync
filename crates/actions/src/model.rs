@@ -475,6 +475,18 @@ pub enum Command {
         repo: String,
     },
     Conflicts,
+    /// Where a saved conflict copy lies (`Event::Path`), for the window to open (Parity 39).
+    ConflictOpen {
+        repo: String,
+        path: String,
+        saved_at: i64,
+    },
+    /// Delete a saved conflict copy and its list entry (Parity 39).
+    ConflictDelete {
+        repo: String,
+        path: String,
+        saved_at: i64,
+    },
     // jobs (Parity 64, 73, 74, 75)
     JobAccept {
         repo: String,

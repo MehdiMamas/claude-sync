@@ -186,8 +186,14 @@ test("advanced: packs, ssh and conflicts", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Open (1)" })).toBeVisible();
   await page.getByRole("link", { name: "Open (1)" }).click();
   await expect(page.getByText("skills/notes/SKILL.md")).toBeVisible();
-  await page.getByRole("link", { name: "Share mine" }).click();
-  await expect(page).toHaveURL(
-    /#\/group\/alex-host\/claude-group\/share\/skills\/notes\/SKILL\.md/,
+  await expect(page.getByRole("link", { name: "Share mine" })).toHaveAttribute(
+    "href",
+    "#/group/alex-host/claude-group/share/skills/notes/SKILL.md",
   );
+  await page.getByRole("button", { name: "Open copy" }).click();
+  await expect
+    .poll(() => fake(page).opened())
+    .toEqual(["/home/me/.claude-sync/state/conflicts/skills/notes/SKILL.md"]);
+  await page.getByRole("button", { name: "Delete copy" }).click();
+  await expect(page.getByText("No conflicts saved.")).toBeVisible();
 });

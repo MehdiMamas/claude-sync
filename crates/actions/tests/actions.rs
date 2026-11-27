@@ -1047,6 +1047,42 @@ async fn a_file_changed_on_both_sides_is_listed_as_a_conflict() {
         (c[0].repo.as_str(), c[0].path.as_str()),
         ("zed/team", "skills/s/SKILL.md")
     );
+    // Open copy: the saved copy of mine lies where the pass kept it (Parity 39)
+    let (repo, p, at) = (c[0].repo.clone(), c[0].path.clone(), c[0].saved_at);
+    let Event::Path(Some(f)) = h
+        .send(Command::ConflictOpen {
+            repo: repo.clone(),
+            path: p.clone(),
+            saved_at: at,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), "mine\n");
+    // a path that climbs out of the folder is refused
+    assert!(h
+        .send(Command::ConflictOpen {
+            repo: repo.clone(),
+            path: "../x".into(),
+            saved_at: at,
+        })
+        .await
+        .is_err());
+    // Delete copy: the file and the list entry go
+    h.send(Command::ConflictDelete {
+        repo,
+        path: p,
+        saved_at: at,
+    })
+    .await
+    .unwrap();
+    assert!(!std::path::Path::new(&f).exists());
+    let Event::Conflicts(c) = h.send(Command::Conflicts).await.unwrap() else {
+        panic!()
+    };
+    assert!(c.is_empty());
 }
 
 impl T {

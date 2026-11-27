@@ -152,6 +152,14 @@ impl Db {
         Ok(())
     }
 
+    pub fn delete_conflict(&self, repo: &str, path: &str, saved_at: i64) -> Result<()> {
+        self.lock().execute(
+            "DELETE FROM conflicts WHERE repo = ?1 AND path = ?2 AND saved_at = ?3",
+            params![repo, path, saved_at],
+        )?;
+        Ok(())
+    }
+
     /// The saved conflict copies, newest first (path, when).
     pub fn conflicts(&self, limit: u32) -> Result<Vec<(String, String, i64)>> {
         let conn = self.lock();

@@ -462,6 +462,9 @@ export function fakeBackend(search: string): Backend {
             ]
           : [];
   }
+  let conflicts = [
+    { repo: "alex-host/claude-group", path: "skills/notes/SKILL.md", savedAt: sec() - 86400 },
+  ];
   let clash = q.has("clash");
   // Open proposals per group: the host's list and the member's list, as the scenario names them.
   const prop = (number: number, author: string, title: string, path: string, over = {}) => ({
@@ -634,16 +637,17 @@ export function fakeBackend(search: string): Backend {
         return done;
       }
       case "conflicts":
+        return { kind: "conflicts", data: conflicts };
+      case "conflictOpen":
         return {
-          kind: "conflicts",
-          data: [
-            {
-              repo: "alex-host/claude-group",
-              path: "skills/notes/SKILL.md",
-              savedAt: sec() - 86400,
-            },
-          ],
+          kind: "path",
+          data: `/home/me/.claude-sync/state/conflicts/${cmd.data.path}`,
         };
+      case "conflictDelete":
+        conflicts = conflicts.filter(
+          (c) => !(c.repo === cmd.data.repo && c.path === cmd.data.path),
+        );
+        return done;
       case "sshSet":
         set({ sshOn: cmd.data.on });
         return done;

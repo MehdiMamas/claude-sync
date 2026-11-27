@@ -196,6 +196,16 @@ impl Core {
             ShareSkill { repo, name } => self.share_skill(&repo, &name),
             ShareClaudeMd { repo } => self.share_claude_md(&repo),
             Conflicts => self.conflicts(),
+            ConflictOpen {
+                repo,
+                path,
+                saved_at,
+            } => self.conflict_open(&repo, &path, saved_at),
+            ConflictDelete {
+                repo,
+                path,
+                saved_at,
+            } => self.conflict_delete(&repo, &path, saved_at),
             PersonalOn => self.personal_on(),
             PersonalOff => self.personal_off(),
             PersonalDismiss => self.personal_dismiss(),

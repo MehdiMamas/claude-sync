@@ -878,13 +878,20 @@ function Ssh(c: SettingsCtx) {
   );
 }
 
-/** v2-ScreenSettingsConflicts. Open, Share and Delete have no Command yet (only the list). */
+/** v2-ScreenSettingsConflicts. */
 function Conflicts(c: SettingsCtx) {
-  const [list] = useLoad(
+  const backend = useBackend();
+  const [list, reload] = useLoad(
     () => data(c.call, { kind: "conflicts" }, "conflicts") as Promise<ConflictView[]>,
     "conflicts",
   );
-  const later = () => c.toast("This comes with the conflicts step.");
+  const act = async (x: ConflictView, kind: "conflictOpen" | "conflictDelete") => {
+    const r = await c.call({ kind, data: { repo: x.repo, path: x.path, savedAt: x.savedAt } });
+    if ("err" in r) c.toast(r.err);
+    else if (kind === "conflictDelete") reload();
+    else if (r.ev.kind === "path" && r.ev.data) await backend.openTarget(r.ev.data);
+    else c.toast("That copy is gone.");
+  };
   return (
     <Page
       title="Conflicts"
@@ -897,15 +904,15 @@ function Conflicts(c: SettingsCtx) {
             key={`${x.repo}/${x.path}`}
             act={
               <>
-                <button type="button" className="b g" onClick={later}>
+                <button type="button" className="b g" onClick={() => void act(x, "conflictOpen")}>
                   Open copy
                 </button>
-                {x.repo && (
+                {x.repo.includes("/") && (
                   <a className="b" href={`#/group/${x.repo}/share/${x.path}`}>
                     Share mine
                   </a>
                 )}
-                <button type="button" className="b d" onClick={later}>
+                <button type="button" className="b d" onClick={() => void act(x, "conflictDelete")}>
                   Delete copy
                 </button>
               </>
@@ -913,7 +920,7 @@ function Conflicts(c: SettingsCtx) {
           >
             <span className="mono">{x.path}</span>
             <div className="sm muted">
-              {x.repo || "Personal memory"} · {ago(x.savedAt, c.now)}
+              {x.repo.includes("/") ? x.repo : "Personal memory"} · {ago(x.savedAt, c.now)}
             </div>
           </Row>
         ))}
