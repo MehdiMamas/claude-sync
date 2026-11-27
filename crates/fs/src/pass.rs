@@ -68,6 +68,9 @@ pub type CommitDate<'a> = dyn Fn(&str) -> Option<String> + 'a;
 /// Gets the files of the head when it moved, `None` when it did not (use what was kept).
 pub type Keep<'a> = dyn Fn(Option<&FileSet>) -> BTreeSet<String> + 'a;
 
+/// Starts the error of a group whose head read GitHub refused with 403 or 404 (access is gone).
+pub const LOST_ACCESS: &str = "access lost: ";
+
 pub struct GroupIn<'a> {
     pub repo: &'a str,
     /// This device hosts the group: it pushes.
@@ -159,7 +162,15 @@ impl Pass<'_> {
             .load_base(repo, &self.home.state)
             .map_err(|e| s(&e))?;
         let etag = base.as_ref().and_then(|b| b.etag.clone());
-        let head: Option<Head> = remote.head(etag.as_deref()).map_err(|e| s(&e))?;
+        let head: Option<Head> = remote.head(etag.as_deref()).map_err(|e| {
+            // v1 is_lost_access: only the head read decides it (a push refused is not this)
+            let t = s(&e);
+            if t.starts_with("GitHub returned 403:") || t.starts_with("GitHub returned 404:") {
+                format!("{LOST_ACCESS}{t}")
+            } else {
+                t
+            }
+        })?;
         let base_files: FileSet = base
             .as_ref()
             .map(|b| b.files.clone())

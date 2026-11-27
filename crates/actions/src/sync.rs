@@ -38,6 +38,7 @@ impl Core {
         self.plugins_after_pass();
         self.syncing = false;
         self.note_expired();
+        self.drop_lost_groups();
         r
     }
 
@@ -172,5 +173,28 @@ impl Core {
             failed,
             repos,
         })
+    }
+
+    /// v1 `lose`: a group whose head GitHub refused (403 or 404) leaves this machine: its
+    /// delivered files go (a hand-edited one stays) and one notification says so.
+    fn drop_lost_groups(&mut self) {
+        let lost: Vec<String> = self
+            .db
+            .groups()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|g| g.state.starts_with(claude_sync_fs::pass::LOST_ACCESS))
+            .map(|g| g.repo)
+            .collect();
+        for repo in lost {
+            if self.leave(&repo).is_ok() {
+                let _ = self.db.add_notification(
+                    "group",
+                    &msg::access_gone(&repo),
+                    Some(&repo),
+                    self.now(),
+                );
+            }
+        }
     }
 }

@@ -635,6 +635,44 @@ async fn sync_now_delivers_files_and_a_tick_does_too() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_group_whose_head_is_refused_leaves_this_machine_with_one_notice() {
+    let t = T::new().await;
+    let h = t
+        .group_with("h1", &[("skills/demo/SKILL.md", "---\nname: demo\n---\n")])
+        .await;
+    h.send(Command::SyncNow).await.unwrap();
+    assert!(t.file("skills/demo/SKILL.md").exists());
+    // v1: a 404 (or 403) on the head read means access is gone
+    t.server.reset().await;
+    t.mock("GET", "/user", 200, json!({"login": "ann", "id": 1}))
+        .await;
+    t.mock(
+        "GET",
+        "/repos/zed/team/commits/main",
+        404,
+        json!({"message": "Not Found"}),
+    )
+    .await;
+    h.send(Command::SyncNow).await.unwrap();
+    let snap = h.snapshot();
+    assert!(snap.groups.is_empty());
+    assert!(!t.file("skills/demo/SKILL.md").exists());
+    let n: Vec<_> = snap
+        .notifications
+        .iter()
+        .filter(|n| n.text.contains("is gone"))
+        .map(|n| n.text.clone())
+        .collect();
+    assert_eq!(
+        n,
+        ["access to zed/team is gone; its files were removed from this machine"]
+    );
+    // nothing is left to fail again
+    h.send(Command::SyncNow).await.unwrap();
+    assert_eq!(h.snapshot().notifications.len(), snap.notifications.len());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_pass_names_its_groups_and_a_failure_has_its_own_time() {
     let t = T::new().await;
     let h = t
