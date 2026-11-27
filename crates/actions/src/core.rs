@@ -312,6 +312,7 @@ impl Core {
             Copy { from, to, req } => self.copy(&from, &to, req),
             Packs { repo } => self.packs(repo.as_deref()),
             PackSetup { repo, id } => self.pack_setup(&repo, &id),
+            PackLaunch { repo, id } => self.pack_launch(&repo, &id),
             PackCheck { repo, id } => self.pack_check(&repo, &id),
             PackOn { repo, id } => self.pack_on(&repo, &id),
             PackOff { repo, id } => self.pack_off(&repo, &id),

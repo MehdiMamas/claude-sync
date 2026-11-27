@@ -96,7 +96,7 @@ fn os_kind(home: &Path) -> Kind {
     }
 }
 
-fn find_claude(home: &Path) -> Option<PathBuf> {
+pub(crate) fn find_claude(home: &Path) -> Option<PathBuf> {
     let name = if cfg!(windows) {
         "claude.exe"
     } else {
@@ -381,6 +381,10 @@ impl Core {
                 continue;
             };
             for e in validate(&v).0 {
+                // a pack's job registers only where the pack is on (Parity 79)
+                if self.pack_gate(&g.repo, &e.id) == Some(false) {
+                    continue;
+                }
                 if !dedup || !jobs.iter().any(|j| j.id == e.id) {
                     jobs.push(Job::new(&g.repo, e));
                 }

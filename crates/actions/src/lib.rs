@@ -28,6 +28,7 @@ mod feedback;
 mod groups;
 mod history;
 pub mod jobs;
+mod launch;
 pub mod model;
 pub mod msg;
 mod packs;

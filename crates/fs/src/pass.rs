@@ -64,6 +64,10 @@ pub type Gate<'a> = dyn Fn(Option<&[u8]>) -> Option<Vec<u8>> + 'a;
 /// Committer date for a head sha (the `COMMIT` marker's second line).
 pub type CommitDate<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
+/// Group paths a pack that is off keeps from being placed (a path covers what is under it).
+/// Gets the files of the head when it moved, `None` when it did not (use what was kept).
+pub type Keep<'a> = dyn Fn(Option<&FileSet>) -> BTreeSet<String> + 'a;
+
 pub struct GroupIn<'a> {
     pub repo: &'a str,
     /// This device hosts the group: it pushes.
@@ -77,6 +81,9 @@ pub struct GroupIn<'a> {
     pub gate: Option<&'a Gate<'a>>,
     /// Committer date of a head sha, for the marketplace `COMMIT` file (`None`: sha only).
     pub commit_date: Option<&'a CommitDate<'a>>,
+    /// Pack gating (Parity 79): paths of packs that are not on, left out of the remote side so
+    /// the plan takes away what was placed (an edited file stays).
+    pub keep: Option<&'a Keep<'a>>,
 }
 
 pub struct Pass<'a> {
@@ -119,6 +126,15 @@ fn oversize(path: &str, bytes: &[u8]) -> bool {
     path.starts_with("plugins/") && bytes.len() > MAX_PLUGIN_FILE
 }
 
+/// The sync switches as the head's group file has them now (a pass never runs on last time's
+/// switches); the kept ones when the head did not move or the file does not read.
+fn fresh_flags(all: Option<&FileSet>, kept: &SyncFlags) -> SyncFlags {
+    all.and_then(|a| a.get(FILE))
+        .and_then(|b| claude_sync_engine::formats::group::GroupFile::open(b).ok())
+        .map(|d| d.value.sync)
+        .unwrap_or_else(|| kept.clone())
+}
+
 fn blobs(f: &FileSet) -> BTreeMap<String, String> {
     f.iter().map(|(p, b)| (p.clone(), blob_sha(b))).collect()
 }
@@ -132,6 +148,7 @@ impl Pass<'_> {
         disk: &FsDisk,
         remote: &dyn Remote,
         keep: &dyn Fn(&str) -> bool,
+        skip: Option<&Keep>,
         scope: PlanScope,
         push: bool,
         raw: &mut Option<FileSet>,
@@ -156,9 +173,25 @@ impl Pass<'_> {
                 .map_err(|e| s(&e))?,
             None => base_files.clone(),
         };
+        let scope = match scope {
+            PlanScope::Group(kept) => {
+                PlanScope::Group(fresh_flags(head.is_some().then_some(&remote_all), &kept))
+            }
+            other => other,
+        };
+        let skipped = skip.map(|f| f(head.is_some().then_some(&remote_all)));
+        let off = |p: &str| {
+            skipped.as_ref().is_some_and(|s| {
+                s.iter().any(|x| {
+                    p == x
+                        || p.strip_prefix(x.as_str())
+                            .is_some_and(|r| r.starts_with('/'))
+                })
+            })
+        };
         let remote_files: FileSet = remote_all
             .iter()
-            .filter(|(p, b)| keep(p) && !oversize(p, b))
+            .filter(|(p, b)| keep(p) && !off(p) && !oversize(p, b))
             .map(|(p, b)| (p.clone(), b.clone()))
             .collect();
         let known: BTreeSet<String> = base_files
@@ -211,6 +244,7 @@ impl Pass<'_> {
             &disk,
             g.remote,
             &is_planned_path,
+            g.keep,
             PlanScope::Group(g.flags.clone()),
             g.host,
             &mut raw,
@@ -238,7 +272,7 @@ impl Pass<'_> {
                 &format!("schedules/{}", g.repo),
                 sched.unwrap_or_default(),
             );
-            let md = if g.flags.claude_md {
+            let md = if fresh_flags(Some(&all), &g.flags).claude_md {
                 all.get("CLAUDE.md").map(|b| b.as_slice())
             } else {
                 None
@@ -337,6 +371,7 @@ impl Pass<'_> {
             &disk,
             remote,
             &keep,
+            None,
             PlanScope::Personal,
             true,
             &mut raw,
@@ -402,7 +437,12 @@ impl Pass<'_> {
             } else {
                 let shared =
                     std::fs::read(apply::copy_path(self.home, g.repo, "settings.shared.json")).ok();
-                let shared = shared.filter(|_| g.flags.settings);
+                // the switches the group file has now: group() just stored it
+                let set = Store::read(self.db, &format!("group-file/{}", g.repo))
+                    .ok()
+                    .flatten()
+                    .map(|b| FileSet::from([(FILE.to_string(), b)]));
+                let shared = shared.filter(|_| fresh_flags(set.as_ref(), &g.flags).settings);
                 apply::apply_settings(
                     self.home,
                     self.db,

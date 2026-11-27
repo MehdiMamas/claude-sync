@@ -343,6 +343,10 @@ ts! {
         pub state: String,
         /// The pack is not for this computer's system.
         pub unsupported: bool,
+        /// The systems the pack runs on (`windows`, `macos`, `linux`).
+        pub os: Vec<String>,
+        /// When the last check ran (unix seconds); none before the first check.
+        pub checked_at: Option<i64>,
         /// Last line of the last check, redacted.
         pub tail: String,
     }
@@ -585,6 +589,12 @@ pub enum Command {
     },
     /// The setup text the person hands to Claude; nothing is run.
     PackSetup {
+        repo: String,
+        id: String,
+    },
+    /// Open a terminal that runs Claude Code in the pack's folder with the setup message. The
+    /// answer is a message, or the command to type when no terminal opens.
+    PackLaunch {
         repo: String,
         id: String,
     },

@@ -529,12 +529,14 @@ export function fakeBackend(search: string): Backend {
     summary: "",
     state: "off",
     unsupported: false,
+    os: ["windows", "macos", "linux"],
+    checkedAt: null,
     tail: "",
     ...over,
   });
   const packs: PackView[] = [
-    pack("browser-tools", { state: "on", tail: "checked 1 h ago: ready" }),
-    pack("mac-signing", { unsupported: true }),
+    pack("browser-tools", { state: "on", tail: "ready", checkedAt: 1_700_000_000 }),
+    pack("mac-signing", { unsupported: true, os: ["macos"] }),
     pack("gpu-tools", { state: "failed", tail: "step 2 of 3: download timed out" }),
   ];
 

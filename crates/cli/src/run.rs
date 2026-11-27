@@ -585,24 +585,31 @@ fn packs(ctx: &Ctx, cmd: PacksCmd, group: Option<String>) -> Res {
             }
             let json = all
                 .iter()
-                .map(|p| json!({ "repo": p.repo, "id": p.id, "title": p.title, "summary": p.summary, "state": p.state, "unsupported": p.unsupported, "tail": p.tail }))
+                .map(|p| json!({ "repo": p.repo, "id": p.id, "title": p.title, "summary": p.summary, "state": p.state, "unsupported": p.unsupported, "os": p.os, "checkedAt": p.checked_at, "tail": p.tail }))
                 .collect::<Vec<_>>();
             Ok(Out::new(text.trim_end(), json!({ "packs": json })))
         }
         PacksCmd::Setup { id } => {
             let repo = pick(&all)?;
-            let Event::Text(t) = core.handle(Command::PackSetup {
-                repo,
+            // as v1: Claude Code runs here, in the pack's folder; then the check runs
+            let (dir, msg, claude) = core.pack_chat(&repo, &id)?;
+            eprintln!("Starting Claude Code in {} ...", dir.display());
+            std::process::Command::new(&claude)
+                .arg(&msg)
+                .current_dir(&dir)
+                .status()
+                .map_err(|e| format!("could not start Claude Code: {e}"))?;
+            match core.handle(Command::PackCheck {
+                repo: repo.clone(),
                 id: id.clone(),
-            })?
-            else {
-                return Err("no setup text".into());
-            };
-            // shortcut: prints the setup guide; v1 also started Claude in this terminal, add with the packs host.
-            Ok(Out::new(
-                t.clone(),
-                json!({ "ok": true, "id": id, "setup": t }),
-            ))
+            }) {
+                Ok(_) => Ok(Out::done(format!(
+                    "check passed. Turn it on with: claude-sync packs on {id}"
+                ))),
+                Err(e) => Err(Fail::Run(format!(
+                    "{e}\n{id} stays off on this machine. After you fix it, run:\n  claude-sync packs check {id}"
+                ))),
+            }
         }
         PacksCmd::Check { id } => {
             let repo = pick(&all)?;

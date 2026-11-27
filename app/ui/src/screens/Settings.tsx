@@ -690,6 +690,8 @@ function Updates(c: SettingsCtx) {
   );
 }
 
+const OS_NAME: Record<string, string> = { windows: "Windows", macos: "macOS", linux: "Linux" };
+
 /** v2-ScreenSettingsAdvanced. The Claude helper has no Command yet: it stays this window's choice. */
 function Advanced(c: SettingsCtx) {
   const { snap } = c;
@@ -790,7 +792,7 @@ function Packs(c: SettingsCtx) {
               const on = p.state === "on";
               const failed = p.state === "failed";
               const chip = p.unsupported ? (
-                <Chip kind="n">Needs macOS</Chip>
+                <Chip kind="n">Needs {p.os.map((o) => OS_NAME[o] ?? o).join(" or ")}</Chip>
               ) : failed ? (
                 <Chip kind="err">Setup failed</Chip>
               ) : on ? (
@@ -827,6 +829,7 @@ function Packs(c: SettingsCtx) {
                   <b>{p.title}</b> {chip}
                   <div className="sm muted">
                     {p.unsupported ? "not for this machine" : p.tail || p.summary}
+                    {p.checkedAt ? ` · checked ${new Date(p.checkedAt * 1000).toLocaleString()}` : ""}
                   </div>
                 </Row>
               );

@@ -269,13 +269,14 @@ impl Core {
         }
         self.unregister_group_jobs(repo)?;
         self.forget_plugins(repo);
+        self.forget_packs(repo);
         let now = self.now();
         let _ = claude_sync_fs::apply::unapply_settings(&self.home, &self.db, repo, now);
         let pass = claude_sync_fs::pass::Pass {
             home: &self.home,
             db: &self.db,
             now,
-            pinned: Default::default(),
+            pinned: self.pack_pinned(),
             crash_at: None,
             skip_kinds: Default::default(),
             on_group: None,

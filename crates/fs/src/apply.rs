@@ -51,17 +51,22 @@ pub fn update_block(home: &Home, groups: &[(String, bool)], now: i64) -> std::io
     {
         return Ok(false); // never written through a link
     }
-    let copies: Vec<GroupCopy> = groups
-        .iter()
-        .map(|(r, disabled)| {
-            let f = copy_path(home, r, "CLAUDE.md");
-            GroupCopy {
-                present: f.is_file(),
-                file: f.to_string_lossy().into_owned(),
-                disabled: *disabled,
-            }
-        })
-        .collect();
+    let mut copies: Vec<GroupCopy> = vec![];
+    for (r, disabled) in groups {
+        let f = copy_path(home, r, "CLAUDE.md");
+        copies.push(GroupCopy {
+            present: f.is_file(),
+            file: f.to_string_lossy().into_owned(),
+            disabled: *disabled,
+        });
+        // the CLAUDE.md of each pack that is on in this group (Parity 79), after the group's own
+        let list = std::fs::read_to_string(copy_path(home, r, "pack-imports")).unwrap_or_default();
+        copies.extend(list.lines().filter(|l| !l.is_empty()).map(|l| GroupCopy {
+            present: std::path::Path::new(l).is_file(),
+            file: l.to_string(),
+            disabled: *disabled,
+        }));
+    }
     let existing = read_file(&path)?;
     let Some(out) = compose_block(existing.as_deref(), &copies, home.home.to_str()) else {
         return Ok(false);

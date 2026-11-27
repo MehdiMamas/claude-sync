@@ -1611,6 +1611,39 @@ mod jobs {
         );
     }
 
+    /// Parity 79: a job that belongs to a pack registers only while the pack is on here.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_packs_job_registers_only_while_the_pack_is_on() {
+        let (r, h) = rig().await;
+        let manifest = r#"{"schema":1,"id":"ext","title":"Ext","summary":"A pack","setup":"setup.md","check":{"run":["true"]},"jobs":["nightly"]}"#;
+        r.t.serve(
+            "h2",
+            &[
+                ("schedules.json", &job("hello world")),
+                ("packs/ext/pack.json", manifest),
+                ("packs/ext/setup.md", "Install.\n"),
+            ],
+        )
+        .await;
+        h.send(Command::SyncNow).await.unwrap();
+        assert!(h.send(acc("nightly")).await.is_err(), "no job while off");
+        assert!(!r.plist().exists(), "the pack is off: no task");
+        assert!(h.snapshot().jobs.is_empty(), "and no job card yet");
+        let pk = |c: fn(String, String) -> Command| c("zed/team".into(), "ext".into());
+        h.send(pk(|repo, id| Command::PackCheck { repo, id }))
+            .await
+            .unwrap();
+        h.send(pk(|repo, id| Command::PackOn { repo, id }))
+            .await
+            .unwrap();
+        h.send(acc("nightly")).await.unwrap();
+        assert!(r.plist().exists(), "on: registered");
+        h.send(pk(|repo, id| Command::PackOff { repo, id }))
+            .await
+            .unwrap();
+        assert!(!r.plist().exists(), "off again: the task is removed");
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn leaving_a_group_unregisters_its_jobs() {
         let (r, h) = rig().await;
@@ -3510,6 +3543,63 @@ mod extras {
             go(Command::PackOff { repo, id: d }).await.is_err(),
             "not on"
         );
+    }
+
+    /// Parity 79: a pack's files, plugin pin and CLAUDE.md follow whether the pack is on here.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pack_places_its_files_pins_its_plugin_and_imports_only_while_on() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        let manifest = r#"{"schema":1,"id":"ext","title":"Ext","summary":"A pack","setup":"setup.md","check":{"run":["true"]},"plugins":["p@m"],"files":["skills/x"],"claudeMd":"CLAUDE.md"}"#;
+        t.serve(
+            "h1",
+            &[
+                ("packs/ext/pack.json", manifest),
+                ("packs/ext/setup.md", "Install.\n"),
+                ("packs/ext/CLAUDE.md", "- pack rule\n"),
+                ("skills/x/SKILL.md", "x"),
+                ("skills/y/SKILL.md", "y"),
+                (
+                    "settings.shared.json",
+                    r#"{"enabledPlugins":{"p@m":false}}"#,
+                ),
+            ],
+        )
+        .await;
+        t.push_tail("zed/team").await;
+        let claude = t.dir.path().join(".claude");
+        std::fs::create_dir_all(&claude).unwrap();
+        let settings = || std::fs::read_to_string(claude.join("settings.json")).unwrap();
+        h.send(Command::Join {
+            repo: "zed/team".into(),
+        })
+        .await
+        .unwrap();
+        h.send(Command::SyncNow).await.unwrap();
+        assert!(claude.join("skills/y/SKILL.md").is_file());
+        assert!(!claude.join("skills/x").exists(), "the pack is off");
+        let (repo, id) = ("zed/team".to_string(), "ext".to_string());
+        let go = |c: fn(String, String) -> Command| h.send(c(repo.clone(), id.clone()));
+        go(|repo, id| Command::PackCheck { repo, id })
+            .await
+            .unwrap();
+        go(|repo, id| Command::PackOn { repo, id }).await.unwrap();
+        assert!(claude.join("skills/x/SKILL.md").is_file(), "placed when on");
+        let md = std::fs::read_to_string(claude.join("CLAUDE.md")).unwrap();
+        assert!(md.contains("packs/ext/CLAUDE.md"), "{md}");
+        // the machine's own true stays while the pack is on, and is not an edit
+        std::fs::write(
+            claude.join("settings.json"),
+            r#"{"enabledPlugins":{"p@m":true}}"#,
+        )
+        .unwrap();
+        h.send(Command::SyncNow).await.unwrap();
+        assert!(settings().contains("true"), "{}", settings());
+        go(|repo, id| Command::PackOff { repo, id }).await.unwrap();
+        assert!(!claude.join("skills/x").exists(), "taken away when off");
+        let md = std::fs::read_to_string(claude.join("CLAUDE.md")).unwrap_or_default();
+        assert!(!md.contains("packs/ext"), "{md}");
+        assert!(settings().contains("false"), "{}", settings());
     }
 
     #[tokio::test(flavor = "multi_thread")]

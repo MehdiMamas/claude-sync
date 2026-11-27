@@ -5,10 +5,10 @@ use crate::core::Core;
 use crate::error::{Error, Result};
 use crate::model::Event;
 use crate::msg;
+use claude_sync_engine::plan::FileSet;
 use claude_sync_engine::traits::Store;
-use claude_sync_fs::pass::{CommitDate, GroupIn, Pass};
+use claude_sync_fs::pass::{CommitDate, GroupIn, Keep, Pass};
 use claude_sync_store::RequestRow;
-use std::collections::BTreeSet;
 use std::time::Duration;
 
 impl Core {
@@ -73,13 +73,21 @@ impl Core {
                 }) as Box<CommitDate<'_>>
             })
             .collect();
+        let keeps: Vec<Box<Keep<'_>>> = recs
+            .iter()
+            .map(|g| {
+                let repo = g.repo.clone();
+                Box::new(move |f: Option<&FileSet>| self.pack_skipped(&repo, f)) as Box<Keep<'_>>
+            })
+            .collect();
         let groups: Vec<GroupIn> = recs
             .iter()
             .zip(&remotes)
             .zip(flags)
             .zip(&gates)
             .zip(&dates)
-            .map(|((((g, r), flags), gate), date)| GroupIn {
+            .zip(&keeps)
+            .map(|(((((g, r), flags), gate), date), keep)| GroupIn {
                 repo: &g.repo,
                 host: false,
                 flags,
@@ -87,6 +95,7 @@ impl Core {
                 remote: r,
                 gate: Some(&**gate),
                 commit_date: Some(&**date),
+                keep: Some(&**keep),
             })
             .collect();
         let personal = self.personal_before();
@@ -100,7 +109,7 @@ impl Core {
             home: &self.home,
             db: &self.db,
             now: self.now(),
-            pinned: BTreeSet::new(),
+            pinned: self.pack_pinned(),
             crash_at: None,
             skip_kinds: self.pchoice().kinds_off,
             on_group: Some(&on_group),

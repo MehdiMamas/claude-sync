@@ -13,6 +13,14 @@ state: string,
  */
 unsupported: boolean, 
 /**
+ * The systems the pack runs on (`windows`, `macos`, `linux`).
+ */
+os: Array<string>, 
+/**
+ * When the last check ran (unix seconds); none before the first check.
+ */
+checkedAt: number | null, 
+/**
  * Last line of the last check, redacted.
  */
 tail: string, };
