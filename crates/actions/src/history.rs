@@ -30,15 +30,57 @@ fn issue_chips(text: &str) -> Vec<u64> {
     out
 }
 
-/// The `Before:` and `Now:` lines of a commit text.
+/// Before and now from a commit's body (v1 `changeParts`): `Before:`/`Was:` and `Now:`/`After:`
+/// lines (bullets allowed), else one line `X -> Y`. Nothing is made up when they are absent.
 fn message_note(text: &str) -> (Option<String>, Option<String>) {
-    let line = |key: &str| {
-        text.lines()
-            .find_map(|l| l.trim().strip_prefix(key))
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
+    let (mut before, mut now) = (None::<String>, None::<String>);
+    let mut rest = vec![];
+    let key = |l: &str, names: [&str; 2]| {
+        let (k, v) = l.split_once(':')?;
+        let k = k.trim().to_lowercase();
+        (names.contains(&k.as_str()) && !v.trim().is_empty()).then(|| v.trim().to_string())
     };
-    (line("Before:"), line("Now:"))
+    let text = text.replace("\r\n", "\n");
+    for raw in text.lines().skip(1) {
+        let l = raw.trim().trim_start_matches(['-', '*', '\u{2022}']).trim();
+        if l.is_empty() {
+            continue;
+        }
+        if before.is_none() && key(l, ["before", "was"]).is_some() {
+            before = key(l, ["before", "was"]);
+        } else if now.is_none() && key(l, ["now", "after"]).is_some() {
+            now = key(l, ["now", "after"]);
+        } else {
+            rest.push(l);
+        }
+    }
+    if before.is_none() && now.is_none() {
+        for l in rest {
+            let Some((x, y)) = l.split_once('\u{2192}').or_else(|| l.split_once("->")) else {
+                continue;
+            };
+            let x = x.split_once(": ").map_or(x, |(_, r)| r).trim();
+            let y = y.trim().trim_end_matches(['.', ';']);
+            if !x.is_empty() && !y.is_empty() {
+                return (Some(x.into()), Some(y.into()));
+            }
+        }
+    }
+    (before, now)
+}
+
+/// The first message line without the app's `login@device: ` prefix, kept short (v1).
+fn original_summary(message: &str) -> String {
+    let first = message.lines().next().unwrap_or("").trim();
+    let text = match first.split_once(": ") {
+        Some((who, rest)) if who.contains('@') && !who.contains(char::is_whitespace) => rest,
+        _ => first,
+    };
+    let mut out: String = text.chars().take(72).collect();
+    if text.chars().count() > 72 {
+        out.push('\u{2026}');
+    }
+    out
 }
 
 fn short(sha: &str) -> &str {
@@ -193,7 +235,7 @@ impl Core {
         }
         let summary = detail
             .commit
-            .and_then(|c| c.message.lines().next().map(String::from))
+            .map(|c| original_summary(&c.message))
             .unwrap_or_default();
         let plan = RevertPlan {
             sha: detail.sha,
@@ -232,6 +274,19 @@ mod tests {
     fn chips_and_notes() {
         assert_eq!(issue_chips("fix #12 and #7, not a#3, #12"), vec![12, 7]);
         let (b, n) = message_note("x\n\nBefore: tabs\nNow: spaces\n");
+        assert_eq!(
+            message_note("x\n- Was: a\n- After: b"),
+            (Some("a".into()), Some("b".into()))
+        );
+        assert_eq!(
+            message_note("x\nuse tabs -> use spaces."),
+            (Some("use tabs".into()), Some("use spaces".into()))
+        );
+        assert_eq!(message_note("Before: not the subject"), (None, None));
+        assert_eq!(
+            original_summary("ann@mac: revert abc1234 (x)"),
+            "revert abc1234 (x)"
+        );
         assert_eq!((b.as_deref(), n.as_deref()), (Some("tabs"), Some("spaces")));
     }
 }
