@@ -238,7 +238,19 @@ pub fn free_daemon_lock(
         .map(|p| p.pid)
         .collect();
     let Some(&pid) = found.first() else {
-        return Handover::Stuck { pid: 0 };
+        // no v1 daemon: a v2 daemon may have taken the lock and not written its owner yet
+        loop {
+            if live_owner(state).is_some() {
+                return Handover::V2Holds;
+            }
+            if lock_free(state) {
+                return Handover::Free { killed: false };
+            }
+            if start.elapsed() >= wait {
+                return Handover::Stuck { pid: 0 };
+            }
+            std::thread::sleep(poll.min(wait.saturating_sub(start.elapsed())));
+        }
     };
     for p in &found {
         procs.terminate(*p);
@@ -385,6 +397,20 @@ mod tests {
         let r = free_daemon_lock(d.path(), &fake, (1, None), FAST, FAST);
         assert_eq!(r, Handover::V2Holds);
         assert!(fake.killed.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_v2_daemon_that_locks_before_it_writes_its_owner_is_not_stuck() {
+        let d = tempfile::tempdir().unwrap();
+        let _lock = hold(d.path());
+        let dir = d.path().to_path_buf();
+        let w = std::thread::spawn(move || {
+            std::thread::sleep(FAST * 3);
+            write_owner(&dir, &own_owner("2.0.0")).unwrap();
+        });
+        let r = free_daemon_lock(d.path(), &FakeProcs::default(), (1, None), FAST * 100, FAST);
+        w.join().unwrap();
+        assert_eq!(r, Handover::V2Holds);
     }
 
     #[test]
