@@ -584,6 +584,7 @@ fn activity(ctx: &Ctx, cmd: OnOff) -> Res {
 fn packs(ctx: &Ctx, cmd: PacksCmd, group: Option<String>) -> Res {
     let group = group.map(|g| repo_arg(&g)).transpose()?;
     let mut core = open(ctx)?;
+    need_sign_in(&core)?;
     let Event::Packs(all) = core.handle(Command::Packs {
         repo: group.clone(),
     })?
@@ -946,5 +947,30 @@ mod tests {
                 .replace(char::is_whitespace, ""),
             r#"{"login":"ann","tokens":{"access_token":"gho_x"}}"#
         );
+    }
+
+    #[test]
+    fn packs_list_signed_out_says_not_signed_in_like_every_other_command() {
+        let h = tempfile::tempdir().unwrap();
+        let ctx = Ctx {
+            home: Some(h.path().to_path_buf()),
+            ..Ctx::cli()
+        };
+        for cmd in [
+            Cmd::Packs {
+                cmd: None,
+                group: None,
+            },
+            Cmd::Packs {
+                cmd: Some(PacksCmd::List),
+                group: None,
+            },
+            Cmd::Groups,
+        ] {
+            match execute(&ctx, cmd) {
+                Err(Fail::Run(m)) => assert_eq!(m, "not signed in: run `claude-sync-cli login`"),
+                _ => panic!("expected the not signed in failure"),
+            }
+        }
     }
 }
