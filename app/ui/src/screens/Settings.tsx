@@ -641,12 +641,7 @@ function Updates(c: SettingsCtx) {
         <Banner
           kind="info"
           actions={
-            // Installing is the shell's job (plan step 9): no Command exists for it yet.
-            <button
-              type="button"
-              className="b p"
-              onClick={() => c.toast("Installing from the window comes with the update step.")}
-            >
+            <button type="button" className="b p" onClick={() => void backend.installUpdate()}>
               Restart to update
             </button>
           }

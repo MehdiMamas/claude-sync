@@ -121,7 +121,7 @@ If you ever run it in CI instead, the runner must sign in with `CLAUDE_CODE_OAUT
 
 ## Install page
 
-`GET /install` is a self-contained page for people: **Sign in with GitHub**, then buttons for the latest release's Windows `-setup.exe` and macOS `.dmg`, the version, and the macOS first-run steps (the build is not notarized). The group README links to it.
+`GET /install` redirects to the Releases page of `RELEASES_REPO` (v2; group READMEs already in the field link to it). The sign-in routes below are kept but no page uses them.
 
 - `GET /api/install/login` redirects to GitHub's OAuth web flow (scope `read:user` only) with a random `state` in a 10-minute HttpOnly, Secure, SameSite=Lax cookie.
 - `GET /api/install/callback` checks `state` against the cookie, exchanges the code with the client secret, reads the login with `GET /user`, **discards the token** (never stored or logged) and sets the `cs_install` session cookie: `<login + expiry>.<HMAC-SHA256 with INSTALL_SESSION_SECRET>`, 1 day, HttpOnly, Secure, SameSite=Lax.

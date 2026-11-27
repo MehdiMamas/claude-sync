@@ -322,6 +322,7 @@ impl Core {
             ActivityTick { idle_secs } => self.activity_tick(idle_secs),
             Explain { task, text } => self.explain(task, &text),
             CheckUpdate => self.check_update(),
+            SetUpdate { state } => self.set_update(&state),
             MarkRead { id } => self.notes(|d| d.mark_read(id)),
             MarkAllRead => self.notes(|d| d.mark_all_read()),
             ClearNotifications => self.notes(|d| d.clear_notifications()),

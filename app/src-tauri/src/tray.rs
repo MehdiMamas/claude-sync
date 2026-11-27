@@ -168,8 +168,7 @@ fn run(app: &AppHandle, id: Id) {
         Id::Open => return window::open(app, None),
         Id::Notifications => return window::open(app, Some("notifications")),
         Id::Feedback => return window::open(app, Some("feedback")),
-        // shortcut: no pending update to install on quit, step 9 (updater) adds it.
-        Id::Quit => return app.exit(0),
+        Id::Quit => return crate::update::quit(app),
         Id::Status => return,
     };
     tauri::async_runtime::spawn(async move {

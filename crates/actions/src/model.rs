@@ -633,6 +633,10 @@ pub enum Command {
         text: String,
     },
     CheckUpdate,
+    /// The shell records the updater's state: `available:<v>`, `ready:<v>`, `failed:<v>` or empty.
+    SetUpdate {
+        state: String,
+    },
     MarkRead {
         id: i64,
     },

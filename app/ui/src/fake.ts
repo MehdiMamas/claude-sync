@@ -1023,6 +1023,10 @@ export function fakeBackend(search: string): Backend {
     // a 1 x 1 PNG
     captureScreen: async () =>
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    // the restart is played as its result: the new version is running
+    installUpdate: async () => {
+      set({ update: snap.update.replace(/^ready:/, "updated:") });
+    },
     openTarget: async (t) => {
       (window as unknown as { __opened?: string[] }).__opened = [
         ...((window as unknown as { __opened?: string[] }).__opened ?? []),

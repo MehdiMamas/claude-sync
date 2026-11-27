@@ -8,6 +8,8 @@ export interface Backend {
   snapshot(): Promise<Snapshot>;
   subscribe(cb: (s: Snapshot) => void): () => void;
   openTarget(target: string): Promise<void>;
+  /** Install the verified download and restart the app. */
+  installUpdate(): Promise<void>;
   /** `granted`, `denied`, `not_asked` or `unknown` (not macOS). */
   notifyPermission(): Promise<string>;
   /** The primary screen as base64 PNG or JPEG; the shell hides the window while it grabs it. */
@@ -25,6 +27,7 @@ export async function tauriBackend(): Promise<Backend> {
       return () => void p.then((off) => off());
     },
     openTarget: (target) => invoke("open_target", { target }),
+    installUpdate: () => invoke("install_update"),
     notifyPermission: () => invoke<string>("notification_permission"),
     captureScreen: () => invoke<string>("capture_screen"),
   };

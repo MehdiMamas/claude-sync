@@ -3798,6 +3798,35 @@ mod extras {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn the_shell_reports_the_update_states() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        let set = |s: &str| h.send(Command::SetUpdate { state: s.into() });
+        set("available:999.0.0").await.unwrap();
+        assert_eq!(h.snapshot().update, "available:999.0.0");
+        assert!(h.snapshot().update_checked.is_some());
+        set("ready:999.0.0").await.unwrap();
+        t.mock(
+            "GET",
+            "/latest/download/latest.json",
+            200,
+            json!({"version": "999.0.0"}),
+        )
+        .await;
+        // the release list does not undo a verified download
+        h.send(Command::CheckUpdate).await.unwrap();
+        assert_eq!(h.snapshot().update, "ready:999.0.0");
+        set("failed:999.0.0").await.unwrap();
+        assert_eq!(h.snapshot().update, "failed:999.0.0");
+        // a ready version that is now the running one reads as updated, and an up-to-date
+        // check does not clear it
+        set("ready:0.0.1").await.unwrap();
+        assert_eq!(h.snapshot().update, "updated:0.0.1");
+        set("").await.unwrap();
+        assert_eq!(h.snapshot().update, "updated:0.0.1");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_created_group_shows_whether_the_host_lock_took() {
         let t = T::new().await;
         let h = t.signed_in().await;

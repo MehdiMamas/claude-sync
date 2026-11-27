@@ -79,7 +79,7 @@ pub enum Cmd {
     },
     /// Check for the newest release
     Update {
-        /// Only look; the install path comes with the updater
+        /// Only look, do not install
         #[arg(long)]
         check: bool,
     },

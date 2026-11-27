@@ -762,18 +762,36 @@ fn update(ctx: &Ctx, check: bool) -> Res {
     let Event::Text(t) = core.handle(Command::CheckUpdate)? else {
         return Err("no update answer".into());
     };
-    let available = t.strip_prefix("available:").map(String::from);
-    let mut text = match &available {
-        Some(v) => format!("Version {v} is available (this is {}).", ctx.version),
-        None => format!("{} {} is the newest version.", ctx.name, ctx.version),
+    let Some(version) = t.strip_prefix("available:").map(String::from) else {
+        return Ok(Out::new(
+            format!("{} {} is the newest version.", ctx.name, ctx.version),
+            json!({ "current": ctx.version, "available": null }),
+        ));
     };
-    // shortcut: no in-place install from the command line yet; the updater of step 9 adds it.
-    if !check && available.is_some() {
-        text.push_str("\nInstalling from the command line comes with the updater; download the release for now.");
+    if check {
+        return Ok(Out::new(
+            format!(
+                "Version {version} is available (this is {}). Run `{} update`.",
+                ctx.version, ctx.name
+            ),
+            json!({ "current": ctx.version, "available": version }),
+        ));
     }
+    // The app binary updates itself (Settings, Updates); only the headless program swaps itself.
+    if ctx.name != "claude-sync-cli" {
+        return Err(format!(
+            "Version {version} is available. The app updates itself: open Settings, Updates."
+        )
+        .into());
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let name = crate::update::asset_name(crate::update::target_triple()?);
+    let client = claude_sync_github::Client::new(ctx.cfg.clone().unwrap_or_else(Config::github))
+        .map_err(|e| e.to_string())?;
+    crate::update::install(&client, &version, &name, &exe)?;
     Ok(Out::new(
-        text,
-        json!({ "current": ctx.version, "available": available }),
+        format!("Updated to {version}. A running daemon switches over at its next restart (`systemctl --user restart claude-sync`)."),
+        json!({ "ok": true, "from": ctx.version, "to": version }),
     ))
 }
 

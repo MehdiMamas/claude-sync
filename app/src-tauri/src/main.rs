@@ -10,6 +10,7 @@ mod capture;
 #[cfg(target_os = "macos")]
 mod mac_notify;
 mod tray;
+mod update;
 mod window;
 
 /// The window route a clicked notification opens.
@@ -53,8 +54,18 @@ fn now() -> i64 {
 /// The window's one way in: run a command, get its event. Everything else it learns from the
 /// `snapshot` event.
 #[tauri::command]
-async fn send(h: State<'_, Handle>, cmd: Command) -> Result<Event, String> {
+async fn send(app: AppHandle, h: State<'_, Handle>, cmd: Command) -> Result<Event, String> {
+    // the updater plugin is the shell's, so "Check now" runs here
+    if matches!(cmd, Command::CheckUpdate) {
+        return update::answer(&app, &h).await;
+    }
     h.send(cmd).await.map_err(|e| e.0)
+}
+
+/// "Restart to update": installs the verified download and restarts.
+#[tauri::command]
+fn install_update(app: AppHandle) -> Result<(), String> {
+    update::restart_to_update(&app)
 }
 
 #[tauri::command]
@@ -210,6 +221,7 @@ fn start(app: &AppHandle, background: bool) -> Result<(), String> {
     let s = h.snapshot();
     tray::build(app, &s, now()).map_err(|e| e.to_string())?;
     on_click(app);
+    update::spawn(app.clone(), h.clone());
     pump(app.clone(), h);
     if !background || s.login.is_none() {
         window::open(app, None);
@@ -245,12 +257,14 @@ fn main() {
         ))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        // shortcut: no updater plugin yet, step 9 adds it (tauri.conf.json keeps the pubkey).
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Owner::default())
+        .manage(update::Pending::default())
         .manage(tray::Shown::default())
         .invoke_handler(tauri::generate_handler![
             send,
             snapshot,
+            install_update,
             open_target,
             notification_permission,
             capture::capture_screen

@@ -1,4 +1,4 @@
-import { ARCHES, type Arch, findBundle, type Target, TARGETS } from "../lib/assets.ts";
+import { ARCHES, type Arch, findBundle, findCliArchive, type Target, TARGETS } from "../lib/assets.ts";
 import { requireCaller } from "../lib/auth.ts";
 import { env } from "../lib/env.ts";
 import { discard, github, GitHubError, type Release, type ReleaseAsset, repoPath } from "../lib/github.ts";
@@ -109,6 +109,13 @@ export const GET = handler("update", async (req) => {
   if (compareSemver(latest, current) <= 0) return noContent(CDN_CACHE);
 
   const version = formatSemver(latest);
+  const origin = env.publicUrl() ?? new URL(req.url).origin;
+  // No desktop build on aarch64 Linux: the command line there reads only `version` and fetches
+  // its own archive, so this entry points at it (v2-Cutover).
+  const cli = target === "linux" && arch === "aarch64" ? findCliArchive(release.assets) : null;
+  if (cli) {
+    return json(200, { version, url: `${origin}/api/download/${cli.id}`, signature: "" }, CDN_CACHE);
+  }
   const found = findBundle(release.assets, version, target, arch);
   if (!found) {
     // Normal while a release is being assembled (the macOS build uploads later).
@@ -116,7 +123,6 @@ export const GET = handler("update", async (req) => {
     return noContent(CDN_CACHE);
   }
 
-  const origin = env.publicUrl() ?? new URL(req.url).origin;
   return json(
     200,
     {

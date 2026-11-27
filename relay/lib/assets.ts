@@ -51,3 +51,10 @@ export function findInstallers(
     linuxDeb: assets.find((a) => a.name === `claude-sync_${version}_linux_x86_64.deb`) ?? null,
   };
 }
+
+/** The command-line archive for aarch64 Linux and its `.sha256`, or null when either is missing. */
+export function findCliArchive(assets: readonly ReleaseAsset[]): ReleaseAsset | null {
+  const name = "claude-sync-cli-aarch64-unknown-linux-gnu.tar.gz";
+  const archive = assets.find((a) => a.name === name);
+  return archive && assets.some((a) => a.name === `${name}.sha256`) ? archive : null;
+}

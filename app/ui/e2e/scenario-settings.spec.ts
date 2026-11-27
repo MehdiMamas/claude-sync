@@ -75,7 +75,7 @@ test("update: check now finds a verified download", async ({ page }) => {
   await expect(page.getByText("Version 2.0.0 · 2.0.1 downloaded and verified")).toBeVisible();
   await page.getByRole("button", { name: "Restart to update" }).click();
   await expect(
-    page.getByText("Installing from the window comes with the update step."),
+    page.getByText("Updated to 2.0.1. Groups, jobs and sign-in carried over."),
   ).toBeVisible();
 });
 

@@ -11,9 +11,13 @@ A release is a GitHub release `v<version>` on `MehdiMamas/claude-sync` with thes
 | `claude-sync_<version>_darwin_universal.app.tar.gz` | `macos-latest` |
 | `claude-sync_<version>_darwin_universal.app.tar.gz.sig` | `macos-latest` |
 | `claude-sync_<version>_darwin_universal.dmg` | `macos-latest` |
-| `claude-sync_<version>_linux_x86_64.AppImage` (+ `.sig`) and `.deb` | `ubuntu-22.04` (beta) |
+| `claude-sync_<version>_linux_x86_64.AppImage` (+ `.sig`) and `.deb` | `ubuntu-24.04` |
+| `claude-sync-cli-<triple>.tar.gz` (`.zip` on Windows) and `.sha256`, for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-pc-windows-msvc` | one runner per triple |
+| `latest.json` | `ubuntu-latest`, from the `.sig` files (`scripts/make-latest-json.mjs`) |
 
-The workflow only ever creates or updates a **draft**. The relay only sees releases that are published (`/releases/latest` skips drafts), so nothing reaches users until the last step.
+`latest.json` is what the app's updater (`tauri-plugin-updater`) reads from `releases/latest/download/latest.json`. Platforms: `windows-x86_64` (setup.exe), `darwin-aarch64` and `darwin-x86_64` (both the universal `.app.tar.gz`), `linux-x86_64` (AppImage). There is no `linux-aarch64`: the command line there reads only `version`.
+
+The workflow only ever creates or updates a **pre-release**. GitHub's `releases/latest` (what the app, `claude-sync-cli update` and the relay read) skips pre-releases, so nothing reaches users until you mark it latest in the last step.
 
 ## Once
 
@@ -67,23 +71,21 @@ The tag starts `release.yml`:
 
 1. `prepare` checks that the tag is semver, that `v0.2.0` is not already a published release, and that the version files at the tagged commit say `0.2.0` (`bump-version.mjs --check`). A mismatch fails the run before anything is built.
 2. `build (windows)` and `build (macos)` wait for your approval (environment `release`): approve them in the run page or with `gh run view --web`. They build without caches, check each updater `.sig` against the public key in `tauri.conf.json` (`scripts/verify-updater-sig.mjs`), and on macOS check `codesign`, the stapled notarization ticket and Gatekeeper (`spctl`) when signed.
-3. `draft` creates the draft release `v0.2.0` with all eight assets (release notes generated from the merged PRs), or replaces the assets of an existing draft (`--clobber`). It refuses to touch a published release. The run summary lists the SHA-256 of every asset.
+3. `release` writes `latest.json`, then creates the pre-release `v0.2.0` with every asset (release notes generated from the merged PRs), or replaces the assets of an existing pre-release (`--clobber`). It refuses to touch a release already marked latest. The run summary lists the SHA-256 of every asset.
 
 To rebuild (a flaky runner, a new secret): rerun the failed jobs, or `gh workflow run release.yml --repo MehdiMamas/claude-sync -f version=0.2.0`. A manual run builds the commit of the tag `v0.2.0` if it exists, else the branch you run it on.
 
 ## 3. Check and publish
 
-1. Open the draft on GitHub: eight assets (the table above), edit the notes (they are what the app shows with the update).
-2. Smoke test the installer from the draft on Windows and the `.dmg` on the Mac: it starts, signs in, syncs. Write it down in the release PR.
-3. Publish the draft (GitHub → Releases → Edit → Publish, or `gh release edit v0.2.0 --repo MehdiMamas/claude-sync --draft=false`).
+1. Open the pre-release on GitHub: every asset of the table above, edit the notes. The 2.0.0 notes carry the server line: after `claude-sync-cli update`, run `systemctl --user restart claude-sync`.
+2. Try it: the installer on Windows, the `.dmg` on the Mac, the AppImage on Linux. It starts, signs in, syncs. A v1 install updates through the relay only once the release is latest, so try that update last.
+3. Mark it latest (GitHub → Releases → Edit → Set as the latest release and untick pre-release, or `gh release edit v0.2.0 --repo MehdiMamas/claude-sync --prerelease=false --latest`). To stop new updates, untick latest again.
 
-Within 6 hours every running app finds the update through `/api/update`, downloads it in the background and installs it on quit or on **Restart to update**.
+Within 6 hours every running v2 app finds the update from `latest.json`, downloads it in the background, checks the minisign signature and installs it when idle, on **Restart to update** or on Quit. v1 apps and `claude-sync-cli` find it through the relay (`/api/update`, unchanged), and aarch64 Linux gets the CLI archive from the relay.
 
-The relay answers a platform only when its bundle and `.sig` are both in the release; a platform without them gets `204`.
+Windows: the installer's uninstall hook (`app/src-tauri/windows/hooks.nsh`) runs `claude-sync.exe remove-jobs` so no task is left under `\claude-sync\`; an update skips it.
 
-## Linux
-
-Releases build Windows, macOS and Linux (Linux is beta). `ci.yml` compiles, lints and tests on Ubuntu, but the app cannot keep a sign-in there: the `keyring` crate in `crates/core` has no Linux backend enabled, so it falls back to its in-memory mock store (see architecture.md §13). Before a Linux release: enable a Linux keyring backend, test the app on a Linux desktop, add `linux` to `relay/lib/assets.ts` (`claude-sync_<version>_linux_x86_64.AppImage` and its `.sig`, plus a `.deb`), and add an `ubuntu-22.04` or `ubuntu-24.04` leg (`--bundles appimage,deb`) to `release.yml`.
+The relay answers a platform only when its bundle and `.sig` are both in the release; a platform without them gets `204`. For aarch64 Linux it answers with the CLI archive when that archive and its `.sha256` are there.
 
 ## Local Windows build
 

@@ -27,6 +27,7 @@ fi
 step "pnpm -C app/ui test" pnpm -C app/ui test
 step "pnpm -C app/ui build" pnpm -C app/ui build
 step "pnpm -C app/ui size" pnpm -C app/ui size
+step "latest.json script" node --test scripts/test/make-latest-json.test.mjs
 step "cargo fmt --check" cargo fmt --all -- --check
 step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
 step "cargo test" cargo test --workspace

@@ -30,19 +30,6 @@ function session(loginName: string, secret = SECRET): string {
   return `${SESSION_COOKIE}=${signSession(loginName, secret)}`;
 }
 
-const RELEASE = {
-  tag_name: "v0.3.0",
-  name: "v0.3.0",
-  body: "",
-  draft: false,
-  prerelease: false,
-  published_at: "2026-10-12T10:00:00Z",
-  assets: [
-    { id: 101, name: "claude-sync_0.3.0_windows_x86_64-setup.exe", size: 1 },
-    { id: 202, name: "claude-sync_0.3.0_darwin_universal.dmg", size: 1 },
-  ],
-};
-
 let fm: FetchMock;
 
 beforeEach(() => {
@@ -101,10 +88,6 @@ describe("/api/install/callback", () => {
     assert.ok(sess.includes("HttpOnly") && sess.includes("Secure") && sess.includes("Max-Age=86400"));
     assert.ok(!sess.includes("gho_secretoken"));
     assert.ok(cookies(res).some((c) => c.startsWith(`${STATE_COOKIE}=;`)), "state cookie cleared");
-    // The cookie it set works on the page.
-    fm.on("GET", `${REPO}/releases/latest`, RELEASE);
-    const html = await (await page(get("/install", sess.split(";")[0]))).text();
-    assert.ok(html.includes("friend"));
   });
 
   it("answers an error when GitHub refuses the code", async () => {
@@ -123,62 +106,11 @@ describe("/api/install/callback", () => {
 });
 
 describe("/install", () => {
-  it("says sign-in is not configured when an env var is missing", async () => {
-    setEnv({ INSTALL_SESSION_SECRET: undefined });
+  it("redirects to the Releases page without calling GitHub", async () => {
     const res = await page(get("/install"));
-    assert.equal(res.status, 503);
-    assert.match(await res.text(), /not configured/);
-  });
-
-  it("shows the sign-in button when signed out", async () => {
-    const html = await (await page(get("/install"))).text();
-    assert.match(html, /Sign in with GitHub/);
-    assert.match(html, /href="\/api\/install\/login"/);
-    assert.ok(!html.includes("/api/download/"));
-  });
-
-  it("shows the downloads, version and macOS steps to an allowed login", async () => {
-    fm.on("GET", `${REPO}/releases/latest`, RELEASE);
-    const res = await page(get("/install", session("friend")));
-    assert.equal(res.status, 200);
-    const html = await res.text();
-    assert.match(html, /href="\/api\/download\/101"/);
-    assert.match(html, /href="\/api\/download\/202"/);
-    assert.match(html, /0\.3\.0/);
-    assert.match(html, /Open Anyway/);
-    assert.match(html, /xattr -dr com\.apple\.quarantine \/Applications\/claude-sync\.app/);
-    assert.match(html, /Sign out/);
-  });
-
-  it("tells a blocked login it is not on the list and shows no downloads", async () => {
-    setEnv({ ...OAUTH, BLOCKED_GITHUB_USERS: "Friend" });
-    const res = await page(get("/install", session("friend")));
-    assert.equal(res.status, 403);
-    const html = await res.text();
-    assert.match(html, /Your GitHub account \(friend\) isn't on the list yet\. Ask the person who invited you\./);
-    assert.ok(!html.includes("/api/download/"));
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get("location"), "https://github.com/MehdiMamas/claude-sync/releases");
     assert.equal(fm.calls.length, 0);
-  });
-
-  it("escapes the login", async () => {
-    const html = await (await page(get("/install", session("<b>x</b>")))).text();
-    assert.ok(!html.includes("<b>x</b>"));
-  });
-
-  it("treats a tampered cookie as signed out", async () => {
-    const good = signSession("friend", SECRET);
-    const [payload, mac] = good.split(".");
-    const forged = Buffer.from(JSON.stringify({ l: "alice", e: Date.now() + 1e9 })).toString("base64url");
-    for (const value of [`${forged}.${mac}`, `${payload}.${mac?.slice(0, -2)}${mac?.endsWith("AA") ? "BB" : "AA"}`, signSession("friend", "other-secret")]) {
-      const html = await (await page(get("/install", `${SESSION_COOKIE}=${value}`))).text();
-      assert.match(html, /Sign in with GitHub/, value);
-    }
-  });
-
-  it("treats an expired cookie as signed out", async () => {
-    const old = signSession("friend", SECRET, Date.now() - 2 * 86_400_000);
-    const html = await (await page(get("/install", `${SESSION_COOKIE}=${old}`))).text();
-    assert.match(html, /Sign in with GitHub/);
   });
 });
 

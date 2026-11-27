@@ -158,11 +158,15 @@ impl Core {
     pub(crate) fn check_update(&mut self) -> Result<Event> {
         let latest = self.client.latest()?;
         let newer = ver(&latest.version) > ver(env!("CARGO_PKG_VERSION"));
-        let v = if newer {
+        let mut v = if newer {
             format!("available:{}", latest.version)
         } else {
             String::new()
         };
+        // A download the shell already verified stays ready.
+        if self.update_state() == format!("ready:{}", latest.version) {
+            v = self.update_state();
+        }
         Store::write(&self.db, "update", v.as_bytes())?;
         Store::write(
             &self.db,
@@ -172,13 +176,43 @@ impl Core {
         Ok(Event::Text(v))
     }
 
-    /// `` (up to date or unchecked) or `available:<version>`.
+    /// The shell (the updater plugin) reports `available:<v>` (downloading), `ready:<v>`
+    /// (verified) or `failed:<v>`, or `` when up to date; the check time is stamped here.
+    pub(crate) fn set_update(&mut self, state: &str) -> Result<Event> {
+        // "Updated to <v>" stays until the next update shows up.
+        let kept = self.update_state();
+        let state = if state.is_empty() && kept.starts_with("updated:") {
+            kept.as_str()
+        } else {
+            state
+        };
+        Store::write(&self.db, "update", state.as_bytes())?;
+        Store::write(
+            &self.db,
+            "update-checked",
+            self.now().to_string().as_bytes(),
+        )?;
+        Ok(Event::Done)
+    }
+
+    /// `` (up to date or unchecked), `available:<v>`, `ready:<v>`, `failed:<v>` or
+    /// `updated:<v>` (a verified download that is now the running version).
     pub(crate) fn update_state(&self) -> String {
-        Store::read(&self.db, "update")
+        let stored = Store::read(&self.db, "update")
             .ok()
             .flatten()
             .map(|b| String::from_utf8_lossy(&b).into_owned())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let Some((kind, v)) = stored.split_once(':') else {
+            return stored;
+        };
+        if ver(v) > ver(env!("CARGO_PKG_VERSION")) {
+            return stored;
+        }
+        match kind {
+            "ready" | "updated" => format!("updated:{v}"),
+            _ => String::new(),
+        }
     }
 
     pub(crate) fn update_checked(&self) -> Option<i64> {
@@ -238,4 +272,18 @@ fn run_claude(claude: &std::path::Path, prompt: &str) -> Option<String> {
         std::thread::sleep(Duration::from_millis(50));
     }
     reader.join().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ver;
+
+    #[test]
+    fn versions_compare_by_number_not_text() {
+        assert!(ver("2.0.0") > ver("0.1.27"));
+        assert!(ver("v10.0.0") > ver("9.9.9"));
+        assert!(ver("2.0.1") > ver("2.0.0"));
+        assert!(ver("2.0.0") == ver("v2.0.0"));
+        assert!(ver("2.0.0-rc1") <= ver("2.0.0"));
+    }
 }

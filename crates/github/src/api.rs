@@ -628,6 +628,22 @@ impl Client {
         serde_json::from_slice(&body).map_err(|e| Error::Invalid(format!("bad latest.json: {e}")))
     }
 
+    /// A file of release `v<version>` (the command line's archive and its `.sha256`).
+    pub fn release_asset(&self, version: &str, name: &str) -> Result<Vec<u8>> {
+        let url = format!(
+            "{}/download/v{version}/{name}",
+            self.config().releases.trim_end_matches('/')
+        );
+        let (status, body) = self.plain(Method::GET, &url, None, PlainBody::None)?;
+        if status != 200 {
+            return Err(Error::Github {
+                status,
+                message: format!("{name} is not in release v{version}"),
+            });
+        }
+        Ok(body)
+    }
+
     /// Send feedback; the relay checks the user token against GitHub.
     pub fn feedback(&self, payload: &Value) -> Result<FeedbackCreated> {
         let token = self.token()?;
@@ -676,5 +692,26 @@ impl Client {
             });
         }
         serde_json::from_slice(&body).map_err(|e| Error::Invalid(format!("bad reply: {e}")))
+    }
+}
+
+#[cfg(test)]
+mod latest_tests {
+    use super::Latest;
+
+    #[test]
+    fn latest_json_of_the_updater_parses() {
+        let l: Latest = serde_json::from_str(
+            r#"{"version":"2.0.0","notes":"n","pub_date":"2026-01-01T00:00:00Z","platforms":{
+                "windows-x86_64":{"url":"https://x/a-setup.exe","signature":"sig"},
+                "darwin-aarch64":{"url":"https://x/a.app.tar.gz","signature":"sig"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(l.version, "2.0.0");
+        assert_eq!(l.platforms["windows-x86_64"].signature, "sig");
+        assert!(!l.platforms.contains_key("linux-aarch64"));
+        // only the version is needed (the aarch64 Linux command line reads just that)
+        let l: Latest = serde_json::from_str(r#"{"version":"2.0.1"}"#).unwrap();
+        assert!(l.platforms.is_empty());
     }
 }
