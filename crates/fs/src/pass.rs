@@ -64,7 +64,10 @@ pub struct Gated {
     /// The accepted text: what the copy holds when the person has not edited it.
     pub accepted: Vec<u8>,
     /// The accepted text before this pass: a copy that differs from it is a local edit.
-    pub before: Vec<u8>,
+    /// `None` at first sight: a copy that differs is backed up and replaced.
+    pub before: Option<Vec<u8>>,
+    /// Store key and bytes of the review state, written only after the copy is written.
+    pub save: Option<(String, Vec<u8>)>,
     /// The changes accepted this pass, patched into an edited copy.
     pub applied: Vec<claude_sync_engine::review::Item>,
 }
@@ -301,7 +304,7 @@ impl Pass<'_> {
             let (md, before, applied) = match (&gated, g.gate.is_some()) {
                 (Some(x), _) => (
                     Some(x.accepted.as_slice()),
-                    Some(x.before.as_slice()),
+                    x.before.as_deref(),
                     &x.applied[..],
                 ),
                 (None, true) => (None, None, &[][..]),
@@ -309,6 +312,9 @@ impl Pass<'_> {
             };
             apply::write_claude_md_copy(self.home, g.repo, md, before, applied, self.now)
                 .map_err(|e| e.to_string())?;
+            if let Some((k, b)) = gated.as_ref().and_then(|x| x.save.as_ref()) {
+                let _ = Store::write(self.db, k, b);
+            }
             if let Ok(Some(b)) = self.db.load_base(g.repo, &self.home.state) {
                 let paths: BTreeSet<&String> = p.new_base.keys().collect();
                 let has_mp = paths.iter().any(|p| p.starts_with("plugins/"));

@@ -4667,3 +4667,35 @@ async fn the_snapshot_carries_the_github_app_slug_for_the_install_page() {
     assert_eq!(h.snapshot().app_slug, claude_sync_github::APP_SLUG);
     assert!(!h.snapshot().app_slug.is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_leftover_claude_md_copy_is_backed_up_and_replaced_at_first_sight() {
+    let t = T::new().await;
+    let h = t.group_with("h1", &[("CLAUDE.md", "- A\n")]).await;
+    let dir = t.dir.path().join(".claude-sync/groups/zed__team");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("CLAUDE.md"), "- stale\n").unwrap();
+    h.send(Command::SyncNow).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("CLAUDE.md")).unwrap(),
+        "- A\n"
+    );
+    assert!(backed_up(&t, "- stale"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_review_state_is_saved_only_after_the_copy_is_written() {
+    let t = T::new().await;
+    let h = t.group_with("h1", &[("CLAUDE.md", "- A\n")]).await;
+    // a directory where the copy goes makes the write fail
+    let copy = t.dir.path().join(".claude-sync/groups/zed__team/CLAUDE.md");
+    std::fs::create_dir_all(&copy).unwrap();
+    let _ = h.send(Command::SyncNow).await;
+    let db =
+        claude_sync_store::Db::open(&t.dir.path().join(".claude-sync/claude-sync.db")).unwrap();
+    assert!(
+        claude_sync_engine::traits::Store::read(&db, "review/zed/team")
+            .unwrap()
+            .is_none_or(|b| b.is_empty())
+    );
+}

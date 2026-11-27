@@ -32,6 +32,11 @@ pub(crate) fn save(db: &Db, repo: &str, s: &ReviewState) {
     }
 }
 
+/// The state as the pass saves it once the copy is written (`Gated::save`).
+fn pending_save(repo: &str, s: &ReviewState) -> Option<(String, Vec<u8>)> {
+    Some((key(repo), serde_json::to_vec(s).ok()?))
+}
+
 /// Forget the review of a group (leave).
 pub(crate) fn clear(db: &Db, repo: &str) {
     let _ = Store::write(db, &key(repo), b"");
@@ -61,12 +66,13 @@ impl Core {
             let me = self.login.clone().unwrap_or_default();
             let now = self.now();
             let Some(mut st) = load(&self.db, &repo) else {
+                // First sight: no accepted text to compare with, so a leftover copy is backed up
+                // and replaced (`before: None`), never kept as an edit.
                 let st = ReviewState::new(&text);
-                save(&self.db, &repo, &st);
-                let b = st.accepted.into_bytes();
                 return Some(Gated {
-                    before: b.clone(),
-                    accepted: b,
+                    save: pending_save(&repo, &st),
+                    before: None,
+                    accepted: st.accepted.into_bytes(),
                     applied: vec![],
                 });
             };
@@ -92,10 +98,10 @@ impl Core {
             if !review {
                 applied.extend(st.accept(None));
             }
-            save(&self.db, &repo, &st);
             Some(Gated {
+                save: pending_save(&repo, &st),
                 accepted: st.accepted.into_bytes(),
-                before: before.into_bytes(),
+                before: Some(before.into_bytes()),
                 applied,
             })
         })
