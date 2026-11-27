@@ -82,6 +82,24 @@ pub fn take(
     }
 }
 
+/// The app's single-instance key (the plugin keys its socket, mutex or D-Bus name on the bundle
+/// identifier). The default state folder keeps `base`, so the release app stays one instance;
+/// a state folder moved by `CLAUDE_SYNC_HOME` gets its own key, so a dev build never hands over to
+/// the installed app (v1 had one key for every home).
+pub fn instance_id(base: &str, default_state: &Path, state: &Path) -> String {
+    if state == default_state {
+        return base.into();
+    }
+    // FNV-1a: the same key in every process and every build, unlike `DefaultHasher`
+    let h = state
+        .to_string_lossy()
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+        });
+    format!("{base}.h{h:016x}")
+}
+
 /// Sets `stop` on SIGTERM or Ctrl-C. The runtime lives as long as the returned value.
 fn stop_on_signal(stop: Arc<AtomicBool>) -> Result<tokio::runtime::Runtime, String> {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -185,6 +203,21 @@ pub fn file_secrets(state: &Path) -> claude_sync_actions::Secrets {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn separate_state_folders_are_separate_app_instances_the_default_one_keeps_its_name() {
+        let home = Path::new("/home/ann");
+        let default = home.join(".claude-sync");
+        let base = "com.example.app";
+        assert_eq!(instance_id(base, &default, &default), base);
+        let a = instance_id(base, &default, Path::new("/tmp/dev-a"));
+        let b = instance_id(base, &default, Path::new("/tmp/dev-b"));
+        assert_ne!(a, base);
+        assert_ne!(a, b);
+        assert_eq!(a, instance_id(base, &default, Path::new("/tmp/dev-a")));
+        // the plugin's socket path stays under the 100 characters a unix socket allows
+        assert!(format!("/tmp/{}_si.sock", a.replace(['.', '-'], "_")).len() < 100);
+    }
 
     #[test]
     fn one_daemon_per_state_folder_and_an_owner_file_while_it_lives() {

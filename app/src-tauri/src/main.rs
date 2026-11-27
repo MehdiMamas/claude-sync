@@ -40,6 +40,21 @@ fn ctx() -> Ctx {
     }
 }
 
+/// The bundle identifier is the single-instance key (a socket, mutex or D-Bus name): one per
+/// state folder, so a dev build with its own `CLAUDE_SYNC_HOME` runs beside the installed app.
+fn context() -> tauri::Context {
+    let mut c = tauri::generate_context!();
+    if let Some(home) = std::env::home_dir() {
+        let state = claude_sync_fs::Home::from_env(&home).state;
+        c.config_mut().identifier = claude_sync_cli::daemon::instance_id(
+            &c.config().identifier,
+            &home.join(".claude-sync"),
+            &state,
+        );
+    }
+    c
+}
+
 /// The app starts only for no words, `--background` (autostart) and `--refresh`; any other word
 /// is a command (`status`, `run-job`, `remove-jobs`, ...) and goes to the CLI.
 fn is_app_launch(args: &[String]) -> bool {
@@ -314,7 +329,7 @@ fn main() {
             capture::capture_screen
         ])
         .setup(move |app| start(app.handle(), background).map_err(Into::into))
-        .build(tauri::generate_context!());
+        .build(context());
     let app = match app {
         Ok(a) => a,
         Err(e) => {
