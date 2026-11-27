@@ -142,8 +142,11 @@ mod tests {
         assert!(!checksum_matches(b"abc", ""));
     }
 
+    #[cfg(unix)]
     use claude_sync_github::Config;
+    #[cfg(unix)]
     use wiremock::matchers::{method, path};
+    #[cfg(unix)]
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// A `.tar.gz` holding a `claude-sync-cli` file with `body`, made with the system `tar`.
