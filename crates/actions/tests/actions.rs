@@ -4353,3 +4353,24 @@ async fn a_hand_edit_shows_in_the_snapshot_and_notifies_once_without_a_sync() {
         .contains("skills/demo/SKILL.md was changed on this machine. Share it with zed/team?"));
     assert_eq!(n[0].repo.as_deref(), Some("zed/team"));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_invitation_raises_one_notification_even_when_polled_again() {
+    let t = T::new().await;
+    let h = t.signed_in().await;
+    t.mock("GET", "/user/repository_invitations", 200, json!([{"id": 7, "repository": {"name": "t", "full_name": "zed/t", "private": true}, "inviter": {"login": "zed"}}])).await;
+    h.send(Command::WindowOpened).await.unwrap();
+    h.send(Command::WindowOpened).await.unwrap();
+    let n: Vec<_> = h
+        .snapshot()
+        .notifications
+        .into_iter()
+        .filter(|n| n.text.starts_with("Invitation to a claude-sync group"))
+        .collect();
+    assert_eq!(n.len(), 1);
+    assert_eq!(
+        n[0].text,
+        "Invitation to a claude-sync group: zed invited you to zed/t. Open claude-sync to accept."
+    );
+    assert_eq!(n[0].repo.as_deref(), Some("zed/t"));
+}

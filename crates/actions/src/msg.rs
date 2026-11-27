@@ -166,3 +166,8 @@ pub const TEST_NOTIFICATION: &str = "Notifications from claude-sync show up like
 
 /// v1 title of the notification for an edit made by hand to a shared file.
 pub const LOCAL_EDIT_TITLE: &str = "Local change to a shared file";
+
+/// v1 notification for a new invitation to a group.
+pub fn invitation_note(inviter: &str, repo: &str) -> String {
+    format!("Invitation to a claude-sync group: {inviter} invited you to {repo}. Open claude-sync to accept.")
+}

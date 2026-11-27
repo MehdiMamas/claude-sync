@@ -85,6 +85,8 @@ pub struct Core {
     pub(crate) dirty: Arc<AtomicBool>,
     /// Per group: the local edits seen last (the snapshot shows them, v1 `last_edits`).
     pub(crate) edits: std::collections::HashMap<String, Vec<EditView>>,
+    /// Invitation ids already announced since start (v1 `known_invitations`).
+    known_invitations: std::collections::HashSet<u64>,
 }
 
 /// v1 §7: hand edits are looked at once the files have been quiet this long.
@@ -236,6 +238,7 @@ impl Core {
             watch: None,
             dirty: Arc::default(),
             edits: Default::default(),
+            known_invitations: Default::default(),
         };
         c.import_v1_once(held);
         c.restore_session();
@@ -445,6 +448,7 @@ impl Core {
         let due = self.schedule.due(&facts);
         if due.invites {
             self.load_invitations();
+            self.announce_invitations();
             self.load_pending_invites();
         }
         for r in due.renames {
@@ -482,6 +486,19 @@ impl Core {
                 })
                 .collect();
         }
+    }
+
+    /// v1 `check_invitations`: one notification for each invitation not seen since start.
+    fn announce_invitations(&mut self) {
+        let now = self.now();
+        for i in &self.invitations {
+            if self.known_invitations.insert(i.id) {
+                let t = msg::invitation_note(&i.inviter, &i.repo);
+                let _ = self.db.add_notification("group", &t, Some(&i.repo), now);
+            }
+        }
+        let ids: Vec<u64> = self.invitations.iter().map(|i| i.id).collect();
+        self.known_invitations.retain(|k| ids.contains(k));
     }
 
     /// Host groups: who GitHub still lists as invited.
