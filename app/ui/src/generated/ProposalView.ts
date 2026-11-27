@@ -12,4 +12,8 @@ approvals: Array<string>,
 /**
  * Behind main: tagged "needs an update", cannot be merged.
  */
-needsUpdate: boolean, mine: boolean, approvedByMe: boolean, head: string, };
+needsUpdate: boolean, mine: boolean, approvedByMe: boolean, head: string, 
+/**
+ * When the pull request was opened (ISO time).
+ */
+created: string | null, };

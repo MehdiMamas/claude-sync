@@ -111,6 +111,38 @@ pub fn append_own_line(home: &Home, line: &str, now: i64) -> std::io::Result<boo
     Ok(true)
 }
 
+/// Replace the first line of `~/.claude/CLAUDE.md` equal to `line` with the lines of `text`
+/// (none removes it), backing the file up first. Returns false when the line is not there.
+pub fn replace_own_line(home: &Home, line: &str, text: &str, now: i64) -> std::io::Result<bool> {
+    let path = home.claude.join("CLAUDE.md");
+    if blocked(&home.claude, &path)
+        || std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink())
+    {
+        return Ok(false);
+    }
+    let Some(existing) = read_file(&path)? else {
+        return Ok(false);
+    };
+    let old = String::from_utf8_lossy(&existing).into_owned();
+    let eol = if old.contains("\r\n") { "\r\n" } else { "\n" };
+    let lines: Vec<&str> = old.lines().collect();
+    let Some(at) = lines.iter().position(|l| l.trim() == line.trim()) else {
+        return Ok(false);
+    };
+    backup(home, now, "CLAUDE.md", &existing)?;
+    let mut out: Vec<&str> = lines[..at].to_vec();
+    out.extend(text.lines());
+    out.extend(&lines[at + 1..]);
+    let body = out.join(eol);
+    let body = if body.is_empty() {
+        body
+    } else {
+        format!("{body}{eol}")
+    };
+    write_atomic(&path, body.as_bytes())?;
+    Ok(true)
+}
+
 fn owned_key(repo: &str) -> String {
     format!("owned/{repo}")
 }

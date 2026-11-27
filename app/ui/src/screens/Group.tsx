@@ -7,6 +7,7 @@ import { ago } from "../time";
 import { Banner, Chip, go, Spin, useLoad } from "../ui";
 import { Contents, Copy, Edits, Share } from "./GroupEdits";
 import { History, Notes, titleOf } from "./GroupHistory";
+import { JobAccept, Jobs } from "./GroupJobs";
 import { Members } from "./GroupMembers";
 import { Proposals, Propose } from "./GroupProposals";
 import { Review } from "./GroupReview";
@@ -62,6 +63,7 @@ export const pages: Record<string, ComponentType<Ctx>> = {
   proposals: Proposals,
   propose: Propose,
   history: History,
+  jobs: JobsPage,
 };
 export const tabOf: Record<string, string> = {
   edits: "contents",
@@ -69,7 +71,13 @@ export const tabOf: Record<string, string> = {
   copy: "contents",
   proposals: "",
   propose: "",
+  jobs: "contents",
 };
+
+/** `jobs` is the list; `jobs/<id>` is one job waiting for its yes. */
+function JobsPage(c: Ctx) {
+  return c.sub[1] ? <JobAccept {...c} /> : <Jobs {...c} />;
+}
 
 const chip = (g: GroupView): [string, "ok" | "warn" | "err" | "n"] => {
   switch (g.status) {

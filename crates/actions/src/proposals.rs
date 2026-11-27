@@ -161,6 +161,7 @@ impl Core {
             mine: false,
             approved_by_me: false,
             head: head.0,
+            created: p.created_at.clone(),
         })
     }
 

@@ -61,14 +61,14 @@ test("review: a clash with my own line is resolved before the lines", async ({ p
   await expect(page.getByRole("button", { name: "Accept all" })).toBeVisible();
 });
 
-test("review: edit line keeps the edited text as my own line", async ({ page }) => {
+test("review: edit line commits the edited text to the group", async ({ page }) => {
   await page.goto(`/?scenario=group&clash${review}`);
   await page.getByRole("button", { name: "Edit line" }).click();
   const box = page.getByLabel("Your version of the group line");
   await expect(box).toHaveValue("Use tabs.");
   await box.fill("Use tabs in Makefiles only.");
   await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByText("The edited line is now your own")).toBeVisible();
+  await expect(page.getByText("The edited line is committed to the group")).toBeVisible();
   await expect(page.getByText("clashes with your own CLAUDE.md")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Accept all" })).toBeVisible();
 });

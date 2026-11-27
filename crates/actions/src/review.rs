@@ -11,7 +11,7 @@ use crate::msg;
 use claude_sync_engine::clashes::{clashes, Text};
 use claude_sync_engine::claude_md::strip;
 use claude_sync_engine::review::{notification, Kind, ReviewState, Step};
-use claude_sync_engine::traits::Store;
+use claude_sync_engine::traits::{Remote, Store};
 use claude_sync_store::Db;
 
 fn key(repo: &str) -> String {
@@ -192,10 +192,61 @@ impl Core {
         Ok(Event::Done)
     }
 
-    pub(crate) fn edit_line(&mut self, repo: &str, line: &str, text: &str) -> Result<Event> {
-        self.drop_line(repo, line)?;
-        claude_sync_fs::apply::append_own_line(&self.home, text, self.now())?;
-        Ok(Event::Done)
+    /// Parity 38 as v1 did it: a group line is replaced in the group's own CLAUDE.md and
+    /// committed to the group (a proposal in proposal mode), then synced; the own text is
+    /// rewritten on this machine.
+    pub(crate) fn edit_line(
+        &mut self,
+        source: Option<&str>,
+        line: &str,
+        text: &str,
+    ) -> Result<Event> {
+        let text = claude_sync_fs::redact::redact(&text.replace("\r\n", "\n"));
+        let text = text.trim_matches('\n');
+        let Some(repo) = source else {
+            let done = claude_sync_fs::apply::replace_own_line(&self.home, line, text, self.now())?;
+            return if done {
+                Ok(Event::Done)
+            } else {
+                Err(Error::new(msg::own_line_gone()))
+            };
+        };
+        self.me()?;
+        let flags = crate::groups::cached(&self.db, repo)
+            .map(|f| f.sync)
+            .unwrap_or_default();
+        if !flags.claude_md {
+            return Err(Error::new(msg::does_not_sync(repo, "CLAUDE.md")));
+        }
+        let head = self
+            .remote(repo)?
+            .head(None)?
+            .ok_or_else(|| Error::new(msg::not_a_group(repo)))?;
+        let old = self
+            .remote(repo)?
+            .files(&head.sha, &Default::default())?
+            .remove("CLAUDE.md")
+            .unwrap_or_default();
+        let old = String::from_utf8_lossy(&old).replace("\r\n", "\n");
+        let lines: Vec<&str> = old.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| l.trim() == line.trim())
+            .ok_or_else(|| Error::new(msg::group_line_gone(repo)))?;
+        let mut out: Vec<&str> = lines[..at].to_vec();
+        out.extend(text.lines());
+        out.extend(&lines[at + 1..]);
+        let new = format!("{}\n", out.join("\n"));
+        let ev = self.push_files_to(
+            repo,
+            [("CLAUDE.md".to_string(), new.into_bytes())].into(),
+            "edit CLAUDE.md",
+            true,
+        )?;
+        if ev == Event::Done {
+            self.run_pass()?;
+        }
+        Ok(ev)
     }
 
     pub(crate) fn use_group_version(&mut self, repo: &str) -> Result<Event> {

@@ -67,7 +67,6 @@ test("proposals: a member proposes a local skill and the toast names the number"
   await expect(page.getByLabel("What to propose")).toContainText(
     "skills/test-runner (your local skill)",
   );
-  await page.getByLabel("Note for the host").fill("Runs the tests before each commit.");
   await page.getByRole("button", { name: "Send proposal" }).click();
   await expect(page.getByText("Proposed as #14. A member must approve it.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Needs you" })).toBeVisible();

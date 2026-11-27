@@ -41,7 +41,7 @@ impl Core {
         r
     }
 
-    fn run_pass(&self) -> Result<Event> {
+    pub(crate) fn run_pass(&self) -> Result<Event> {
         let c = self.choices();
         let recs = self.db.groups()?;
         let remotes = recs

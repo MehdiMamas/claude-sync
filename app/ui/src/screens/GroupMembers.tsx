@@ -25,7 +25,7 @@ function Dialog(c: Ctx & { title: string; text: string; ok: string; run: () => v
   );
 }
 
-const Toggle = ({ on, label, set }: { on: boolean; label: string; set: () => void }) => (
+export const Toggle = ({ on, label, set }: { on: boolean; label: string; set: () => void }) => (
   <button type="button" aria-label={label} onClick={set} className="tgb">
     <span className={`tg${on ? " on" : ""}`} />
   </button>

@@ -85,10 +85,14 @@ export function Review(c: Ctx) {
     if (!edit) return;
     const r = await call({
       kind: "editLine",
-      data: { repo: g.repo, line: edit.line, text: edit.text },
+      data: { source: g.repo, line: edit.line, text: edit.text },
     });
     if ("err" in r) return c.toast(r.err);
-    c.toast("Saved. The edited line is now your own, in ~/.claude/CLAUDE.md.");
+    c.toast(
+      r.ev.kind === "proposed"
+        ? `Proposed as #${r.ev.data}. A member must approve it.`
+        : "Saved. The edited line is committed to the group; members review it.",
+    );
     setGone((l) => [...l, edit.line]);
     setEdit(null);
     reloadClashes();
@@ -127,8 +131,8 @@ export function Review(c: Ctx) {
                   />
                 </label>
                 <p className="sm muted">
-                  The group's line leaves your copy; this text is added to your own CLAUDE.md. Leave
-                  it empty to just drop the group line.
+                  The group's line is replaced in the group's CLAUDE.md for everyone (members review
+                  it; a proposal when the group asks for them). Leave it empty to remove the line.
                 </p>
                 <div className="acts">
                   <button type="button" className="b p" onClick={saveEdit}>

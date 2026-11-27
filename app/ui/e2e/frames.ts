@@ -306,4 +306,22 @@ export const frames: FrameCase[] = [
       await p.getByText("so it cannot explain changes.").waitFor();
     },
   },
+  { frame: "GroupJobs", url: `/?scenario=jobs#${base}/jobs` },
+  { frame: "GroupJobAccept", url: `/?scenario=jobs-edge#${base}/jobs/risky` },
+  {
+    frame: "GroupJobScheduled",
+    url: `/?scenario=jobs#${base}/jobs/nightly-lint`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Accept and schedule" }).click();
+      await p.getByText("Scheduled: nightly-lint").waitFor();
+    },
+  },
+  {
+    frame: "GroupJobRan",
+    url: `/?scenario=jobs#${base}/jobs`,
+    steps: async (p) => {
+      await p.getByRole("button", { name: "Run now" }).click();
+      await p.getByText("weekly-report finished").waitFor();
+    },
+  },
 ];

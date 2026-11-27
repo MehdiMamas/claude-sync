@@ -412,6 +412,7 @@ impl Core {
     pub(crate) fn job_views(&self) -> Vec<JobView> {
         let c = self.choices();
         let rows = self.db.jobs().unwrap_or_default();
+        let row = |j: &Job| rows.iter().find(|r| r.repo == j.repo && r.job_id == j.id);
         self.jobs_all()
             .iter()
             .map(|j| JobView {
@@ -419,11 +420,8 @@ impl Core {
                 id: j.id.clone(),
                 accepted: Self::accepted(&c, j),
                 enabled: !Self::job_off(&c, j),
-                last_result: rows
-                    .iter()
-                    .find(|r| r.repo == j.repo && r.job_id == j.id)
-                    .map(|r| r.last_result.clone())
-                    .unwrap_or_default(),
+                last_result: row(j).map(|r| r.last_result.clone()).unwrap_or_default(),
+                last_run: row(j).map_or(0, |r| r.last_run),
                 title: j.title.clone(),
                 cron: j.cron.clone(),
                 prompt: j.prompt.clone(),

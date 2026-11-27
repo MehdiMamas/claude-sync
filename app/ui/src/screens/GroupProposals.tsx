@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Command } from "../generated/Command";
+import { ago } from "../time";
 import { go, Spin, useLoad } from "../ui";
 import { type Ctx, data } from "./Group";
 
@@ -38,7 +39,10 @@ export function Proposals(c: Ctx) {
             : p.mine
               ? "you cannot approve your own"
               : "";
-          const sub = [files, note].filter(Boolean).join(" · ");
+          const t = p.created ? Date.parse(p.created) / 1000 : Number.NaN;
+          const sub = [files, note, Number.isNaN(t) ? "" : ago(t, c.now)]
+            .filter(Boolean)
+            .join(" · ");
           return (
             <div className="row" key={p.number}>
               <div>
@@ -118,7 +122,6 @@ export function Propose(c: Ctx) {
     g.repo,
   );
   const [path, setPath] = useState("");
-  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const chosen = path || edits?.[0]?.path || "";
@@ -152,15 +155,6 @@ export function Propose(c: Ctx) {
                 </option>
               ))}
             </select>
-          </label>
-          <label className="fld">
-            <span>Note for the host</span>
-            <textarea
-              className="in"
-              style={{ minHeight: 56 }}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
           </label>
         </>
       )}

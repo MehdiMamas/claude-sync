@@ -103,6 +103,8 @@ ts! {
         pub accepted: bool,
         pub enabled: bool,
         pub last_result: String,
+        /// Unix seconds of the last run; 0 when it never ran.
+        pub last_run: i64,
         pub title: String,
         pub cron: String,
         pub prompt: String,
@@ -210,6 +212,8 @@ ts! {
         pub mine: bool,
         pub approved_by_me: bool,
         pub head: String,
+        /// When the pull request was opened (ISO time).
+        pub created: Option<String>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -408,10 +412,12 @@ pub enum Command {
     UseGroupVersion {
         repo: String,
     },
-    /// Edit a clashing group line (Parity 38): the group's line leaves this user's copy and the
-    /// edited `text` becomes the person's own line in `~/.claude/CLAUDE.md`. Empty text only drops.
+    /// Edit a clashing line (Parity 38). `source` is the group's repo (the line is replaced, or
+    /// removed when `text` is empty, in the group's CLAUDE.md and committed to the group: a
+    /// proposal when that mode is on, else every member gets it through review) or `None` for
+    /// the person's own `~/.claude/CLAUDE.md` (backed up first).
     EditLine {
-        repo: String,
+        source: Option<String>,
         line: String,
         text: String,
     },

@@ -94,12 +94,13 @@ const code = {
   expires_in: 900,
 } as const;
 
-const job = (repo: string): JobView => ({
+const job = (repo: string, over: Partial<JobView> = {}): JobView => ({
   repo,
   id: "nightly-lint",
   accepted: false,
   enabled: false,
   lastResult: "",
+  lastRun: 0,
   title: "nightly-lint",
   cron: "0 3 * * *",
   prompt: "Lint the repo",
@@ -107,6 +108,7 @@ const job = (repo: string): JobView => ({
   mode: "plan",
   timeoutMinutes: 10,
   args: [],
+  ...over,
 });
 
 /** The state each `?scenario=` starts in. */
@@ -173,6 +175,52 @@ function scenario(name: string): Snapshot {
       s.jobs = [job(s.groups[0]?.repo ?? "")];
       setProblems(0, ["couldn't install big-pack@mods: registry unreachable"]);
       return s;
+    case "jobs":
+      s.jobs = [
+        job(s.groups[0]?.repo ?? ""),
+        job(s.groups[0]?.repo ?? "", {
+          id: "weekly-report",
+          title: "weekly-report",
+          accepted: true,
+          enabled: true,
+          cron: "0 9 * * 1",
+          lastResult: "ok",
+          lastRun: sec() - 7200,
+        }),
+      ];
+      return s;
+    case "jobs-edge": {
+      const r = s.groups[0]?.repo ?? "";
+      s.jobs = [
+        job(r, {
+          id: "risky",
+          title: "nightly-lint",
+          cron: "0 2 * * *",
+          timeoutMinutes: 30,
+          prompt: "Run the linter on this repo and list what fails.",
+          mode: "bypassPermissions",
+          args: ["--chrome", "--model", "sonnet"],
+        }),
+        job(r, {
+          id: "flaky",
+          title: "flaky",
+          accepted: true,
+          enabled: true,
+          lastResult: "failed",
+          lastRun: sec() - 600,
+        }),
+        job(r, {
+          id: "offline",
+          title: "offline",
+          accepted: true,
+          enabled: true,
+          lastResult: "skipped: offline",
+          lastRun: sec() - 3600,
+        }),
+        job(r, { id: "idle", title: "idle", accepted: true, enabled: false }),
+      ];
+      return s;
+    }
     case "members":
     case "members-proposal":
       setStatus(0, "synced", {
@@ -340,6 +388,7 @@ export function fakeBackend(search: string): Backend {
     mine: author === "alex-host",
     approvedByMe: false,
     head: "abc1234",
+    created: null as string | null,
     ...over,
   });
   const props: Record<string, ProposalView[]> = {};
@@ -347,6 +396,7 @@ export function fakeBackend(search: string): Backend {
     props["alex-host/claude-group"] = [
       prop(12, "sam-member", "Add test-runner skill", "skills/test-runner/SKILL.md", {
         approvals: ["kim-dev"],
+        created: new Date((sec() - 7200) * 1000).toISOString(),
       }),
       prop(13, "kim-dev", "Shorter commit rule", "CLAUDE.md", { needsUpdate: true }),
       prop(14, "alex-host", "Add lint agent", "agents/lint.md"),
@@ -629,6 +679,40 @@ export function fakeBackend(search: string): Backend {
         return snap.groups.find((g) => g.repo === cmd.data.repo)?.proposalMode
           ? { kind: "proposed", data: 14 }
           : done;
+      case "jobsAutoAccept":
+        await gate();
+        patchGroup(cmd.data.repo, { jobsAutoAccept: cmd.data.on });
+        return done;
+      case "jobAccept":
+      case "jobEnable": {
+        await gate();
+        const { repo, id } = cmd.data;
+        const on = cmd.kind === "jobAccept" ? true : cmd.data.on;
+        set({
+          jobs: snap.jobs.map((j) =>
+            j.repo === repo && j.id === id ? { ...j, accepted: true, enabled: on } : j,
+          ),
+        });
+        return done;
+      }
+      case "jobRunNow": {
+        const d = cmd.data;
+        setTimeout(
+          () =>
+            set({
+              jobs: snap.jobs.map((j) =>
+                j.id === d.id ? { ...j, lastResult: "ok", lastRun: sec() } : j,
+              ),
+            }),
+          400,
+        );
+        return done;
+      }
+      case "jobFile":
+        return {
+          kind: "path",
+          data: cmd.data.id === "idle" ? null : `/home/me/.claude-sync/jobs/${cmd.data.id}.log`,
+        };
       case "contents": {
         const it = (kind: string, name: string) => ({ kind, name });
         return {

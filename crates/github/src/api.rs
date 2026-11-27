@@ -99,6 +99,7 @@ pub struct Pull {
     pub head: Option<PullRef>,
     pub user: Option<Owner>,
     pub updated_at: Option<String>,
+    pub created_at: Option<String>,
     #[serde(default)]
     pub html_url: String,
     /// Only the single-pull reply has it; `Some(false)`: behind main, needs an update.

@@ -785,32 +785,120 @@ async fn clashes_between_own_text_and_a_group_are_listed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn edit_line_drops_the_group_line_and_keeps_the_edit_as_my_own() {
+async fn edit_line_of_the_own_text_rewrites_it_with_a_backup() {
     let t = T::new().await;
     std::fs::create_dir_all(t.dir.path().join(".claude")).unwrap();
-    std::fs::write(t.file("CLAUDE.md"), md(&["- Always use tabs"])).unwrap();
+    std::fs::write(
+        t.file("CLAUDE.md"),
+        md(&["# Me", "- Always use tabs", "- B"]),
+    )
+    .unwrap();
+    let h = t.signed_in().await;
+    let cmd = |text: &str| Command::EditLine {
+        source: None,
+        line: "- Always use tabs".into(),
+        text: text.into(),
+    };
+    h.send(cmd("- Use tabs in Go only")).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(t.file("CLAUDE.md")).unwrap(),
+        md(&["# Me", "- Use tabs in Go only", "- B"])
+    );
+    assert_eq!(
+        std::fs::read_dir(t.dir.path().join(".claude-sync/backups"))
+            .unwrap()
+            .count(),
+        1
+    );
+    // the line is gone now, so a second edit is refused and writes nothing
+    let e = h.send(cmd("x")).await.unwrap_err();
+    assert!(e
+        .to_string()
+        .contains("your CLAUDE.md no longer has that line"));
+    // empty text removes the line
+    h.send(Command::EditLine {
+        source: None,
+        line: "- B".into(),
+        text: String::new(),
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(t.file("CLAUDE.md")).unwrap(),
+        md(&["# Me", "- Use tabs in Go only"])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn edit_line_of_a_group_commits_it_redacted_or_refuses() {
+    let t = T::new().await;
     let h = t
-        .group_with("h1", &[("CLAUDE.md", &md(&["- Never use tabs"]))])
+        .group_with(
+            "h1",
+            &[("CLAUDE.md", &md(&["# Team", "- Never use tabs", "- B"]))],
+        )
         .await;
     h.send(Command::SyncNow).await.unwrap();
-    let cmd = || Command::EditLine {
-        repo: "zed/team".into(),
-        line: "- Never use tabs".into(),
-        text: "- Use tabs in Makefiles only".into(),
+    t.push_chain("zed/team").await;
+    let edit = |line: &str, text: &str| Command::EditLine {
+        source: Some("zed/team".into()),
+        line: line.into(),
+        text: text.into(),
     };
-    h.send(cmd()).await.unwrap();
-    let own = std::fs::read_to_string(t.file("CLAUDE.md")).unwrap();
-    assert!(
-        own.ends_with("- Always use tabs\n- Use tabs in Makefiles only\n"),
-        "{own}"
+    h.send(edit("- Never use tabs", "- Use tabs in Go only"))
+        .await
+        .unwrap();
+    assert_eq!(
+        t.pushed_blobs().await,
+        [md(&["# Team", "- Use tabs in Go only", "- B"])]
     );
-    let Event::Clashes(c) = h.send(Command::Clashes).await.unwrap() else {
-        panic!()
-    };
-    assert!(c.is_empty());
-    // the group line is gone for me, so a second edit of it is refused and writes nothing more
-    assert!(h.send(cmd()).await.is_err());
-    assert_eq!(std::fs::read_to_string(t.file("CLAUDE.md")).unwrap(), own);
+    let commit = &t.sent("POST", "/repos/zed/team/git/commits").await[0];
+    assert!(commit["message"]
+        .as_str()
+        .unwrap()
+        .ends_with(": edit CLAUDE.md"));
+    // a secret in the text never leaves the machine
+    let key = format!("ghp_{}", "a".repeat(36));
+    h.send(edit("- B", &format!("- key {key}"))).await.unwrap();
+    let blobs = t.pushed_blobs().await;
+    assert_eq!(blobs.len(), 2);
+    assert!(
+        !blobs[1].contains(&key) && blobs[1].contains("[redacted]"),
+        "{}",
+        blobs[1]
+    );
+    // a line the group no longer has
+    let e = h.send(edit("- gone", "x")).await.unwrap_err();
+    assert!(e
+        .to_string()
+        .contains("zed/team's CLAUDE.md no longer has that line"));
+    assert_eq!(t.pushed_blobs().await.len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn edit_line_is_refused_when_the_group_does_not_sync_claude_md() {
+    let t = T::new().await;
+    let h = t.signed_in().await;
+    let gf = json!({"schema": 1, "name": "Team", "members": ["ann"], "sync": {"claudeMd": false}});
+    t.serve_repo("zed/team", "h1", &[("CLAUDE.md", "- A\n")], gf, true)
+        .await;
+    h.send(Command::Join {
+        repo: "zed/team".into(),
+    })
+    .await
+    .unwrap();
+    let e = h
+        .send(Command::EditLine {
+            source: Some("zed/team".into()),
+            line: "- A".into(),
+            text: "- B".into(),
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        e.to_string().contains("zed/team does not sync CLAUDE.md"),
+        "{e}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1348,6 +1436,7 @@ mod jobs {
         };
         assert!(p.unwrap().ends_with(logs.last().unwrap()));
         assert_eq!(h.snapshot().jobs[0].last_result, "ok");
+        assert!(h.snapshot().jobs[0].last_run > 0);
 
         // a fresh lock means a run is going; a stale one is broken
         let lock = r.t.dir.path().join(".claude-sync/jobs/nightly/lock");
@@ -1951,7 +2040,7 @@ mod proposals {
         fn json(&self, mergeable: bool) -> serde_json::Value {
             let mut v = json!({"number": self.n, "title": format!("{}: share x", self.by),
                 "state": "open", "head": {"sha": self.head, "ref": format!("proposal/{}-1", self.by)},
-                "user": {"login": self.by}, "updated_at": self.up,
+                "user": {"login": self.by}, "updated_at": self.up, "created_at": "2026-01-02T03:04:05Z",
                 "html_url": format!("https://example.test/pull/{}", self.n)});
             if mergeable {
                 v["mergeable"] = json!(self.mergeable);
@@ -2091,6 +2180,36 @@ mod proposals {
         assert_eq!(ed.len(), 1, "nothing is shared until it is merged");
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn in_proposal_mode_a_group_line_edit_becomes_a_pull_request() {
+        let t = T::new().await;
+        let h = t.signed_in().await;
+        t.join_served(
+            &h,
+            "zed/team",
+            "h1",
+            &[("CLAUDE.md", "- A\n")],
+            gf(&["ann"], true),
+            true,
+        )
+        .await;
+        h.send(Command::SyncNow).await.unwrap();
+        let e = h
+            .send(Command::EditLine {
+                source: Some("zed/team".into()),
+                line: "- A".into(),
+                text: "- B".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(e, Event::Proposed(7));
+        assert!(t
+            .sent("PATCH", "/repos/zed/team/git/refs/heads/main")
+            .await
+            .is_empty());
+        assert_eq!(t.pushed_blobs().await, ["- B\n"]);
+    }
+
     async fn list(h: &Handle) -> Vec<ProposalView> {
         let Event::Proposals(v) = h
             .send(Command::Proposals {
@@ -2131,6 +2250,7 @@ mod proposals {
         t.mock("POST", "/repos/zed/team/pulls/7/reviews", 200, json!({}))
             .await;
         let v = list(&h).await;
+        assert_eq!(v[0].created.as_deref(), Some("2026-01-02T03:04:05Z"));
         assert_eq!(v.len(), 3);
         assert_eq!(v[0].approvals, ["bo"]);
         assert!(v[1].mine && !v[0].mine);
