@@ -41,6 +41,9 @@ The app binary is also the CLI (`app/src-tauri/src/main.rs` hands the words to `
 - UI preview states of packs and others are fake-backend scenarios (`app/ui/src/fake.ts`).
 - SSH between your own machines (`crates/fs/src/ssh.rs`, architecture §21): the pass edits only the marked block of `~/.ssh/authorized_keys`, `~/.ssh/claude-sync.conf` and the `Include` first line of `~/.ssh/config`; tests inject their own home and never touch the real `~/.ssh`.
 
+## Dev home (an isolated device)
+`eval "$(scripts/dev-home.sh [dir])"` exports `CLAUDE_HOME`, `CLAUDE_SYNC_HOME` (both in a temp dir), `CLAUDE_SYNC_DEV_TOKEN` (from `gh auth token`; debug builds only, held in memory, never in the keychain or the token file) and `CLAUDE_SYNC_NO_AUTO_PERSONAL=1`, so this device never joins your real personal repo by itself (`PersonalOn` still works). Personal sync stays on by default in the app. Separate `CLAUDE_SYNC_HOME` folders are separate app instances.
+
 ## Conventions
 - One change per PR; paste the commands you ran with exit codes and counts, and name the OS.
 - Never commit tokens or keys; the secret-scan patterns are in `crates/engine/src/secrets.rs`.

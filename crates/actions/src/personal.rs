@@ -374,7 +374,7 @@ impl Core {
     /// Before a pass: the new-device check while not decided. It never fails the pass.
     pub(crate) fn personal_discover(&mut self) {
         let mut st = self.pstate();
-        if st.enabled || st.decided {
+        if st.enabled || st.decided || self.env.no_auto_personal {
             return;
         }
         let found = (|| -> Result<Found> {

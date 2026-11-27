@@ -101,6 +101,8 @@ pub(crate) fn env_in_dev(ctx: &Ctx, dev: bool) -> Result<Env, Fail> {
         } else {
             claude_sync_actions::handover::system()
         },
+        // dev-home.sh sets it: a test home never joins the person's real personal repo
+        no_auto_personal: std::env::var_os("CLAUDE_SYNC_NO_AUTO_PERSONAL").is_some(),
     })
 }
 

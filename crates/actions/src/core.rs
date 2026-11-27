@@ -28,6 +28,9 @@ pub struct Env {
     pub device: String,
     /// The process list and the kill for the v1 daemon hand-over.
     pub procs: Arc<dyn crate::handover::Procs>,
+    /// A test or dev home: personal memory never turns itself on or offers itself (v1 does,
+    /// and stays the default); `PersonalOn` still works.
+    pub no_auto_personal: bool,
 }
 
 /// The keychain (or a test map) behind one clonable handle.
@@ -722,6 +725,7 @@ mod tests {
             now: Arc::new(|| 1),
             device: "laptop".into(),
             procs: Arc::new(crate::handover::NoProcs),
+            no_auto_personal: false,
         };
         e.procs = procs;
         e
@@ -794,6 +798,7 @@ mod tests {
             now: Arc::new(|| 1),
             device: "laptop".into(),
             procs: Arc::new(crate::handover::NoProcs),
+            no_auto_personal: false,
         };
         let c = Core::open(env).unwrap();
         c.db.add_group("zed/team", false).unwrap();

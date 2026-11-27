@@ -34,6 +34,7 @@ struct T {
     secrets: Arc<Map>,
     jobs: Mutex<Option<claude_sync_actions::jobs::JobsEnv>>,
     device: &'static str,
+    no_auto: std::sync::atomic::AtomicBool,
 }
 
 impl T {
@@ -48,6 +49,7 @@ impl T {
             clock: Arc::new(AtomicI64::new(1_000_000)),
             secrets: Arc::default(),
             jobs: Mutex::new(None),
+            no_auto: Default::default(),
         }
     }
     fn env(&self, client_id: &str) -> Env {
@@ -68,6 +70,7 @@ impl T {
             now: Arc::new(move || clock.load(Ordering::SeqCst)),
             device: format!("ann@{}", self.device),
             procs: Arc::new(claude_sync_actions::handover::NoProcs),
+            no_auto_personal: self.no_auto.load(Ordering::SeqCst),
         }
     }
     async fn mock(&self, verb: &str, p: &str, status: u16, body: serde_json::Value) {
@@ -2283,6 +2286,28 @@ mod personal {
         a.h.send(Command::DeviceRemove { id }).await.unwrap();
         a.sync().await;
         assert!(!git.lock().unwrap().files()["devices.json"].contains("Office PC"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_test_home_never_joins_personal_memory_by_itself() {
+        let git = new_git();
+        let a = device("laptop", &git).await;
+        a.h.send(Command::PersonalOn).await.unwrap();
+        // a plain new device joins by itself (v1 default)
+        let b = device("desktop", &git).await;
+        b.sync().await;
+        assert!(b.personal().await.on);
+        // a dev-home device with the flag does not, and is not offered either
+        let t = T::named("test").await;
+        t.no_auto.store(true, Ordering::SeqCst);
+        mount(&t, &git).await;
+        let c = Dev {
+            h: t.signed_in().await,
+            t,
+        };
+        c.sync().await;
+        let pc = c.personal().await;
+        assert!(!pc.on && !pc.offer, "{pc:?}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
