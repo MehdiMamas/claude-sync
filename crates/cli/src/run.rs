@@ -867,7 +867,13 @@ fn update(ctx: &Ctx, check: bool) -> Res {
     let name = crate::update::asset_name(crate::update::target_triple()?);
     let client = claude_sync_github::Client::new(ctx.cfg.clone().unwrap_or_else(Config::github))
         .map_err(|e| e.to_string())?;
-    crate::update::install(&client, &version, &name, &exe)?;
+    crate::update::install(
+        &client,
+        &version,
+        &name,
+        &exe,
+        &crate::update::updater_pubkey()?,
+    )?;
     Ok(Out::new(
         format!("Updated to {version}. A running daemon switches over at its next restart (`systemctl --user restart claude-sync`)."),
         json!({ "ok": true, "from": ctx.version, "to": version }),

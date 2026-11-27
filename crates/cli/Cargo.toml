@@ -26,8 +26,11 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 clap = { version = "4.6.10", features = ["derive"] }
 sysinfo = "0.40.4"
 sha2 = "0.10"
+minisign-verify = "0.3"
+base64 = "0.22"
 
 [dev-dependencies]
+minisign = "0.7"
 tempfile = "3"
 wiremock = "0.6"
 tokio = { workspace = true }

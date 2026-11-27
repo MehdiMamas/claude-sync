@@ -1,5 +1,6 @@
 //! `update`: download this program's archive from the release `latest.json` names, check its
-//! SHA-256 against the `.sha256` file and swap the running binary (as v1 did).
+//! SHA-256 against the `.sha256` file and its minisign signature (`.sig`, the updater key the
+//! app also trusts), then swap the running binary.
 use claude_sync_github::Client;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -39,9 +40,45 @@ pub fn checksum_matches(bytes: &[u8], listed: &str) -> bool {
     want.len() == 64 && want == got
 }
 
+/// The updater public key of `tauri.conf.json`: the one key v1 clients trust.
+pub fn updater_pubkey() -> Result<String, String> {
+    let conf: serde_json::Value =
+        serde_json::from_str(include_str!("../../../app/src-tauri/tauri.conf.json"))
+            .map_err(|e| e.to_string())?;
+    conf["plugins"]["updater"]["pubkey"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "no updater key in tauri.conf.json".into())
+}
+
+fn b64(s: &str) -> Result<String, String> {
+    use base64::Engine;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(s.trim())
+        .map_err(|e| e.to_string())?;
+    String::from_utf8(raw).map_err(|e| e.to_string())
+}
+
+/// `sig` (the `.sig` file: base64 of a minisign signature, as Tauri writes it) over `bytes`,
+/// against `pubkey` (base64 of the minisign public key file, as in `tauri.conf.json`).
+pub fn signature_ok(bytes: &[u8], sig: &str, pubkey: &str) -> bool {
+    let check = || -> Result<(), String> {
+        let key = minisign_verify::PublicKey::decode(&b64(pubkey)?).map_err(|e| e.to_string())?;
+        let sig = minisign_verify::Signature::decode(&b64(sig)?).map_err(|e| e.to_string())?;
+        key.verify(bytes, &sig, false).map_err(|e| e.to_string())
+    };
+    check().is_ok()
+}
+
 /// Download `version`'s archive for `name`, verify it and put it in place of `exe`. Nothing is
-/// changed unless the checksum matches.
-pub fn install(client: &Client, version: &str, name: &str, exe: &Path) -> Result<(), String> {
+/// changed unless the checksum and the signature (against `pubkey`) both match.
+pub fn install(
+    client: &Client,
+    version: &str,
+    name: &str,
+    exe: &Path,
+    pubkey: &str,
+) -> Result<(), String> {
     let archive = client
         .release_asset(version, name)
         .map_err(|e| e.to_string())?;
@@ -51,6 +88,14 @@ pub fn install(client: &Client, version: &str, name: &str, exe: &Path) -> Result
     if !checksum_matches(&archive, &String::from_utf8_lossy(&listed)) {
         return Err(format!(
             "{name} does not match its checksum; nothing was changed"
+        ));
+    }
+    let sig = client
+        .release_asset(version, &format!("{name}.sig"))
+        .map_err(|_| format!("{name} has no signature; nothing was changed"))?;
+    if !signature_ok(&archive, &String::from_utf8_lossy(&sig), pubkey) {
+        return Err(format!(
+            "{name} does not match its signature; nothing was changed"
         ));
     }
     let work = workdir(exe)?;
@@ -171,24 +216,44 @@ mod tests {
     }
 
     #[cfg(unix)]
-    async fn serve(bytes: Vec<u8>, listed: String) -> (MockServer, Config) {
+    async fn serve(bytes: Vec<u8>, listed: String, sig: Option<String>) -> (MockServer, Config) {
         let server = MockServer::start().await;
         let name = "claude-sync-cli-test.tar.gz";
-        Mock::given(method("GET"))
-            .and(path(format!("/download/v9.9.9/{name}")))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes))
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!("/download/v9.9.9/{name}.sha256")))
-            .respond_with(ResponseTemplate::new(200).set_body_string(listed))
-            .mount(&server)
-            .await;
+        let files = [
+            (String::new(), Some(bytes)),
+            (".sha256".into(), Some(listed.into_bytes())),
+            (".sig".into(), sig.map(String::into_bytes)),
+        ];
+        for (ext, body) in files {
+            if let Some(body) = body {
+                Mock::given(method("GET"))
+                    .and(path(format!("/download/v9.9.9/{name}{ext}")))
+                    .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+                    .mount(&server)
+                    .await;
+            }
+        }
         let cfg = Config {
             releases: server.uri(),
             ..Config::github()
         };
         (server, cfg)
+    }
+
+    /// A fresh key: its public key as `tauri.conf.json` holds it, and a signer in the format of
+    /// a Tauri `.sig` file.
+    #[cfg(unix)]
+    fn key() -> (String, impl Fn(&[u8]) -> String) {
+        use base64::Engine;
+        let enc = |s: String| base64::engine::general_purpose::STANDARD.encode(s);
+        let kp = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+        let pubkey = enc(kp.pk.to_box().unwrap().to_string());
+        let sign = move |data: &[u8]| {
+            let sig = minisign::sign(Some(&kp.pk), &kp.sk, std::io::Cursor::new(data), None, None)
+                .unwrap();
+            enc(sig.to_string())
+        };
+        (pubkey, sign)
     }
 
     #[cfg(unix)]
@@ -200,39 +265,77 @@ mod tests {
     }
 
     #[cfg(unix)]
+    async fn run(cfg: Config, exe: PathBuf, pubkey: String) -> Result<(), String> {
+        tokio::task::spawn_blocking(move || {
+            install(
+                &Client::new(cfg).unwrap(),
+                "9.9.9",
+                "claude-sync-cli-test.tar.gz",
+                &exe,
+                &pubkey,
+            )
+        })
+        .await
+        .unwrap()
+    }
+
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_matching_download_replaces_the_binary_and_a_wrong_hash_changes_nothing() {
+    async fn a_good_signature_installs_and_a_wrong_hash_changes_nothing() {
         let d = tempfile::tempdir().unwrap();
         let bytes = archive(d.path(), "NEW");
         let exe = d.path().join("claude-sync-cli");
         std::fs::write(&exe, "OLD").unwrap();
         let name = "claude-sync-cli-test.tar.gz";
+        let (pubkey, sign) = key();
 
-        let (_s, cfg) = serve(bytes.clone(), format!("{}  {name}\n", hash(b"other"))).await;
-        let e2 = exe.clone();
-        let cfg2 = cfg.clone();
-        let err = tokio::task::spawn_blocking(move || {
-            install(&Client::new(cfg2).unwrap(), "9.9.9", name, &e2)
-        })
-        .await
-        .unwrap()
-        .unwrap_err();
+        let (_s, cfg) = serve(
+            bytes.clone(),
+            format!("{}  {name}\n", hash(b"other")),
+            Some(sign(&bytes)),
+        )
+        .await;
+        let err = run(cfg, exe.clone(), pubkey.clone()).await.unwrap_err();
         assert!(err.contains("checksum"), "{err}");
         assert_eq!(std::fs::read_to_string(&exe).unwrap(), "OLD");
 
-        let (_s, cfg) = serve(bytes.clone(), format!("{}  {name}\n", hash(&bytes))).await;
-        let e2 = exe.clone();
-        tokio::task::spawn_blocking(move || {
-            install(&Client::new(cfg).unwrap(), "9.9.9", name, &e2)
-        })
-        .await
-        .unwrap()
-        .unwrap();
+        let (_s, cfg) = serve(
+            bytes.clone(),
+            format!("{}  {name}\n", hash(&bytes)),
+            Some(sign(&bytes)),
+        )
+        .await;
+        run(cfg, exe.clone(), pubkey).await.unwrap();
         assert_eq!(std::fs::read_to_string(&exe).unwrap(), "NEW");
         let left: Vec<_> = std::fs::read_dir(d.path()).unwrap().flatten().collect();
         assert!(left.iter().all(|e| !e
             .file_name()
             .to_string_lossy()
             .starts_with(".claude-sync-update")));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_tampered_archive_or_a_missing_or_foreign_signature_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let good = archive(d.path(), "NEW");
+        let evil = archive(&d.path().join("evil"), "EVIL");
+        let exe = d.path().join("claude-sync-cli");
+        std::fs::write(&exe, "OLD").unwrap();
+        let name = "claude-sync-cli-test.tar.gz";
+        let (pubkey, sign) = key();
+        let (_, other_sign) = key();
+        // the checksum file matches what is served, so only the signature can stop these
+        for (served, sig, want) in [
+            (&evil, Some(sign(&good)), "signature"),
+            (&good, None, "no signature"),
+            (&good, Some(other_sign(&good)), "signature"),
+            (&good, Some("not base64!".to_string()), "signature"),
+        ] {
+            let (_s, cfg) = serve(served.clone(), format!("{}  {name}\n", hash(served)), sig).await;
+            let err = run(cfg, exe.clone(), pubkey.clone()).await.unwrap_err();
+            assert!(err.contains(want), "{err}");
+            assert_eq!(std::fs::read_to_string(&exe).unwrap(), "OLD");
+        }
     }
 }

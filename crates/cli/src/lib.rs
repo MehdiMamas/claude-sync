@@ -12,7 +12,7 @@ mod run;
 pub mod service;
 pub mod token;
 pub mod tree;
-mod update;
+pub mod update;
 
 use clap::Parser;
 use claude_sync_github::Config;
