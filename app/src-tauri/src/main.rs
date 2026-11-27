@@ -73,12 +73,23 @@ fn snapshot(h: State<'_, Handle>) -> Snapshot {
     h.snapshot()
 }
 
-/// Open a web address or a file in the system handler (Parity 59). Only `http(s)` addresses and
-/// paths that exist.
+/// The two system pages the notification help opens (Parity 48); no other scheme is opened.
+const SETTINGS_URIS: [&str; 2] = [
+    "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
+    "ms-settings:notifications",
+];
+
+fn opens_as_url(t: &str) -> bool {
+    t.starts_with("https://") || t.starts_with("http://") || SETTINGS_URIS.contains(&t)
+}
+
+/// Open a web address, a notification settings page or a file in the system handler (Parity 59).
+/// Only `http(s)` addresses, exactly those two settings URIs and paths that exist.
+/// `app/ui/src/fake.ts` `openTarget` applies the same list.
 #[tauri::command]
 fn open_target(app: AppHandle, target: String) -> Result<(), String> {
     let o = app.opener();
-    if target.starts_with("https://") || target.starts_with("http://") {
+    if opens_as_url(&target) {
         o.open_url(target, None::<&str>).map_err(|e| e.to_string())
     } else if std::path::Path::new(&target).exists() {
         o.open_path(target, None::<&str>).map_err(|e| e.to_string())
@@ -305,6 +316,30 @@ mod tests {
 
     fn v(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn only_the_two_notification_settings_uris_open_besides_web_addresses() {
+        for ok in [
+            "https://github.com/a/b",
+            "http://localhost:1",
+            "ms-settings:notifications",
+            "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
+        ] {
+            assert!(opens_as_url(ok), "{ok}");
+        }
+        for bad in [
+            "ms-settings:",
+            "ms-settings:privacy",
+            "ms-settings:notifications ",
+            "x-apple.systempreferences:",
+            "x-apple.systempreferences:com.apple.preference.security",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "/tmp/x",
+        ] {
+            assert!(!opens_as_url(bad), "{bad}");
+        }
     }
 
     #[test]

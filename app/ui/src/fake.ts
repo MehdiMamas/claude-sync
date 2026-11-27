@@ -1029,6 +1029,13 @@ export function fakeBackend(search: string): Backend {
       set({ update: snap.update.replace(/^ready:/, "updated:") });
     },
     openTarget: async (t) => {
+      // the shell (open_target in main.rs) opens only these; a path is checked there on disk
+      const ok =
+        /^https?:\/\//.test(t) ||
+        t === "ms-settings:notifications" ||
+        t === "x-apple.systempreferences:com.apple.Notifications-Settings.extension" ||
+        /^(\/|~|[A-Za-z]:[\\/])/.test(t);
+      if (!ok) throw new Error("open_target refuses " + t);
       (window as unknown as { __opened?: string[] }).__opened = [
         ...((window as unknown as { __opened?: string[] }).__opened ?? []),
         t,
