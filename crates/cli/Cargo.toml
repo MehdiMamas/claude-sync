@@ -19,7 +19,6 @@ claude-sync-engine = { path = "../engine" }
 claude-sync-fs = { path = "../fs" }
 claude-sync-github = { path = "../github", default-features = false }
 claude-sync-store = { path = "../store" }
-serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tokio = { workspace = true, features = ["signal", "rt", "time"] }

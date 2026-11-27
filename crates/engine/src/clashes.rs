@@ -1,5 +1,5 @@
 //! Lines of CLAUDE.md that clash across the texts Claude reads on this device (v1
-//! `crates/core/src/conflicts.rs` rules, byte for byte in what counts as a clash). Pure and
+//! conflicts.rs rules, byte for byte in what counts as a clash). Pure and
 //! deterministic.
 //!
 //! A *duplicate* says the same thing: equal once case, list markers, punctuation and spacing

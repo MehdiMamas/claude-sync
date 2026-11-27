@@ -1,6 +1,6 @@
-//! The person's choices, in the v1 `choices.json` shape (docs/architecture.md §16a), kept in
-//! the store's `settings` row `choices`. Keys this build does not know are kept. Following the
-//! person through the personal repo (Parity 54, 87) is added with personal memory.
+//! The person's choices, in the v1 `choices.json` shape (docs/architecture.md §16), kept in
+//! the store's `settings` row `choices`. Keys this build does not know are kept. They follow
+//! the person through the personal repo (see `personal.rs`).
 use claude_sync_engine::traits::{IoError, Store};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};

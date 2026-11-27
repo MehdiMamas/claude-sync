@@ -1,4 +1,4 @@
-//! Secret scanner: the same pattern set and names as v1 (`crates/core/src/secrets.rs`), so a
+//! Secret scanner: the same pattern set and names as v1 (v1 `secrets.rs`), so a
 //! file that v1 refused to share is refused here. Parity rows: secret scan before every push
 //! and share (never returns the matched text).
 //!

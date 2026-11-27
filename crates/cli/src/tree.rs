@@ -144,7 +144,7 @@ pub enum ServiceCmd {
     Status,
 }
 
-/// The visible command names, in order (the parity script compares them with v1).
+/// The visible command names, in order (a test pins them).
 pub fn command_names() -> Vec<String> {
     use clap::CommandFactory;
     Cli::command()

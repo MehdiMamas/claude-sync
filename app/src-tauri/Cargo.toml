@@ -24,9 +24,10 @@ tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
-serde_json.workspace = true
 tracing.workspace = true
 tokio.workspace = true
+# Used by the code tauri::generate_context! expands to.
+serde_json.workspace = true
 xcap = "0.9"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 base64 = "0.22"
@@ -36,3 +37,6 @@ objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSError", "NSBundle", "NSObject", "NSArray", "NSDictionary"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "UNUserNotificationCenter", "UNNotificationContent", "UNNotificationRequest", "UNNotificationSettings", "UNNotificationResponse", "UNNotification", "UNNotificationSound", "UNNotificationTrigger", "UNNotificationCategory", "UNNotificationAction", "block2"] }
+
+[package.metadata.cargo-machete]
+ignored = ["serde_json"]

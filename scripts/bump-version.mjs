@@ -5,8 +5,7 @@
 //   node scripts/bump-version.mjs --check 0.2.0    exit 1 unless every file says 0.2.0
 //   node scripts/bump-version.mjs --print          print the current version
 //
-// The file list and patterns are the same as $VersionFiles in scripts/release.ps1: keep them
-// in step. The app and the core take their version from [workspace.package]
+// scripts/release.ps1 calls this script. The crates take their version from [workspace.package]
 // (version.workspace = true) and tauri.conf.json has none, so Tauri uses the Cargo one.
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -17,7 +16,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const FILES = [
   { path: "Cargo.toml", re: /(^\[workspace\.package\][^[]*?^version = ")([^"]+)(")/m },
-  ...["app", "core", "cli", "actions", "engine", "fs", "github", "store"].map((n) => ({
+  ...["app", "cli", "actions", "engine", "fs", "github", "store"].map((n) => ({
     path: "Cargo.lock",
     re: new RegExp(`(^name = "claude-sync-${n}"\\r?\\nversion = ")([^"]+)(")`, "m"),
   })),

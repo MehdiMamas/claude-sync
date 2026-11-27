@@ -10,7 +10,6 @@ name = "claude_sync_fs"
 
 [dependencies]
 claude-sync-engine = { path = "../engine" }
-claude-sync-github = { path = "../github", default-features = false }
 claude-sync-store = { path = "../store" }
 serde.workspace = true
 serde_json.workspace = true

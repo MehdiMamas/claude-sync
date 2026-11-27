@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 const WINDOW: usize = 12;
 
 /// Spawns that never run on Windows: (file, program text on the spawn line; `None` = any).
-const UNIX_ONLY: [(&str, Option<&str>); 8] = [
+const UNIX_ONLY: [(&str, Option<&str>); 6] = [
     // systemd and crontab.
     ("crates/cli/src/service.rs", None),
     // `open`, macOS.
@@ -18,14 +18,7 @@ const UNIX_ONLY: [(&str, Option<&str>); 8] = [
     ),
     // The setup chat of `claude-sync packs setup` runs `claude` in the caller's own console
     // (inherited, interactive), so no window can open.
-    ("crates/core/src/packs/cli.rs", Some("Command::new(claude)")),
-    // The same in the v2 CLI.
     ("crates/cli/src/run.rs", Some("Command::new(&claude)")),
-    // A unit test that runs the generated setup script with `sh`.
-    (
-        "crates/core/src/packs/launch.rs",
-        Some("Command::new(\"sh\")"),
-    ),
     // `ps`, unix (the Windows branch uses `tasklist` with `creation_flags`).
     ("app/src-tauri/src/cli.rs", Some("Command::new(\"ps\")")),
     // `systemctl --user restart`, and the unix-only test that spawns itself.
@@ -115,18 +108,12 @@ fn every_spawn_hides_its_console_window() {
 }
 
 #[test]
-fn run_command_input_uses_quiet() {
-    let text = std::fs::read_to_string(repo_root().join("crates/core/src/claude_cli.rs"))
-        .unwrap()
-        .replace("\r\n", "\n");
-    let start = text
-        .find("pub fn run_command_input(")
-        .expect("run_command_input");
-    let body = &text[start..];
-    let body = &body[..body.find("\n}\n").unwrap()];
+fn quiet_sets_create_no_window() {
+    let text = std::fs::read_to_string(repo_root().join("crates/fs/src/lib.rs")).unwrap();
+    let start = text.find("pub fn quiet(").expect("quiet");
     assert!(
-        body.contains("quiet(&mut cmd)"),
-        "run_command_input must call quiet"
+        text[start..].contains("creation_flags(0x0800_0000)"),
+        "quiet must set CREATE_NO_WINDOW"
     );
 }
 
@@ -134,9 +121,9 @@ fn run_command_input_uses_quiet() {
 fn the_scan_catches_a_spawn_without_the_flag() {
     let bad = "fn f() {\n    let mut cmd = Command::new(\"x\");\n    cmd.output();\n}\n";
     assert_eq!(
-        offenders("crates/core/src/x.rs", bad),
-        ["crates/core/src/x.rs:2"]
+        offenders("crates/fs/src/x.rs", bad),
+        ["crates/fs/src/x.rs:2"]
     );
     let ok = format!("{bad}// pad\n").replace("cmd.output();", "quiet(&mut cmd).output();");
-    assert!(offenders("crates/core/src/x.rs", &ok).is_empty());
+    assert!(offenders("crates/fs/src/x.rs", &ok).is_empty());
 }

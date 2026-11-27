@@ -68,7 +68,7 @@ pub struct DevicesFile {
     pub devices: Vec<Device>,
 }
 
-// ---- choices (architecture §16a); `ts` is Unix milliseconds, the newer ts wins on merge.
+// ---- choices (architecture §16); `ts` is Unix milliseconds, the newer ts wins on merge.
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]

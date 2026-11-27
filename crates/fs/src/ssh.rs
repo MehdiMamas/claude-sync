@@ -1,4 +1,4 @@
-//! SSH between the user's own machines (v1 architecture §21, byte formats unchanged): each
+//! SSH between the user's own machines (architecture §21, byte formats as in 0.1.x): each
 //! machine publishes `machines/<id>.json`; this pass writes the other machines into the
 //! marked block of `~/.ssh/authorized_keys` (not on Windows), `~/.ssh/claude-sync.conf` and
 //! the `Include` first line of `~/.ssh/config`. A peer's private `lan` address is a fallback

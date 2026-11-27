@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/cli", "crates/engine", "crates/github", "crates/store", "crates/fs", "crates/actions", "app/src-tauri"]
+members = ["crates/cli", "crates/engine", "crates/github", "crates/store", "crates/fs", "crates/actions", "app/src-tauri"]
 
 [workspace.package]
 version = "2.0.0"
@@ -9,7 +9,6 @@ license = "MIT"
 authors = ["El Mehdi Mamas <mehdimamasxd@gmail.com>"]
 
 [workspace.dependencies]
-anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -18,7 +17,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 reqwest = { version = "0.13", default-features = false, features = ["json", "form", "rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 tracing = "0.1"
-async-trait = "0.1"
 
 [profile.release]
 opt-level = "s"

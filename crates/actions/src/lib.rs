@@ -8,10 +8,9 @@
 //! [`Command`] and returns its [`Event`]; the background loop (tick, invitations, renames,
 //! rate-limit waits, session expiry) runs in the same task.
 //!
-//! Built so far: jobs (accept, on/off, auto-accept, run now, OS tasks, run-job, remove-jobs), sign-in (device flow with cancel, App mode, sign out, 401 stop), the
-//! background schedule, the snapshot, and groups with members (create, discover, join, accept,
-//! add, remove, transfer, leave, reorder, off/on). Sync, local edits, review, jobs, personal
-//! memory, proposals, notifications, feedback, packs, ssh and activity come in later blocks.
+//! Modules: groups, sync, edits, review, jobs, personal, proposals, packs, plugins, feedback,
+//! extras (ssh, activity, helper, update state), history, copy, sign-in, the schedule, the
+//! v1 hand-over and the snapshot (docs/architecture.md §24).
 #![cfg_attr(
     not(test),
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo)

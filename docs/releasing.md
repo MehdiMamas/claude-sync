@@ -53,7 +53,7 @@ git push -u origin release-0.2.0
 gh pr create --repo MehdiMamas/claude-sync --title "release: v0.2.0" --body "<notes>"
 ```
 
-`bump-version.mjs` sets the version in `Cargo.toml` (`[workspace.package]`, used by the app and the core), `Cargo.lock`, `app/package.json` and `app/ui/package.json` (`tauri.conf.json` has no version of its own). It refuses a version that is not greater than the current one. `node scripts/bump-version.mjs --check 0.2.0` checks all five places, and `--print` prints the version.
+`bump-version.mjs` sets the version in `Cargo.toml` (`[workspace.package]`, used by every crate and the app), `Cargo.lock`, `app/package.json` and `app/ui/package.json` (`tauri.conf.json` has no version of its own). It refuses a version that is not greater than the current one. `node scripts/bump-version.mjs --check 0.2.0` checks every place, and `--print` prints the version.
 
 `ci.yml` runs the checks on Ubuntu, Windows and macOS. Merge when it is green.
 

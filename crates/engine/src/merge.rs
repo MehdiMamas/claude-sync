@@ -52,7 +52,7 @@ pub fn merge_json_bytes(b: Option<&[u8]>, l: &[u8], r: &[u8]) -> Option<Vec<u8>>
     Some(v)
 }
 
-/// The `choices.json` merge (architecture §16a): every section (`order`, `app`, `personal`,
+/// The `choices.json` merge (architecture §16): every section (`order`, `app`, `personal`,
 /// `sshPeers`, `activity`, and each group under `groups`) is taken whole from the side with
 /// the newer `ts`; a tie goes to the larger text so both devices settle on the same bytes.
 pub fn merge_choices_bytes(l: &[u8], r: &[u8]) -> Option<Vec<u8>> {
