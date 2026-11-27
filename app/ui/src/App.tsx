@@ -60,7 +60,9 @@ export function App() {
     [b],
   );
 
-  if (!snap.login || snap.sessionExpired !== null || approved) {
+  // a device flow started while signed in (App mode on or off) also takes the window
+  const flow = snap.signIn.kind === "code" || snap.signIn.kind === "starting";
+  if (!snap.login || snap.sessionExpired !== null || approved || flow) {
     return (
       <SignIn
         state={snap.signIn}

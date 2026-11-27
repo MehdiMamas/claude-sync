@@ -254,7 +254,10 @@ impl Client {
         struct R {
             installations: Vec<Installation>,
         }
-        Ok(self.get("/user/installations")?.json::<R>()?.installations)
+        Ok(self
+            .get("/user/installations?per_page=100")?
+            .json::<R>()?
+            .installations)
     }
 
     pub fn installation_repos(&self, id: u64) -> Result<Vec<Repo>> {
@@ -263,7 +266,9 @@ impl Client {
             repositories: Vec<Repo>,
         }
         Ok(self
-            .get(&format!("/user/installations/{id}/repositories"))?
+            .get(&format!(
+                "/user/installations/{id}/repositories?per_page=100"
+            ))?
             .json::<R>()?
             .repositories)
     }

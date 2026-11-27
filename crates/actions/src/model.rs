@@ -368,6 +368,8 @@ pub enum Command {
         app: bool,
     },
     SignInCancel,
+    /// Read which joined groups the GitHub App cannot reach; fills `appUncovered`.
+    AppCoverage,
     /// Sent by the sign-in waiter itself, never by the window.
     #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(skip))]

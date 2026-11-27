@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import pkg from "../../package.json";
 import type { ConflictView } from "../generated/ConflictView";
 import type { PackView } from "../generated/PackView";
@@ -480,6 +480,10 @@ function Account(c: SettingsCtx & { sub: string[] }) {
   const [, mode] = c.sub;
   const app = snap.appMode;
   const open = (u: string) => void backend.openTarget(u);
+  // which groups the App cannot reach: read when the screen opens in App mode
+  useEffect(() => {
+    if (app) void c.call({ kind: "appCoverage" });
+  }, [app, c.call]);
   if (mode === "signout")
     return (
       <Frame tab="account" sub={false}>

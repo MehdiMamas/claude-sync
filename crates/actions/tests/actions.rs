@@ -1098,6 +1098,60 @@ async fn a_test_notification_is_one_new_notice_for_the_shell_to_show() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn app_coverage_lists_joined_groups_the_app_cannot_reach() {
+    let t = T::new().await;
+    let h = t.signed_in().await;
+    t.mock(
+        "GET",
+        "/repos/ann/team",
+        200,
+        json!({"name": "team", "full_name": "ann/team", "private": true}),
+    )
+    .await;
+    t.push_chain("ann/team").await;
+    h.send(Command::Join {
+        repo: "ann/team".into(),
+    })
+    .await
+    .unwrap();
+    t.mock(
+        "GET",
+        "/user/installations",
+        200,
+        json!({"total_count": 1, "installations": [{"id": 7}]}),
+    )
+    .await;
+    let repos =
+        |full: &str| json!({"total_count": 1, "repositories": [{"name": "x", "full_name": full}]});
+    t.mock(
+        "GET",
+        "/user/installations/7/repositories",
+        200,
+        repos("ann/other"),
+    )
+    .await;
+    h.send(Command::AppCoverage).await.unwrap();
+    assert_eq!(h.snapshot().app_uncovered, vec!["ann/team".to_string()]);
+    t.server.reset().await;
+    t.mock(
+        "GET",
+        "/user/installations",
+        200,
+        json!({"installations": [{"id": 7}]}),
+    )
+    .await;
+    t.mock(
+        "GET",
+        "/user/installations/7/repositories",
+        200,
+        repos("Ann/Team"),
+    )
+    .await;
+    h.send(Command::AppCoverage).await.unwrap();
+    assert!(h.snapshot().app_uncovered.is_empty());
+}
+
 impl T {
     /// What each push to `zed/team` sent: blob contents in order.
     async fn pushed_blobs(&self) -> Vec<String> {

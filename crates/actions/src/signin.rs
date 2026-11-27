@@ -113,6 +113,24 @@ impl Core {
         Ok(Event::Done)
     }
 
+    /// The joined groups the App's installations do not reach (Parity 55), compared without case.
+    pub(crate) fn app_coverage(&mut self) -> Result<Event> {
+        let mut reached = Vec::new();
+        for i in self.client.installations()? {
+            for r in self.client.installation_repos(i.id)? {
+                reached.push(r.full_name.to_lowercase());
+            }
+        }
+        self.app_uncovered = self
+            .db
+            .groups()?
+            .into_iter()
+            .map(|g| g.repo)
+            .filter(|r| !reached.contains(&r.to_lowercase()))
+            .collect();
+        Ok(Event::Done)
+    }
+
     pub(crate) fn sign_out(&mut self) -> Result<Event> {
         self.client.sign_out();
         secrets::delete(&self.env.secrets)?;

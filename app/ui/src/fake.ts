@@ -546,6 +546,8 @@ export function fakeBackend(search: string): Backend {
         await sleep(60);
         set({ signIn: code });
         return done;
+      case "appCoverage":
+        return done;
       case "signInCancel":
         set({ signIn: { kind: "signedOut" } });
         return done;

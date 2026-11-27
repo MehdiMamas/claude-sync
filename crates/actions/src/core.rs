@@ -52,6 +52,7 @@ pub struct Core {
     pub(crate) login: Option<String>,
     pub(crate) app_mode: bool,
     pub(crate) app_mode_pending: bool,
+    pub(crate) app_uncovered: Vec<String>,
     pub(crate) signin: SignInState,
     pub(crate) cancel: Arc<AtomicBool>,
     pub(crate) tx: Option<WeakSender<Msg>>,
@@ -97,6 +98,7 @@ impl Core {
             login: None,
             app_mode: false,
             app_mode_pending: false,
+            app_uncovered: Vec::new(),
             signin: SignInState::SignedOut,
             cancel: Arc::default(),
             tx: None,
@@ -163,6 +165,7 @@ impl Core {
                 self.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(Event::Done)
             }
+            AppCoverage => self.app_coverage(),
             SignInDone(o) => self.sign_in_done(o),
             SignOut => self.sign_out(),
             ReorderGroups(l) => self.reorder(l),
@@ -502,7 +505,7 @@ impl Core {
                 .unwrap_or(false),
             update: self.update_state(),
             update_checked: self.update_checked(),
-            app_uncovered: Vec::new(),
+            app_uncovered: self.app_uncovered.clone(),
             desktop_notifications: c.app.desktop_notifications.unwrap_or(true),
             start_at_login: c.app.start_at_login,
             install: None,

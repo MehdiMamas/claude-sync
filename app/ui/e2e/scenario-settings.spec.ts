@@ -154,6 +154,10 @@ test("account: App coverage and the links to GitHub", async ({ page }) => {
   expect((await fake(page).opened()).length).toBe(1);
 
   await page.goto(at("groups-invite", "/account"));
+  await page.getByRole("button", { name: "Turn on" }).click();
+  await expect(page.getByText("WDJB-MJHT")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByText("Signed in as alex-host")).toBeVisible();
   await page.getByRole("button", { name: "Open" }).click();
   expect(await fake(page).opened()).toEqual([
     "https://github.com/settings/connections/applications",
