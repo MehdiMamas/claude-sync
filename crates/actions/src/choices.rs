@@ -48,6 +48,8 @@ pub struct AppChoice {
     pub interval_secs: Option<u64>,
     pub start_at_login: Option<bool>,
     pub desktop_notifications: Option<bool>,
+    /// The Claude helper (Explain); on until turned off.
+    pub helper: Option<bool>,
     pub ts: u64,
     #[serde(flatten)]
     pub rest: Map<String, Value>,

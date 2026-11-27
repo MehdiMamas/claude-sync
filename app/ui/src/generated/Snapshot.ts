@@ -38,6 +38,10 @@ appUncovered: Array<string>,
  */
 desktopNotifications: boolean, 
 /**
+ * Claude helper switch (Settings, Advanced); on until turned off.
+ */
+helper: boolean, 
+/**
  * `None` until the first start decided it.
  */
 startAtLogin: boolean | null, 

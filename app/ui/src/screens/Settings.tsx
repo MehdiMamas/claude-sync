@@ -693,11 +693,10 @@ function Updates(c: SettingsCtx) {
 
 const OS_NAME: Record<string, string> = { windows: "Windows", macos: "macOS", linux: "Linux" };
 
-/** v2-ScreenSettingsAdvanced. The Claude helper has no Command yet: it stays this window's choice. */
+/** v2-ScreenSettingsAdvanced. */
 function Advanced(c: SettingsCtx) {
   const { snap } = c;
   const run = useRun(c);
-  const [helper, setHelper] = useState(true);
   const [conflicts] = useLoad(
     () => data(c.call, { kind: "conflicts" }, "conflicts") as Promise<ConflictView[]>,
     "advanced",
@@ -709,9 +708,9 @@ function Advanced(c: SettingsCtx) {
         <Row
           act={
             <Toggle
-              on={helper}
-              label={helper ? "Turn off" : "Turn on"}
-              set={() => setHelper(!helper)}
+              on={snap.helper}
+              label={snap.helper ? "Turn off" : "Turn on"}
+              set={() => void run({ kind: "helper", data: { on: !snap.helper } })}
             />
           }
         >

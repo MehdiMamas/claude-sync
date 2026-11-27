@@ -335,6 +335,7 @@ impl Core {
             Pause => self.set_app(|a| a.paused = true),
             Resume => self.set_app(|a| a.paused = false),
             DesktopNotifications { on } => self.set_app(|a| a.desktop_notifications = Some(on)),
+            Helper { on } => self.set_app(|a| a.helper = Some(on)),
             TestNotification => {
                 self.db
                     .add_notification("test", msg::TEST_NOTIFICATION, None, self.now())?;
@@ -591,6 +592,7 @@ impl Core {
             update_checked: self.update_checked(),
             app_uncovered: self.app_uncovered.clone(),
             desktop_notifications: c.app.desktop_notifications.unwrap_or(true),
+            helper: c.app.helper.unwrap_or(true),
             start_at_login: c.app.start_at_login,
             install: self.install_note(),
         }

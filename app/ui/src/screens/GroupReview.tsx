@@ -269,15 +269,17 @@ export function Review(c: Ctx) {
                   >
                     Decline
                   </button>
-                  <button
-                    type="button"
-                    className="b g"
-                    disabled={busy === id}
-                    onClick={() => explain(id, list)}
-                  >
-                    {busy === id && <Spin />}
-                    Explain
-                  </button>
+                  {c.snap.helper && (
+                    <button
+                      type="button"
+                      className="b g"
+                      disabled={busy === id}
+                      onClick={() => explain(id, list)}
+                    >
+                      {busy === id && <Spin />}
+                      Explain
+                    </button>
+                  )}
                 </div>
               </>
             )}

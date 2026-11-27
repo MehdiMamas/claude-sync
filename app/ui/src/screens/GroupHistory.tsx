@@ -122,7 +122,7 @@ function List(
                 <Notes h={h} />
               </div>
               <div className="acts">
-                {!mine && !c.banner && (
+                {!mine && !c.banner && c.snap.helper && (
                   <a className="b g" href={`#/group/${g.repo}/history/explain/${h.sha}`}>
                     Explain
                   </a>

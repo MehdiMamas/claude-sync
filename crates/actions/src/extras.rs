@@ -117,6 +117,11 @@ impl Core {
     }
 
     pub(crate) fn explain(&mut self, task: ExplainTask, text: &str) -> Result<Event> {
+        if self.choices().app.helper == Some(false) {
+            return Err(Error::new(
+                "The Claude helper is off. Turn it on in Settings, Advanced.",
+            ));
+        }
         if text.trim().is_empty() {
             return Err(Error::new(match task {
                 ExplainTask::Activity => {

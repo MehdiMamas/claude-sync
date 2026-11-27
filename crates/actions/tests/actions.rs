@@ -1814,6 +1814,14 @@ mod jobs {
             .await
             .unwrap_err();
         assert!(e.0.contains("looks like it contains a secret"), "{}", e.0);
+        // switched off, the helper is not offered; back on, it answers again
+        assert!(h.snapshot().helper);
+        h.send(Command::Helper { on: false }).await.unwrap();
+        assert!(!h.snapshot().helper);
+        let e = h.send(ask("+ use tabs")).await.unwrap_err();
+        assert!(e.0.contains("helper is off"), "{}", e.0);
+        h.send(Command::Helper { on: true }).await.unwrap();
+        assert!(h.send(ask("+ use tabs")).await.is_ok());
     }
 
     #[tokio::test(flavor = "multi_thread")]

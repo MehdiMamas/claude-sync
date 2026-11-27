@@ -91,6 +91,7 @@ const base = (): Snapshot => ({
   updateChecked: sec() - 3600,
   appUncovered: [],
   desktopNotifications: true,
+  helper: true,
   startAtLogin: true,
   install: null,
 });
@@ -619,6 +620,9 @@ export function fakeBackend(search: string): Backend {
           data: { queued: false, limited: false, number: 41, url: "https://example.test/i/41" },
         };
       }
+      case "helper":
+        set({ helper: cmd.data.on });
+        return done;
       case "desktopNotifications":
         set({ desktopNotifications: cmd.data.on });
         return done;

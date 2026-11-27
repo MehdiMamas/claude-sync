@@ -176,6 +176,8 @@ ts! {
         pub app_uncovered: Vec<String>,
         /// Desktop notifications switch (Settings); on until turned off.
         pub desktop_notifications: bool,
+        /// Claude helper switch (Settings, Advanced); on until turned off.
+        pub helper: bool,
         /// `None` until the first start decided it.
         pub start_at_login: Option<bool>,
         /// What the v1 import left to say on the sign-in screen; `None` when all went well.
@@ -667,6 +669,10 @@ pub enum Command {
     WindowOpened,
     /// Settings: desktop notifications on or off.
     DesktopNotifications {
+        on: bool,
+    },
+    /// Settings, Advanced: the Claude helper on or off.
+    Helper {
         on: bool,
     },
     /// Settings: Test. Adds a notice; the shell shows it on the desktop like any new one.
