@@ -57,7 +57,7 @@ pub fn classify(rel: &str) -> Class {
         ["jobs", _, "lock"] => Stays,
         ["logs" | "packs-setup" | "marketplaces" | "machines" | "backups" | "backup", ..] => Stays,
         ["sync.lock" | "daemon.lock" | "daemon.owner" | "token" | "store.db" | "store.db-wal"
-        | "store.db-shm"] => Stays,
+        | "store.db-shm" | "claude-sync.db" | "claude-sync.db-wal" | "claude-sync.db-shm"] => Stays,
         _ => Unknown,
     }
 }

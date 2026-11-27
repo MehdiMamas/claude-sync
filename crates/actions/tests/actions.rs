@@ -1153,6 +1153,32 @@ async fn app_coverage_lists_joined_groups_the_app_cannot_reach() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_install_note_lists_what_the_v1_import_skipped_or_did_not_know() {
+    use claude_sync_store::{import_v1, DaemonLockHeld, Db};
+    let t = T::new().await;
+    let state = t.dir.path().join(".claude-sync");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(state.join("app.json"), r#"{"paused":false}"#).unwrap();
+    std::fs::write(state.join("jobs.json"), "{ torn").unwrap();
+    std::fs::write(state.join("surprise.json"), "{}").unwrap();
+    let db = Db::open(&state.join("claude-sync.db")).unwrap();
+    import_v1(
+        &db,
+        &state,
+        &t.dir.path().join(".claude"),
+        &DaemonLockHeld::claim(),
+    )
+    .unwrap();
+    drop(db);
+    let h = t.signed_in().await;
+    let Some(InstallNote::Skipped { files, total }) = h.snapshot().install else {
+        panic!("no note")
+    };
+    assert_eq!(files, ["jobs.json", "surprise.json"]);
+    assert!(total >= 3, "{total}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn recent_logs_are_the_newest_file_redacted_and_cut() {
     let t = T::new().await;
     let h = t.signed_in().await;

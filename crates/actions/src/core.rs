@@ -86,6 +86,19 @@ impl Drop for Core {
 }
 
 impl Core {
+    /// What the v1 import left to say: the files it could not read and those it did not know.
+    fn install_note(&self) -> Option<InstallNote> {
+        let r = self.db.import_report().ok()??;
+        let total = u32::try_from(r.imported.len() + r.skipped.len() + r.unknown.len()).ok()?;
+        let files: Vec<String> = r
+            .skipped
+            .into_iter()
+            .map(|s| s.file)
+            .chain(r.unknown)
+            .collect();
+        (!files.is_empty()).then_some(InstallNote::Skipped { files, total })
+    }
+
     pub fn open(env: Env) -> Result<Core> {
         let home = Home::from_env(&env.home);
         let home_path = env.home.clone();
@@ -513,7 +526,7 @@ impl Core {
             app_uncovered: self.app_uncovered.clone(),
             desktop_notifications: c.app.desktop_notifications.unwrap_or(true),
             start_at_login: c.app.start_at_login,
-            install: None,
+            install: self.install_note(),
         }
     }
 }
