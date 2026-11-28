@@ -14,7 +14,7 @@
     "size": "node scripts/size.mjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.12.3",
+    "@tauri-apps/api": "2.12.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
