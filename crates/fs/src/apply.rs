@@ -51,10 +51,15 @@ pub fn write_claude_md_copy(
             Ok(())
         }
         (Some(t), c) if c.as_deref() != Some(t) => {
-            if let Some(c) = c.filter(|c| before.is_none() && !c.is_empty()) {
-                backup(home, now, &rel, &c)?; // replaced as a whole: the old text is kept
+            // replaced as a whole: the old text is kept only when it is not what we wrote last
+            let last = copy_path(home, repo, "CLAUDE.md.sha256");
+            let ours = read_file(&last)?
+                .is_some_and(|h| h == sha256_hex(c.as_deref().unwrap_or_default()).as_bytes());
+            if let Some(c) = c.filter(|c| before.is_none() && !c.is_empty() && !ours) {
+                backup(home, now, &rel, &c)?;
             }
-            write_atomic(&p, t)
+            write_atomic(&p, t)?;
+            write_atomic(&last, sha256_hex(t).as_bytes())
         }
         (None, Some(c)) => {
             backup(home, now, &rel, &c)?;

@@ -215,3 +215,42 @@ fn two_different_backups_of_one_path_in_one_second_are_both_kept() {
     all.sort();
     assert_eq!(all, ["a\n", "b\n"]);
 }
+
+fn backup_files(h: &Home) -> usize {
+    fn walk(p: &std::path::Path) -> usize {
+        std::fs::read_dir(p).map_or(0, |d| {
+            d.flatten()
+                .map(|e| {
+                    if e.path().is_dir() {
+                        walk(&e.path())
+                    } else {
+                        1
+                    }
+                })
+                .sum()
+        })
+    }
+    walk(&h.state.join("backups"))
+}
+
+#[test]
+fn ungated_group_edits_make_no_backup_but_a_local_edit_makes_one() {
+    let (_t, h, _db) = setup();
+    for (i, t) in ["a\n", "b\n", "c\n", "d\n"].iter().enumerate() {
+        write_claude_md_copy(
+            &h,
+            "acme/team",
+            Some(t.as_bytes()),
+            None,
+            &[],
+            1 + i as i64 * 100,
+        )
+        .unwrap();
+    }
+    assert_eq!(backup_files(&h), 0, "group edits alone");
+    let copy = claude_sync_fs::apply::copy_path(&h, "acme/team", "CLAUDE.md");
+    std::fs::write(&copy, "my edit\n").unwrap();
+    write_claude_md_copy(&h, "acme/team", Some(b"e\n"), None, &[], 900).unwrap();
+    assert_eq!(backup_files(&h), 1, "the local edit");
+    assert_eq!(std::fs::read(&copy).unwrap(), b"e\n");
+}
