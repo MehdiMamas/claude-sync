@@ -44,7 +44,11 @@ fn a_secret_line_already_on_the_remote_does_not_hold_the_merged_push() {
     let local = set("- a\n- c\n");
     let remote = set(&format!("- a\n- key {token}\n"));
     let pl = plan(&remote, &base, &local, &opts());
-    assert!(pl.pushes.contains_key(P), "held: {:?}", pl.secrets);
+    assert!(
+        pl.pushes.contains_key(P),
+        "held: {} secrets",
+        pl.secrets.len()
+    );
     assert!(pl.secrets.is_empty());
 }
 

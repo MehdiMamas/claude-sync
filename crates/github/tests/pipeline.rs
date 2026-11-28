@@ -335,7 +335,7 @@ fn a_dead_host_is_a_network_error() {
     let e = c.user().unwrap_err();
     assert!(
         matches!(&e, Error::Network(m) if !m.contains("127.0.0.1:1/")),
-        "{e}"
+        "the network error names the URL path"
     );
     assert!(c.counts().is_empty());
 }
