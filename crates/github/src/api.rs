@@ -192,7 +192,7 @@ fn check_version(v: &str) -> Result<()> {
     let ok = parts.len() == 3
         && parts
             .iter()
-            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+            .all(|p| !p.is_empty() && !p.contains("..") && p.bytes().all(|b| b.is_ascii_digit()))
         && pre.is_none_or(|p| {
             !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
         });
