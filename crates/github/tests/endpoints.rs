@@ -583,7 +583,9 @@ fn a_prerelease_version_is_accepted_but_not_a_path() {
         "2.0.0-rc_1",
         "2.0.0+b",
     ] {
-        assert!(c.release_asset(bad, "a.tar.gz").is_err(), "{bad}");
+        let before = s.requests().len();
+        let _ = c.release_asset(bad, "a.tar.gz");
+        assert_eq!(s.requests().len(), before, "{bad} reached the network");
     }
     assert_eq!(s.requests().len(), 1, "only latest.json was asked for");
 }
