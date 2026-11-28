@@ -563,6 +563,32 @@ fn a_version_that_is_not_digits_and_dots_never_reaches_a_url() {
 }
 
 #[test]
+fn a_prerelease_version_is_accepted_but_not_a_path() {
+    let s = Srv::new();
+    s.mount(
+        Mock::given(method("GET"))
+            .and(path("/releases/latest/download/latest.json"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"version": "2.0.0-rc.1", "platforms": {}})),
+            ),
+    );
+    let c = s.client();
+    assert_eq!(c.latest().unwrap().version, "2.0.0-rc.1");
+    for bad in [
+        "2.0.0-",
+        "2.0.0-rc/1",
+        "2.0.0-..",
+        "2.0.0-rc%2f",
+        "2.0.0-rc_1",
+        "2.0.0+b",
+    ] {
+        assert!(c.release_asset(bad, "a.tar.gz").is_err(), "{bad}");
+    }
+    assert_eq!(s.requests().len(), 1, "only latest.json was asked for");
+}
+
+#[test]
 fn row18_release_page_is_a_link_for_the_browser() {
     let s = Srv::new();
     assert_eq!(

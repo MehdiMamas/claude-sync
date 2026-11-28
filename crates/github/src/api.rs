@@ -182,13 +182,20 @@ pub struct Platform {
     pub signature: String,
 }
 
-/// A version goes into a download URL: only `1.2.3` is let through.
+/// A version goes into a download URL: only `1.2.3` or `1.2.3-rc.1` is let through.
 fn check_version(v: &str) -> Result<()> {
-    let parts: Vec<&str> = v.split('.').collect();
+    let (core, pre) = match v.split_once('-') {
+        Some((c, p)) => (c, Some(p)),
+        None => (v, None),
+    };
+    let parts: Vec<&str> = core.split('.').collect();
     let ok = parts.len() == 3
         && parts
             .iter()
-            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        && pre.is_none_or(|p| {
+            !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
+        });
     if ok {
         Ok(())
     } else {
