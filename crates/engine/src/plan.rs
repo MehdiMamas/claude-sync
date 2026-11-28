@@ -74,7 +74,13 @@ impl Plan {
 }
 
 fn strip_cr(b: &[u8]) -> Vec<u8> {
-    b.iter().copied().filter(|c| *c != b'\r').collect()
+    let mut out = Vec::with_capacity(b.len());
+    for (i, c) in b.iter().enumerate() {
+        if !(*c == b'\r' && b.get(i + 1) == Some(&b'\n')) {
+            out.push(*c);
+        }
+    }
+    out
 }
 
 fn lf(s: &str) -> Vec<u8> {

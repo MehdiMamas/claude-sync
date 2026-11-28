@@ -47,3 +47,15 @@ fn a_secret_line_already_on_the_remote_does_not_hold_the_merged_push() {
     assert!(pl.pushes.contains_key(P), "held: {:?}", pl.secrets);
     assert!(pl.secrets.is_empty());
 }
+
+#[test]
+fn a_lone_cr_is_a_real_difference() {
+    let f = |t: &str| FileSet::from([("CLAUDE.md".to_string(), t.as_bytes().to_vec())]);
+    let (base, local, remote) = (f("x\ry\n"), f("x\ry\nz\n"), f("xy\n"));
+    let pl = plan(&remote, &base, &local, &opts());
+    assert!(
+        pl.pushes.is_empty(),
+        "pushed over a remote change: {:?}",
+        pl.pushes
+    );
+}
