@@ -36,7 +36,7 @@ pnpm -C app/ui build
 
 - Keep one change per pull request.
 - In the description, paste the commands you ran with their exit codes and test counts, and name the operating system.
-- Never commit tokens or keys. The app's secret scan patterns are in `crates/core/src/secrets.rs`.
+- Never commit tokens or keys. The app's secret scan patterns are in `crates/engine/src/secrets.rs`.
 
 To be listed as a contributor, comment `@all-contributors please add @<your-login> for <contribution type>` on your issue or pull request (types: `code`, `doc`, `test`, `bug`, `ideas`, `platform`, `translation`).
 

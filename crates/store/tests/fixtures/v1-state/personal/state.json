@@ -1,0 +1,1 @@
+{ "login": "sample-user", "enabled": true, "decided": true, "kinds": { "claudeMd": true, "memory": true, "state": true, "settings": true }, "deviceId": "dev-1", "lastSyncUnix": 1790000400, "lastError": null, "devices": [], "fingerprint": "f1", "seenPushedUnix": 0 }

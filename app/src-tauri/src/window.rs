@@ -1,10 +1,10 @@
-//! The one window. It exists only while open: closing it destroys the webview, so the
-//! idle app is just the Rust process (§11).
+//! The one window (Parity 58). It exists only while open: closing destroys the webview, so the
+//! idle app is just the Rust process; the next open builds it again.
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const LABEL: &str = "main";
 
-/// Show the window (creating it if needed), optionally on a given screen (`groups`, `feedback`, ...).
+/// Show the window (building it if needed), optionally on a screen (`notifications`, `feedback`).
 pub fn open(app: &AppHandle, route: Option<&str>) {
     if let Some(w) = app.get_webview_window(LABEL) {
         if let Some(r) = route {
@@ -26,13 +26,13 @@ pub fn open(app: &AppHandle, route: Option<&str>) {
         .center()
         .build();
     if let Err(e) = built {
-        tracing::error!("could not open the window: {e}");
+        tracing::warn!("could not open the window: {e}");
     }
 }
 
-/// The window was closed. Once the WebView2 processes are gone, hand the pages the
-/// webview touched back to Windows so the idle tray app stays small. Nothing is freed
-/// here (private memory is unchanged); untouched pages are just no longer counted.
+/// The window was closed (or the app started with none). Once the WebView2 processes are gone,
+/// hand the pages the webview touched back to Windows so the idle tray app stays small.
+/// Nothing is freed (private memory is unchanged); untouched pages are no longer counted.
 pub fn closed(app: &AppHandle) {
     let a = app.clone();
     tauri::async_runtime::spawn(async move {

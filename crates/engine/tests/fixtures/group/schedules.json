@@ -1,0 +1,25 @@
+{
+  "jobs": [
+    {
+      "id": "morning-digest",
+      "title": "Morning digest",
+      "cron": "17 10 * * 1,4",
+      "prompt": "Summarise yesterday's changes in the repo",
+      "cwd": "~",
+      "permissionMode": "plan",
+      "timeoutMinutes": 30,
+      "report": "~/.claude/reports/digest.md",
+      "args": [
+        "--model",
+        "sonnet",
+        "--effort",
+        "high"
+      ]
+    },
+    {
+      "id": "weekly-clean",
+      "cron": "0 8 * * 0",
+      "prompt": "Tidy the notes folder"
+    }
+  ]
+}

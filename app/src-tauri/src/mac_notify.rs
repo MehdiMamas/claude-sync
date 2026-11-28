@@ -4,7 +4,7 @@
 //! macOS never lists the app under System Settings > Notifications and nothing shows.
 //! This asks once at startup, sends through the modern API, and opens the Notifications
 //! screen when a notification is clicked.
-use crate::{notify, window};
+use crate::window;
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{Bool, ProtocolObject};
@@ -54,7 +54,7 @@ define_class!(
         ) {
             if let Some(app) = APP.get() {
                 let a = app.clone();
-                let _ = app.run_on_main_thread(move || window::open(&a, Some(notify::ROUTE)));
+                let _ = app.run_on_main_thread(move || window::open(&a, Some(crate::ROUTE)));
             }
             done.call(());
         }
@@ -69,7 +69,7 @@ fn in_bundle() -> bool {
 /// Register the delegate and ask for permission (macOS shows its prompt the first time).
 pub fn init(app: &AppHandle) {
     if !in_bundle() {
-        tracing::info!("not running from an app bundle: no macOS notifications");
+        tracing::warn!("not running from an app bundle: no macOS notifications");
         return;
     }
     let _ = APP.set(app.clone());
@@ -84,12 +84,11 @@ pub fn init(app: &AppHandle) {
             // macOS answers this way, without a prompt, once the app was denied (or
             // dismissed) before: the choice sticks to the bundle id until the user flips
             // it in System Settings > Notifications.
-            tracing::warn!(
-                "notification permission request failed: {e}. If notifications were denied \
-                 earlier, turn them on in System Settings > Notifications > claude-sync"
+            tracing::warn!("notification permission request failed: {e}. If notifications \
+                 were denied earlier, turn them on in System Settings > Notifications > claude-sync"
             );
         } else {
-            tracing::info!(granted = granted.as_bool(), "notification permission");
+            let _ = granted; // the window asks `permission()` when it needs it
         }
     });
     center.requestAuthorizationWithOptions_completionHandler(

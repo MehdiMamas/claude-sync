@@ -1,0 +1,11 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.9/schema.json",
+  "files": { "includes": ["src/**", "e2e/**", "scripts/**", "*.ts", "!src/generated/**"] },
+  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
+  "linter": {
+    "rules": {
+      "suspicious": { "noExplicitAny": "error" },
+      "style": { "noNonNullAssertion": "error" }
+    }
+  }
+}

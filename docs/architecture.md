@@ -1,6 +1,6 @@
-# claude-sync app: architecture
+# claude-sync: architecture
 
-This document is the design the sprint issues point to. The app described here replaced the v0 bash CLI, which is gone; §10 and §16 say how a v0 setup is moved.
+This document describes claude-sync 2.0.0 as built. 2.0.0 is a from-scratch rewrite of 0.1.x (called v1 below); the repo formats, the user-facing texts and the command line are the same, the code and the local state are new (§24 to §26). The 0.1.x code stays on the `main` history before the rewrite and is not in the tree.
 
 ## 1. What it is
 
@@ -18,24 +18,31 @@ It costs nothing to run. GitHub (free private repos, OAuth device flow) holds al
 ## 2. Components
 
 ```
-crates/core/        Rust library: GitHub client, group format, sync engine, apply layer, settings merge, secret scan
-crates/cli/         Headless CLI `claude-sync-cli`: same engine, token file, daemon loop, systemd/cron service
-app/                Tauri 2 app: tray, autostart, updater, UI (app/ui, plain TypeScript + Vite), feedback capture
-relay/              Vercel project (TypeScript functions): /api/update, /api/download, /api/feedback, /api/health
-scripts/            Local checks, the version bump and the local Windows release script
+crates/engine/      Pure Rust library: formats, planner, merges, settings, CLAUDE.md review, clashes, secret scan. No I/O.
+crates/github/      The one GitHub client (REST, ETag cache, rate limits, request counts), device flow, token storage, the engine's `Remote`.
+crates/store/       SQLite store (`claude-sync.db`), its migrations and the one-time import of the v1 state files.
+crates/fs/          The machine: `Disk` on real folders, the executor and its journal, apply, watcher, sync pass, OS tasks, SSH peers, logging.
+crates/actions/     Every user action, the actor that runs them, the snapshot, the schedule and the v1 hand-over. One implementation for both shells.
+crates/cli/         The command tree and `run`; the headless binary `claude-sync-cli` (daemon, systemd/cron service, token file).
+app/src-tauri/      Tauri 2 shell: tray, window, autostart, notifications, updater, screen capture. The same binary answers the CLI words.
+app/ui/             The window: React 19 and TypeScript with Vite; `src/generated/` holds the Rust types (ts-rs, `scripts/gen-types.sh`).
+relay/              Vercel project (TypeScript functions): /api/update, /api/download, /api/feedback, /api/health, /install
+scripts/            Local checks, the version bump, the latest.json builder, the local Windows release script
+templates/user-repo Template of a group repo
 ```
 
-GitHub Actions run on GitHub-hosted runners only (free for a public repo): `ci.yml` runs the checks of `scripts/check.ps1` on Ubuntu, Windows and macOS for every PR and push to `main`, and `release.yml` builds releases (§13). No self-hosted runners, no AI jobs.
+Dependencies point one way: `engine` has none of ours; `github`, `store` and `fs` depend on `engine`; `actions` on all four; `cli` and the app on `actions`. The engine talks to the outside only through the traits in `crates/engine/src/traits.rs` (`Remote`, `Store`, `Disk`, `Clock`), so every rule is tested with fakes and a temp folder.
+
+GitHub Actions run on GitHub-hosted runners only (free for a public repo): `ci.yml` runs the checks of `scripts/check.ps1` on Ubuntu, Windows and macOS for every PR and push to `main`, `bench.yml` holds the budgets (installer 15 MB, UI JavaScript 200 KB, 424 idle requests an hour, §6), and `release.yml` builds releases (§13). No self-hosted runners, no AI jobs.
 
 ## 3. Identity and auth
 
 - The app signs in with the **GitHub OAuth device flow** (no client secret in the app). It needs a GitHub OAuth App with device flow enabled. Its client ID is public and is compiled in (`CLAUDE_SYNC_GITHUB_CLIENT_ID`).
 - Scope: `repo` (needed to read and write private repos and to manage collaborators and invitations) and `read:user`. This is broad. A GitHub App with per-repo access is in the backlog.
-- **GitHub App sign-in (opt-in, issue #39).** The setting `githubApp` (state.json, default off) makes the next sign-in use a GitHub App's client ID (`CLAUDE_SYNC_GITHUB_APP_CLIENT_ID`) instead of the OAuth App's. Same device flow, same keychain entry, same refresh code (App user tokens always expire: 8 h access, 6 months refresh, rotated on use). A build without an App client ID falls back to the OAuth App, so the default path is unchanged. The token then reaches only repos the App is installed on **and** the user can access, so the app has an install step (`https://github.com/apps/<slug>/installations/new`) and a coverage check: `GET /user/installations` and `GET /user/installations/{id}/repositories`, compared with the joined groups (`app_coverage` command); repos not covered need to be added to the installation.
 - **Every call works with an App user token** (docs.github.com, "Permissions required for GitHub Apps"): `POST /user/repos` (Administration write + the account permission "Repository creation" write, user tokens only), collaborators and invitations (Administration write; `GET collaborators` Metadata read), rulesets (Administration write; list needs Metadata read), transfer (Administration write, user token only), `PATCH /user/repository_invitations/{id}` accept and `GET /user/repository_invitations` (Administration write / read, user token only), topics (Administration write), contents, git blobs/trees/refs and pull merge (Contents write), reviews (Pull requests write), `GET /user/repos` (Metadata read, only repos with the App installed). The one catch is coverage: a repo created after the install is invisible to the token (404) unless the installation is on "All repositories". With "Only select repositories" the user must add each new group repo (and the personal repo `<login>/claude-sync-personal`) to the installation, so the recommended install is **All repositories**, which still removes the OAuth `repo` scope's reach into code (the App holds no Contents access beyond what we list, and can be limited per account), and shows in the coverage check. Accepting an invitation to someone else's repo gives the invitee access, but the App must also be installed on the *owner's* account for that repo to be reachable: an invitee's token cannot see a repo whose owner never installed the App. That is the hybrid limit: a group is usable with App auth only when its host installed the App on the repo, which the coverage check reports as missing.
 - The tokens are stored in the OS keychain (Windows Credential Manager, macOS Keychain, Linux Secret Service such as GNOME Keyring or KWallet; Linux is beta) through the `keyring` crate, under service `claude-sync`, account = GitHub login, as one entry: a JSON object with the access token and, when GitHub sends them, the refresh token (`ghr_…`) and both expiry times. An entry saved by 0.1.1 or earlier is the bare access token and still loads. Tokens are never written to a file or a log.
 - **Token refresh.** When the OAuth App has expiring user tokens on, the access token lasts 8 hours and the refresh token 6 months. The app refreshes 5 minutes before the access token expires, and again after a `401`, with `POST https://github.com/login/oauth/access_token` (`grant_type=refresh_token`, `client_id`, `refresh_token`; no client secret, as in the device flow), then saves the new pair to the keychain and retries the call once. All GitHub calls of a sign-in share one session (`github::Session`), so concurrent calls wait for a single refresh instead of each spending the refresh token (GitHub rotates it on every use).
-- **Expired sign-in.** A `401` that a refresh cannot cure (no refresh token, or GitHub refuses it, e.g. `bad_refresh_token`) and that `GET /user` confirms means GitHub no longer accepts the sign-in. The app then signs out as *expired*: background GitHub calls (sync loop, update check, feedback outbox) stop, the dead tokens are removed from the keychain, `state.json` and the groups stay, one notification says so, and the window shows "Your GitHub sign-in expired" with a **Sign in again** button instead of an error every minute. The tray says "Sign-in expired". Signing in again clears it and syncing resumes where it left off. A network error or a GitHub 5xx during a refresh is not an expiry: the call fails and the next pass tries again.
+- **Expired sign-in.** A `401` that a refresh cannot cure (no refresh token, or GitHub refuses it, e.g. `bad_refresh_token`) and that `GET /user` confirms means GitHub no longer accepts the sign-in. The app then signs out as *expired*: background GitHub calls (sync loop, update check, feedback outbox) stop, the dead tokens are removed from the keychain, the store and the groups stay, one notification says so, and the window shows "Your GitHub sign-in expired" with a **Sign in again** button instead of an error every minute. The tray says "Sign-in expired". Signing in again clears it and syncing resumes where it left off. A network error or a GitHub 5xx during a refresh is not an expiry: the call fails and the next pass tries again.
 - Each device signs in on its own. Signing out on one device does not affect the others.
 
 ## 4. Group repo
@@ -129,8 +136,8 @@ Only the host changes the member list, even though the list lives in `claude-syn
 ### 5b. Transfer and rename
 
 - **Transfer (host only).** The group screen has "Hand over the group": pick a current member and confirm. The app calls `POST /repos/{o}/{r}/transfer {new_owner}` (`Engine::transfer_group`, refused for non-members, for yourself and for non-hosts). GitHub emails the new owner, who must accept; until then nothing changes. Afterwards the new owner is the host and you are a member. Before asking, the app makes sure the former host's login is in `members`, so the new host's reconcile (§5) keeps their read access. GitHub also keeps the former owner as a collaborator of a transferred repo; the member list is what the app relies on.
-- **Following a move.** GitHub redirects a renamed or transferred repo. On every sync pass, before the groups are synced, the engine asks each joined repo for its current `full_name` (`GET /repos/{o}/{r}`, `RemoteRepo::current_id`). If it differs from the stored id (case-insensitive), `rename::migrate` moves every local trace to the new id: `groups/<old>/` and `conflicts/<old>/` (renamed, never deleted), `manifest.json` (groups, files, marketplaces, order, and the `~/.claude/CLAUDE.md` import line), `settings-owned.json`, `jobs.json` (re-registering scheduled tasks on the next job reconcile), `plugins.json`, `notifications.json`, and last `state.json`, where the id is replaced in place so the group order is kept. Writes of the repo (commits, transfer, reconcile) always use the resolved new name, never the stale one.
-- **Resumable.** The steps are idempotent and `state.json` is saved last, so a run interrupted halfway (folder moved, state not yet saved) finishes on the next sync; an id that is already migrated is a no-op. The host role is recomputed on the next sync from the repo owner and the signed-in login, so it flips on its own. Other groups' stored collisions that name this group's owner are recomputed by their next sync.
+- **Following a move.** GitHub redirects a renamed or transferred repo. On every sync pass, before the groups are synced, the engine asks each joined repo for its current `full_name` (`GET /repos/{o}/{r}`, `crates/github/src/remote.rs`). If it differs from the stored id (case-insensitive), `actions::groups` moves every local trace to the new id: `groups/<old>/` and `conflicts/<old>/` (renamed, never deleted) and, in one store transaction, every row keyed by the repo (`groups`, `bases`, `base_files`, `review_items`, `jobs`, `notifications`, `conflicts`), where the id is replaced in place so the group order is kept (job tasks are registered again on the next job reconcile). Writes of the repo (commits, transfer, reconcile) always use the resolved new name, never the stale one.
+- **Resumable.** The steps are idempotent and the store transaction is committed last, so a run interrupted halfway (folder moved, store not yet updated) finishes on the next sync; an id that is already migrated is a no-op. The host role is recomputed on the next sync from the repo owner and the signed-in login, so it flips on its own. Other groups' stored collisions that name this group's owner are recomputed by their next sync.
 - **Notice.** The app shows one notification: "<old> moved to <new>; claude-sync follows it." (`SyncReport.moved`).
 
 ### 5c. Proposals
@@ -148,36 +155,42 @@ Only the host changes the member list, even though the list lives in `claude-syn
 
 ## 6. Sync engine
 
-The engine talks to GitHub's REST API only. It never needs `git` on the machine.
+The engine talks to GitHub's REST API only. It never needs `git` on the machine. The planner (`crates/engine/src/plan.rs`) is pure: it takes the base, the local files and the remote files and returns what to write, delete, push and report; `crates/fs/src/exec.rs` carries that out (§7).
 
-**Base snapshot.** For each group the engine keeps the last synced state in `~/.claude-sync/groups/<owner>__<repo>/base/`: the commit SHA and a copy of every synced file. This is the common ancestor for three-way merges.
+**Base snapshot.** For each group the store keeps the last synced state: the commit sha, the head ETag, and per file its git blob sha and the hash of the bytes placed locally (`bases`, `base_files`, §25). The bytes of the base are kept in `base_files.bytes` (the personal repo's in `personal_base_files`) and are the common ancestor for three-way merges. A base that came from a v1 import has hashes only; its bytes are read from the v1 `groups/<id>/base/` folder until the first v2 pass saves them (§26).
 
-**Remote changes.**
-- Poll `GET /repos/{o}/{r}/commits/{default-branch}` every 60 s (configurable) with `If-None-Match`. A `304` is free against the rate limit.
-- Every GET goes through one in-memory cache in `GitHub` (URL to ETag and body, 256 entries, shared by clones): a repeat GET sends `If-None-Match` and a `304` returns the cached body, so a call with an unchanged answer costs nothing against the rate limit. Non-GET calls and answers without an ETag are never cached. The head ETag is also saved in `head.json` (`etag`), so the first check after a restart can still get a `304`.
-- One GraphQL call per background tick (`github/graphql.rs`) reads the current name and default-branch head of every joined group repo and the personal repo (aliases `r0..rN`). The engine uses it in place of the per-repo rename check and head check: an unchanged head costs no REST call, a different name runs the rename migration, and a changed head starts a sync with that head. GraphQL has its own rate limit (`x-ratelimit-resource`), tracked apart from REST, so one being used up never blocks the other. A repo the answer lacks, or a failed call, falls back to the REST path (`head_if_changed`, `current_id`). The personal check reuses the answer for 60 seconds.
-- Slower checks: the rename check (`current_id`) and the host's member pass run at most every 10 minutes per group (the member pass also runs right after a pull or push); pending invitations and topics every 15 minutes.
-- Rate limit: a `403`/`429` with `Retry-After` or no requests left, a `200` that used the last request (`x-ratelimit-remaining: 0`) and a `403` naming the secondary rate limit (60 s) all set one shared "limited until" time. While it is ahead no request goes out. The loop then sleeps until the reset plus 5 s (at most an hour) and runs a full sync. The error reads "GitHub limit reached, resumes at <local time>", and the group and personal status carry `rateLimitedUntil` (Unix seconds) until a sync succeeds.
-- On a new commit, fetch the tree recursively and the blobs that changed, compute remote = files under the allowlist, and merge.
+**One pass** (`crates/fs/src/pass.rs`; `actions::sync` calls it). Under `<state>/sync.lock` (an exclusive file lock shared by the app and the CLI; a background pass that finds it taken is skipped, `sync` by hand waits up to 60 s):
 
-**Fetching only what changed.** When the head moved, the engine reads the new tree, then takes each file whose git blob sha (sha1 of `blob <len> ` + bytes) matches a file in the base from the base, with no request. Only the other paths are fetched with `git/blobs`. A base file whose bytes differ from the repo's has another sha and is fetched, so the content is always the repo's. After a push the saved base is the pushed head and files, so the next tick does not read its own commit. The host's proposal check (§5c) reads a PR's files and reviews only when its head sha or `updated_at` changed since the last pass.
+1. Each joined group in rank order (§10): ask for the head with `If-None-Match`; a `304` ends the group's pass for free. On a new head read the tree, take every file whose blob sha equals the base's from the base, download only the other blobs, then plan, execute and save the base last (a crash before that repeats the pass, never half-applies it).
+2. The `settings.shared.json` merge (§8) and the managed CLAUDE.md block (§7, §7a).
+3. The personal repo (§16), then SSH peers (§21).
+4. Notes, conflicts and the request counts are written to the store.
+
+Pushing is only by **Share** (§5a): a pass never sends a local edit.
 
 **Merge, per file** (base B, local L, remote R):
-- L == B: take R. R == B: keep L (it is a local change to push). L == R: nothing to do.
-- All three differ: if both are JSON objects (`settings.shared.json`, `claude-sync.json`), merge key by key three-way. A key both sides changed differently: remote wins. Otherwise it is a **conflict**: remote wins, the local version is saved to `~/.claude-sync/conflicts/<group>/<UTC time>/<path>`, and the app shows it.
+- L == B: take R. R == B: keep L (a local edit). L == R: nothing to do.
+- All three differ: if both are JSON objects (`settings.shared.json`, `claude-sync.json`), merge key by key three-way. A key both sides changed differently: remote wins. Otherwise it is a **conflict**: remote wins, the local version is saved to `~/.claude-sync/conflicts/<group>/<UTC time>/<path>` (a row in `conflicts`), and the app shows it.
 - Deletes follow the same table, with "missing" as a value.
 
-**Pushing local changes.** Create blobs, a tree with `base_tree` = the remote head's tree, a commit whose parent is the remote head, then `PATCH` the ref with `force: false`. A non-fast-forward (`422`) means someone else pushed: fetch, merge, try again (at most 3 times). Never force. Before any commit, the secret scan (§9) runs on every added or changed file. A hit blocks the commit, names the file, line and pattern, and never prints the value.
+**Pushing.** Create blobs, a tree on the parent's tree, a commit whose parent is the remote head, then `PATCH` the ref with `force: false`. A `422` (someone else pushed) means fetch, merge and try again, at most 3 times. Never force. Before any commit the secret scan (§9) runs on every added or changed file; a hit blocks the commit, names the file, line and pattern, and never prints the value. Commit messages are `<login>@<device>: <summary>`.
 
-**Commit messages:** `<login>@<device>: <summary>` (for example `alice@alice-desktop: update skills/review`).
+**Reverting a commit (host only, §5a).** `Command::RevertCommit` undoes one commit of the activity feed with a NEW commit on the default branch (history is never rewritten). Each allowlisted file the commit touched is put back to its content at the commit's parent. If any of those files changed again since, the whole revert is refused and nothing is committed; the error names each file. Merge commits and commits of 300 or more files are refused.
 
-**Reverting a commit (host only, §5a).** `Engine::revert_commit(group, sha)` undoes one commit from the activity feed with a NEW commit on the default branch (history is never rewritten). Everything goes through the REST `RemoteRepo`: `commit_files` lists the files the commit touched (`GET /commits/{sha}`; merge commits and commits of 300+ files are refused), then each allowlisted file is put back to its content at the commit's parent (a file the commit added is deleted, one it deleted is restored). The message is `<login>@<device>: revert <sha7> (<original summary>)`, so it shows in the feed like any change. It runs the secret scan (§9) and the push path above (retry on a race, never force), then syncs so this device applies it. **Safer rather than smarter:** if any file changed again after the commit, the whole revert is refused and nothing is committed; the error names each file, the later commit and its author (`<path> changed again after this commit, in <sha7> by <login>; revert that first.`). There is no 3-way merge. `revert_preview` returns the same plan (files, action, blocked reason) without writing, for the confirm step. A member gets `Error::HostOnly`.
+### GitHub caching and request budget
+
+- **One pipeline.** Every GitHub call goes through `crates/github/src/client.rs`. It retries connect failures, GET timeouts and GET 502/503/504 three times with a 0.5 s doubling wait, never retries a non-GET, and on a `401` renews the token once and asks `GET /user` before declaring the sign-in expired (§3).
+- **ETag cache.** An in-memory map of URL to ETag and body (256 entries, a new URL on a full cache clears it). A repeat GET sends `If-None-Match`; a `304` returns the cached body and costs nothing against the rate limit. Non-GET calls and answers without an ETag are never cached. The head ETag of each repo is also stored (`bases.etag`), so the first check after a restart can still get a `304`.
+- **Request counts.** Each request is counted by caller, endpoint (ids and names turned into placeholders) and result (`200`, `304`, `other`). Every core caller names itself with `with_caller("name", ...)`, else it counts as `other`. The shell flushes the counts into the `requests` table about once a minute; `claude-sync status --json` (`requests`) shows them.
+- **Rate limits.** Kept per resource (`core`, `graphql`), read from `x-ratelimit-resource`. A `403` or `429` with `Retry-After`, a `403` naming the secondary limit (60 s), a `200` that used the last request (`x-ratelimit-remaining: 0`) set one "limited until" time for that resource. While it is ahead no request goes out; the schedule (§24) waits until the reset and the status carries `rateLimitedUntil`. The error reads "GitHub limit reached, resumes at <local time>".
+- **Budget.** The background tick checks the head of each group repo and the personal repo (conditional GET) and the open pull requests of each group. An idle hour at a one-minute tick with 3 groups and the personal repo costs 424 requests, all answered `304` (0 primary points). `crates/github/tests/idle.rs` and `bench.yml` fail when it is more. Slower checks: the rename check (`GET /repos/{o}/{r}`) once a day per group, pending invitations every 15 minutes, the member reconcile after a pull or push.
+- **Fetching only what changed.** Blobs are kept in memory by sha; only paths whose blob sha changed are downloaded. After a push the saved base is the pushed head, so the next tick does not read its own commit. The host's proposal check (§5c) reads a PR's files and reviews only when its head sha or `updated_at` changed.
 
 ## 7. Apply layer
 
 Moves the merged group state into `~/.claude` without touching anything it does not own.
 
-- **Managed files are copies, not links.** Copies work the same on every OS, need no admin rights, and let the app see local edits. `~/.claude-sync/manifest.json` records every file the app wrote: path, group, SHA-256.
+- **Managed files are copies, not links.** Copies work the same on every OS, need no admin rights, and let the app see local edits. The store (`base_files.local_hash`, §25) records every file the app wrote: path, group, SHA-256.
 - Targets: `skills/<name>/**` → `~/.claude/skills/<name>/**`; `agents/*.md`, `commands/*.md`, `output-styles/*.md` → the same folder under `~/.claude`; `plugins/<marketplace>/**` → `~/.claude-sync/marketplaces/<marketplace>/**` (outside `~/.claude`, so Claude Code's own plugin cache is never touched).
 - **Ownership rules.** The app writes or deletes a path only if the manifest says it owns it. A path that exists but is not in the manifest belongs to the user: the group file is skipped and reported as a collision. Two groups that ship the same path: the group higher in the list (§10) wins and the other is reported.
 - **Marketplaces.** The folder under `~/.claude-sync/marketplaces/` is the app's, so a stray file in the way is backed up and replaced, not reported. A marketplace belongs to the group highest in the list that ships it: a lower group gets a collision on `plugins/<marketplace>` and none of its files for it are placed. When the owner leaves, or another group is moved above it (§10), the next sync of the other group takes it over. The manifest records the owner of each marketplace and the `settings.json` entry the app set for it (§8).
@@ -247,7 +260,7 @@ At most 200 clashes are listed. Each has an id that stays the same while both si
 
 ## 8. Settings merge
 
-`settings.shared.json` is merged into `~/.claude/settings.json`, with ownership so removals work (code: `crates/core/src/settings.rs`):
+`settings.shared.json` is merged into `~/.claude/settings.json`, with ownership so removals work (code: `crates/engine/src/settings.rs`):
 
 - Objects merge key by key. Arrays get the shared items they lack, appended after local items. For plain values, the shared value wins.
 - `~/.claude-sync/settings-owned.json` records, per group, every value the app set (JSON pointer and value) and every array item it added.
@@ -264,46 +277,40 @@ Plugins and marketplaces:
 
 ## 9. Secret scan
 
-Patterns in `crates/core/src/secrets.rs`: `github_pat_…`, `sk-ant-…`, `ghp_…`, `gh[orsu]_…` (OAuth, refresh, server and user tokens), `AKIA…`, `xox[abpr]-…`, private key headers, `"access_token"`/`"refresh_token"` fields. A line containing `claude-sync: allow-secret` is skipped. The same redaction patterns clean logs before they are written and before feedback is sent.
+Patterns in `crates/engine/src/secrets.rs`: `github_pat_…`, `sk-ant-…`, `ghp_…`, `gh[orsu]_…` (OAuth, refresh, server and user tokens), `AKIA…`, `xox[abpr]-…`, private key headers, `"access_token"`/`"refresh_token"` fields. A line containing `claude-sync: allow-secret` is skipped. The same redaction patterns clean logs before they are written and before feedback is sent.
 
 ## 10. Local state
 
 ```
 ~/.claude-sync/
-  state.json             signed-in login, device name, groups joined (the order is the priority, below), poll interval, paused
-  manifest.json          managed files and marketplace owners (§7)
-  settings-owned.json    settings ownership (§8)
-  groups/<owner>__<repo>/base/   base snapshot (§6)
-  groups/<owner>__<repo>/CLAUDE.md
-                         (all keyed by group id; a rename or transfer moves them, §5b)
-  marketplaces/<name>/   plugin marketplaces bundled in a group repo (§4, §7)
-  jobs.json              per job: group, accepted hash, on/off, claude path, registered task;
-                         groups whose jobs run without asking (§17)
+  claude-sync.db         the store: groups and their order, bases, review items, jobs, notifications,
+                         conflicts, request counts, feedback queue, settings rows (§25)
+  groups/<owner>__<repo>/CLAUDE.md   this device's accepted copy of the group's CLAUDE.md (§7, §7a)
+  marketplaces/<name>/   plugin marketplaces bundled in a group repo (§4, §7), each with a COMMIT file
+  machines/<id>.json     this device's SSH record (§21)
   jobs/<id>/             run lock and last-run.json of a job (§17)
-  plugins.json           group plugin installs: what was last done, warnings (§18)
-  notifications.json     notification history (§11)
-  app.json               app preferences (first-run autostart, desktop notifications on/off)
-  conflicts/  backups/  logs/   (logs/jobs/<id>/<UTC stamp>.log: job output, §17)
+  conflicts/  backups/   saved local versions and files backed up before a change
+  logs/                  claude-sync.<UTC date>.log (redacted, 7 kept); logs/jobs/<id>/<UTC stamp>.log is job output
+  sync.lock              one sync at a time, app and CLI (§6)
+  daemon.lock, daemon.owner   one daemon per machine (§26)
+  token                  the CLI's sign-in file, mode 0600 (headless only, §3)
 ```
 
-**Group order.** `groups` in `state.json` is the priority list: new groups are added at the end, and when two groups set the same file, settings value or marketplace, the one higher in the list wins (§7, §8). The user changes the order with the up and down buttons on the Groups screen (the `reorder_groups` command, `Engine::reorder_groups`). It refuses a list that is not exactly the joined groups, saves `state.json` (write-then-rename), then syncs every group again in the new order, so the new winner takes over the files, the settings values it was losing (a group's claim on a value it no longer wins is dropped) and the marketplace, and the old winner is reported as a collision. If that sync fails (offline), the order is kept and the next sync finishes it. Personal memory (§16) is not a group and has no place in the list.
+The v1 files (`state.json`, `manifest.json`, `groups/<id>/base/`, ...) are never deleted by v2 (§26).
 
-v0 used `~/.claude-sync/` as a git clone of the personal repo, with SessionStart/SessionEnd hooks in `~/.claude/settings.json` that ran its bash script. `crates/core/src/migrate.rs` moves that away once, at app start, when `~/.claude-sync/.git` exists:
+**Group order.** `groups.order_idx` is the priority list: new groups are added at the end, and when two groups set the same file, settings value or marketplace, the one higher in the list wins (§7, §8). The user changes the order with the up and down buttons on the Groups screen (`Command::ReorderGroups`). It refuses a list that is not exactly the joined groups, saves the order, then syncs every group again in the new order, so the new winner takes over the files, the settings values it was losing and the marketplace, and the old winner is reported as a collision.
 
-1. v0's hook entries (commands that run `claude-sync … --hook`) are removed from `~/.claude/settings.json`, after a copy of the file goes into the backup folder. Other hooks and keys stay.
-2. The clone's files go to `~/.claude-sync-v0-backup-<UTC time>/claude-sync/`. Nothing is deleted.
-3. `~/.claude-sync/app/*` moves up to `~/.claude-sync/`, so the normal layout applies.
-4. One notification says where the old setup went and that Personal memory (§16) can be turned on in Settings.
+**Settings that are rows.** The `settings` table holds one JSON value per key: `choices` (§16), `app` (first-run autostart, desktop notifications on/off, update state), `packs` (§23), `plugins` (§18), `ssh`, `activity` and the v1 values kept whole under `v1/<path>` (§26).
 
-The clone's `.git` moves last and is what marks the migration as unfinished, so a stop half way is finished by the next start; the backup folder holds a `.migrating` file (with the names to move up) until then. `~/.claude` files other than `settings.json` and the v0 personal repo on GitHub are not touched. If the migration fails, the app keeps its state in `~/.claude-sync/app/` and tries again at the next start.
+v0 (the bash CLI) is no longer migrated: a `~/.claude-sync` that is a git clone is not touched, and the user installs 2.0.0 and joins their groups again.
 
 ## 11. App
 
-- **Tauri 2**, Rust backend plus a plain TypeScript UI. Tray icon with: status, Sync now, Open, Notifications (N) while N are unread, Pause, Send feedback, Quit. Single instance. Starts at login (autostart plugin, on by default, can be turned off).
+- **Tauri 2**, Rust shell plus a React and TypeScript window (`app/ui`). Tray icon with: status, Sync now, Open, Notifications (N) while N are unread, Pause, Send feedback, Quit. Single instance. Starts at login (autostart plugin, on by default, can be turned off).
 - Closing the window destroys the webview, so the idle app is just the Rust process (target: under 30 MB RAM idle, under 15 MB installer).
 - Screens: Sign in (device code), Groups (list in priority order with up/down buttons, status, last sync; the note "Groups higher in the list win when two groups set the same thing." shows when there are two or more), Group (what the group gives this device, plugins that failed to install (§18), scheduled jobs (§17), members, invite by GitHub login (host only; members see a line saying only the host can change the group), pending invitations, recent changes as an activity feed parsed from commit messages in `app/ui/src/activity.ts`, a **Revert** button on each feed entry (host only; opens a confirm step listing the files and why a revert is blocked, §6), conflicts, leave), Notifications, Settings (device name, poll interval, start at login, pause, desktop notifications, personal memory §16), Feedback.
-- **Notifications.** Everything the app tells the user goes through one function, `notify::show(app, kind, group, title, body)` (`app/src-tauri/src/notify.rs`); new features call it rather than the notification plugin. It:
-  1. records the notification in `~/.claude-sync/notifications.json` (`crates/core/src/notifications.rs`): id, UTC time, title, body, kind (`update`, `group`, `plugins`, `local-edit`, `job`, `personal`, `other`), the group it is about if any, and read/unread. Newest first, at most 200; read ones older than 30 days are dropped. A missing or corrupt file is an empty history (a corrupt one is kept as `notifications.json.bad`).
+- **Notifications.** Everything the app tells the user goes through one function, `notify::show(app, kind, group, title, body)` (`app/src-tauri/src`, `mac_notify.rs` on macOS); new features call it rather than the notification plugin. It:
+  1. records the notification in the store (`notifications` table, §25): id, UTC time, title, body, kind (`update`, `group`, `plugins`, `local-edit`, `job`, `personal`, `other`), the group it is about if any, and read/unread. Newest first, at most 200; read ones older than 30 days are dropped. A missing or corrupt file is an empty history (a corrupt one is kept as `notifications.json.bad`).
   2. shows the desktop notification, unless **Show desktop notifications** is off in Settings. The history is kept either way.
   3. emits `notifications-changed` (`{unread}`), which updates the bell's badge in the window and the tray's **Notifications (N)** item.
 
@@ -354,14 +361,15 @@ Rate limit per login: 5 feedback posts per hour (in memory; good enough for a ho
 
 ## 13. Updates and releases
 
-- Tauri updater with its own signing key pair (minisign). The public key is in `app/src-tauri/tauri.conf.json`. The private key stays with the maintainer, outside the repo, plus the Actions secret `TAURI_SIGNING_PRIVATE_KEY` that the release workflow signs with.
-- The app checks `/api/update` at start and every 6 hours, passing the user's GitHub token as a header. An update downloads in the background and installs on the next quit or when the user clicks **Restart to update**.
-- Release (steps in [releasing.md](releasing.md)): a PR bumps the version with `node scripts/bump-version.mjs <version>` (workspace `Cargo.toml`, `Cargo.lock`, `app/package.json`, `app/ui/package.json`; `tauri.conf.json` takes the Cargo version) and `ci.yml` checks it. After the merge, the maintainer pushes the tag `v<version>` on the merge commit. `.github/workflows/release.yml` checks that the tag equals the version in those files, then builds on GitHub-hosted runners in the environment `release` (required reviewers; it holds the Apple signing secrets): on `windows-latest` the NSIS installer with `createUpdaterArtifacts` (the installer is also the Windows update bundle), on `macos-latest` `--target universal-apple-darwin` (the `.app.tar.gz` update bundle and the `.dmg`). Each `.sig` is checked against the public key (`scripts/verify-updater-sig.mjs`). A last job, the only one with `contents: write`, uploads the assets under the names in `relay/lib/assets.ts` to a **draft** release `v<version>`; it never publishes and never touches a published release. The maintainer publishes the draft by hand; until then `/api/update` does not see it. Release builds restore no caches.
-- `scripts/release.ps1` still builds, stages and verifies the Windows installer locally (`-DryRun` for a test build, `-Publish` to upload it to the draft when the hosted build is not an option).
-- A release build needs `CLAUDE_SYNC_RELAY_URL` and `CLAUDE_SYNC_GITHUB_CLIENT_ID` at compile time (Actions variables for the workflow); the workflow and `release.ps1 -Publish` refuse to build without them. The updater key has an empty password (`tauri build --ci`); locally it comes from `TAURI_SIGNING_PRIVATE_KEY` or `~/.claude-sync-keys/updater.key`.
-- The update path is tested without GitHub or Vercel: `relay/dev/harness.ts` runs the relay's handlers on a local HTTP server against a stub GitHub API and asset host (`relay/test/e2e.test.ts`), and `node relay/dev/local.ts dist/release/<version>` runs it against real staged assets.
-- Code signing: `release.yml` signs the macOS app with Developer ID and notarizes it when the `APPLE_*` secrets are set (Tauri imports the certificate into a temporary keychain itself); without them the build is unsigned, macOS needs right-click → Open the first time, and the job summary says so. Windows is not Authenticode-signed: SmartScreen shows once.
-- Linux (beta): `release.yml` builds `.deb` and `.AppImage` on `ubuntu-22.04` (the AppImage is the update bundle, signed like the others; served as target `linux`, arch `x86_64`), and `/install` offers both. `keyring` uses the Secret Service backend (`sync-secret-service` + `crypto-rust`, Linux only), so a session needs a running Secret Service (GNOME Keyring or KWallet). Nobody has run the Linux build yet: the tray, webview, autostart, keychain and screenshot still need a runtime test on a Linux desktop, so it stays beta until then (issue #38).
+- **Desktop app.** `tauri-plugin-updater` reads `latest.json` of the newest GitHub release (`releases/latest/download/latest.json`) at start and every 6 hours (`app/src-tauri/src/update.rs`). A newer bundle downloads in the background and the plugin checks its minisign signature against the public key in `app/src-tauri/tauri.conf.json`; a bad signature is thrown away. A verified bundle installs when the app is idle (no sync, no open window), on **Restart to update** or on Quit. The engine only records the state (`Command::SetUpdate`). No token is sent: `latest.json` is a public file.
+- **Command line.** `claude-sync-cli update [--check]` (`crates/cli/src/update.rs`) finds the archive for this target in the release, checks its SHA-256 against the `.sha256` file and swaps the running binary. The release carries `claude-sync-cli-<target>.tar.gz` (`.zip` on Windows) for Linux (x86_64, aarch64), macOS (both) and Windows.
+- **Relay v1 routes.** Installs of 0.1.x and `claude-sync-cli` 0.1.x ask the relay: `GET /api/update?target=&arch=&current_version=` answers `204` or the updater JSON, `GET /api/download/<id>` redirects to the asset, `GET /install` redirects to the Releases page (group READMEs already in the field link to it). They stay unchanged so a 0.1.x install can update to 2.0.0 (§12); aarch64 Linux gets the CLI archive from the relay.
+- **Release** (steps in [releasing.md](releasing.md)): a PR bumps the version with `node scripts/bump-version.mjs <version>` (workspace `Cargo.toml`, `Cargo.lock`, `app/package.json`, `app/ui/package.json`; `tauri.conf.json` takes the Cargo version) and `ci.yml` checks it. After the merge the maintainer pushes the tag `v<version>`. `.github/workflows/release.yml` checks that the tag equals the version in those files, builds on GitHub-hosted runners in the environment `release` (required reviewers; it holds the signing secrets), signs the update bundles, builds `latest.json` with `scripts/make-latest-json.mjs`, checks the installer size (`scripts/check-installer-size.mjs`) and the signature (`scripts/verify-updater-sig.mjs`), and creates or updates a **pre-release**. Nothing reaches users until the maintainer marks it latest.
+- `scripts/release.ps1` builds, stages and verifies the Windows installer locally (`-DryRun` for a test build, `-Publish` to upload it to the draft). It calls `scripts/bump-version.mjs` for the version files.
+- A release build needs `CLAUDE_SYNC_RELAY_URL` and `CLAUDE_SYNC_GITHUB_CLIENT_ID` at compile time. The updater key has an empty password (`tauri build --ci`); locally it comes from `TAURI_SIGNING_PRIVATE_KEY` or `~/.claude-sync-keys/updater.key`.
+- The relay's update path is tested without GitHub or Vercel: `relay/dev/harness.ts` runs its handlers against a stub GitHub (`relay/test/e2e.test.ts`).
+- Code signing: `release.yml` signs the macOS app with Developer ID and notarizes it when the `APPLE_*` secrets are set; without them macOS needs right-click, Open the first time. Windows is not Authenticode-signed: SmartScreen shows once.
+- Linux (beta): `.deb` and `.AppImage` on `ubuntu-22.04`. The keychain uses the Secret Service backend (`keyring` with `sync-secret-service`, the `secret-service` feature of `crates/github`), so a session needs GNOME Keyring or KWallet. The headless CLI builds without that feature (`default-features = false`) and keeps its token in a file.
 
 ## 14. First install for a friend
 
@@ -371,11 +379,12 @@ Rate limit per login: 5 feedback posts per hour (in memory; good enough for a ho
 
 ## 15. Testing
 
-`scripts/check.ps1` (Windows) and `scripts/check.sh` (macOS, Linux) run every check locally; `ci.yml` runs the same checks on GitHub-hosted Ubuntu, Windows and macOS for every PR and push to `main`:
+`scripts/check.ps1` (Windows) and `scripts/check.sh` (macOS, Linux) run every check locally; `ci.yml` runs the same on GitHub-hosted Ubuntu, Windows and macOS for every PR and push to `main`:
 
-- `cargo test` for `crates/core`. The engine talks to GitHub through a `RemoteRepo` trait with an in-memory fake, so merge, push-retry, membership reconciliation and apply are tested without the network. Apply tests use a temp `CLAUDE_HOME`.
-- `relay`: `node --test` with `fetch` mocked.
-- `app`: `cargo check` and `pnpm build` for the UI. Manual smoke test per release, written down in the PR.
+- `cargo fmt --check`, `cargo clippy --workspace --all-targets -D warnings` (`unwrap`, `expect`, `panic` and `todo` are denied outside tests in every crate) and `cargo test --workspace`. The engine is tested with fakes and proptests (`crates/engine/tests`); `crates/github` against wiremock (`tests/`, including the idle budget); `crates/fs` against temp homes (`tests/`, including `no_console.rs`, the list of child processes that must not open a console window on Windows, #178); `crates/actions/tests/actions.rs` drives the actor with a fake GitHub; `crates/store/tests/import.rs` imports a fixture v1 state folder that holds every v1 file; `crates/cli/tests` run the command tree and byte-compare the service files and `run-job` argv against v1's.
+- `relay`: `node --test` with `fetch` mocked, and `tsc`.
+- `app/ui`: `vitest` (`pnpm -C app/ui test`), the build with its JavaScript size budget (`size`), and the Playwright scenarios (`pnpm -C app/ui e2e`): every screen of the blueprint against a fake backend (`?scenario=...`, `src/fake.ts`) and a pixel diff of the frames.
+- `scripts/test/make-latest-json.test.mjs`: the `latest.json` builder.
 - Proof in every PR: the commands run, their exit codes and test counts, and the OS that ran them.
 
 ## 16. Personal memory
@@ -410,7 +419,7 @@ Never synced, and reported in Settings as "stays on this device": a file over 25
 
 **Turning it on and off.** Settings → Personal memory has the master switch "Sync my personal memory between my devices", the four kinds, the device list (this device marked; rename it with the Device name field; remove an old one), "New devices of mine join automatically", the last sync and "Open repo". Turning it off stops it on all the person's devices (see **Choices** below); it leaves the files and the repo's memories alone. A kind turned off is remembered as it was; turned back on, it merges against that, so nothing is lost or re-added by mistake.
 
-**Choices.** What a person chooses in the app is personal, not per device: turning a group off, the CLAUDE.md review choice for a group, "Run this group's jobs without asking", the jobs accepted (and turned off), the lines left out with "Keep one", which groups are joined and their order, pause, the check interval, start at login, and turning personal sync off. They live in one file, `~/.claude/personal-state/claude-sync/choices.json` (`state/claude-sync/choices.json` in the repo), written by `choices.rs`:
+**Choices.** What a person chooses in the app is personal, not per device: turning a group off, the CLAUDE.md review choice for a group, "Run this group's jobs without asking", the jobs accepted (and turned off), the lines left out with "Keep one", which groups are joined and their order, pause, the check interval, start at login, and turning personal sync off. They live in the store's `settings` row `choices` (`crates/actions/src/choices.rs`) and follow the person through the personal repo as `state/claude-sync/choices.json` (the bytes v1 kept in `~/.claude/personal-state/claude-sync/choices.json`, which the import reads once, §26). The merge is `crates/engine/src/merge.rs`:
 
 ```
 {"groups": {"owner/repo": {"off": true, "reviewClaudeMd": false, "autoRunJobs": true,
@@ -421,30 +430,34 @@ Never synced, and reported in Settings as "stays on this device": a file over 25
  "app": {"paused": false, "intervalSecs": 60, "startAtLogin": true, "ts": 1760000000000}}
 ```
 
-`ts` is Unix milliseconds. The file merges per key (`choices::merge`), the newer `ts` wins, so two devices changing different groups lose nothing. After each personal sync a device carries out what it has not yet: a group `off` that is not in effect here is applied (`state.json` `disabled` is the effect on this device, the choice is in `choices.json`), and `personal.off` newer than the moment personal sync was turned on here turns it off. Turning personal sync off writes that choice, runs a last sync to send it, and sets `newDevicesJoin` to false; there is no "only here". Without personal sync the file is the local store. The review choice and auto-run are read by the engine and the jobs reconcile straight from the file. `order` and `app` merge as a whole: the newer `ts` wins. After a personal sync a device also joins a group marked `member: true` that it lacks, leaves one marked `member: false` (the entry stays as the record of the leaving), puts its groups in the `order` list, leaves out each `droppedLines` line of a group's CLAUDE.md copy, and applies `app` (pause and interval in `state.json`, start at login in the OS; a `startAtLogin` never chosen is left to the OS). A job is accepted when `acceptedJobs` holds its current hash; a changed job has another hash and asks again. A failed join is logged and tried again at the next sync. Leaving a group clears its other choices. Older versions kept these per device (`state.json` `disabled`, `groups`, `paused` and `pollSeconds`, `jobs.json` `autoAccept`, `accepted` and `enabled`, `claude-md-review.json` `review`; lines left out earlier stay out on that device only): when `choices.json` does not exist, the first load copies them in with `ts` 0, and they are never read again.
+`ts` is Unix milliseconds. The file merges per key (`merge_choices_bytes`), the newer `ts` wins, so two devices changing different groups lose nothing. After each personal sync a device carries out what it has not yet: a group `off` that is not in effect here is applied (the group row's `off` is the effect on this device, the choice is in `choices`), and `personal.off` newer than the moment personal sync was turned on here turns it off. Turning personal sync off writes that choice, runs a last sync to send it, and sets `newDevicesJoin` to false; there is no "only here". Without personal sync the `choices` row is the local store. The review choice and auto-run are read by the engine and the jobs reconcile straight from the file. `order` and `app` merge as a whole: the newer `ts` wins. After a personal sync a device also joins a group marked `member: true` that it lacks, leaves one marked `member: false` (the entry stays as the record of the leaving), puts its groups in the `order` list, leaves out each `droppedLines` line of a group's CLAUDE.md copy, and applies `app` (pause and interval in the `app` row, start at login in the OS; a `startAtLogin` never chosen is left to the OS). A job is accepted when `acceptedJobs` holds its current hash; a changed job has another hash and asks again. A failed join is logged and tried again at the next sync. Leaving a group clears its other choices. v1 kept these per device; the import (§26) copies them into `choices` once with `ts` 0 and they are never read again.
 
 **A new device.** After sign-in, a device that never decided checks for `<login>/claude-sync-personal`. If the repo says `newDevicesJoin: true`, personal memory turns on by itself, the repo and the local files are merged (never overwriting either side's memories), and the app says: "Personal memory from your other devices is on. Turn off in Settings." If it says `false`, the app shows a notice offering to turn it on; "Not now" stops asking on that device. Another account on the same computer starts over with its own repo.
 
 **Local state.**
 
 ```
-<state>/personal/state.json        on/off, decided, kinds, device id, last sync, the devices seen
-<state>/personal/base/             base snapshot
+store `settings` row `personal/state`: on/off, decided, kinds, device id, last sync, the devices seen
+store `personal_base_files`           base snapshot (§25)
 <state>/personal/off-claude-md/    a kind as it was when it was turned off
 <state>/personal/off-memory/
 <state>/personal/off-state/
 <state>/personal/off-settings/
 ```
 
-A v0 clone of the personal repo is moved aside by the migration in §10; its CLAUDE.md and memories are not imported, the user turns this feature on instead.
+A v0 clone of the personal repo is not touched or imported; the user turns this feature on instead.
 
 ## 11a. Command line
 
-The app binary has headless subcommands next to `run-job`, handled in `main` before Tauri starts (`app/src-tauri/src/cli.rs`): `claude-sync status` and `claude-sync personal enable|disable|status`, each with `--json`. They load the same state and keychain sign-in as the app and call the same core functions as the Settings commands, so there is one code path; the personal lock keeps a CLI call and the app from writing together. After `enable` or `disable` the CLI starts the binary with `--refresh` when another claude-sync app process is running (a `ps` or `tasklist` check, so it never starts a second app); the single-instance handler then emits the `personal` event instead of opening the window. Exit code 0 done, 1 failed with the message on stderr, 2 wrong usage. On macOS and Linux the app adds a `~/.local/bin/claude-sync` link to its binary at startup (release builds only, never over an existing file); Windows has none.
+The app binary is also the command line: `app/src-tauri/src/main.rs` hands the words to `claude-sync-cli`'s `run` (`crates/cli/src/run.rs`) before Tauri starts, so `claude-sync <command>` and `claude-sync-cli <command>` are one implementation over `claude-sync-actions`. Exit code: 0 done, 1 failed, 2 wrong usage; `--json` for machine output. After a change that the running app shows, the CLI sends `--refresh` to it (`crates/cli/src/refresh.rs`, a `ps` or `tasklist` check, never starting the app).
+
+Commands: `login` (device flow), `logout`, `groups`, `join <owner/repo>`, `leave`, `sync`, `status`, `personal status|enable|disable`, `ssh status|enable|disable|alias <name>`, `activity status|enable|disable`, `packs [list|setup|check|on|off <id>] [--group owner/repo]`, `review list|accept|undo <id>`, `daemon`, `service install|remove|status`, `update [--check]`, `version`. `run-job` is hidden: the OS tasks of group jobs call it.
+
+On macOS and Linux the release app links `~/.local/bin/claude-sync` to its binary at start (only if that folder exists and the name is free). On Windows the release exe is a GUI program, so PowerShell shows no output when called directly; pipe it (`& "$env:LOCALAPPDATA\claude-sync\claude-sync.exe" status --json | Out-String`, #149).
 
 ## 17. Scheduled jobs
 
-A group can ask Claude Code to run a prompt on a schedule on each member's device, for example a twice-weekly refresh of everyone's setup. Code: `crates/core/src/jobs/` (format, consent, reconcile, OS layer, runner), `app/src-tauri/src/jobs.rs` (commands, headless subcommands, notification).
+A group can ask Claude Code to run a prompt on a schedule on each member's device, for example a twice-weekly refresh of everyone's setup. Code: `crates/engine/src/formats` (the `schedules.json` format), `crates/actions/src/jobs.rs` (consent, reconcile, the run itself), `crates/fs/src/tasks.rs` (the OS tasks), `crates/store/src/jobs.rs` (the `jobs` table), `crates/cli/src/run.rs` (`run-job`).
 
 **Format.** Optional `schedules.json` at the repo root, versioned like the other repo files (repo only: it is read from the base snapshot and never placed in `~/.claude`).
 
@@ -463,9 +476,9 @@ Strict validation; a bad job is skipped and listed on the group screen, never ha
 - `timeoutMinutes` 1 to 240, default 60. `prompt` non-empty, at most 4 KiB. At most 20 jobs.
 - `args` (optional) are extra `claude` options, passed after the prompt and before `--permission-mode`. Allowlist only: `--chrome` (Claude in Chrome tools, which `claude -p` lacks otherwise), `--model <id>` and `--effort <low|medium|high|xhigh|max>`, each at most once. Any other option is rejected, because flags such as `--dangerously-skip-permissions`, `--settings` or `--mcp-config` would get around the permission mode the member accepted. No shell is involved: arguments go to `claude` as they are.
 
-**Consent.** Nothing is registered until the member accepts the job on the group screen, which shows the full prompt, the permission mode (`bypassPermissions` in warning style), the folder and the schedule. Everyone accepts, the host included. The acceptance stored in `jobs.json` is a SHA-256 of `[cron, prompt, cwd, permissionMode, timeoutMinutes, args]`; any change revokes it and unregisters the task until the member accepts the new version. The runner checks the hash again before every run. A per-job toggle turns an accepted job off (unregisters it) and on.
+**Consent.** Nothing is registered until the member accepts the job on the group screen, which shows the full prompt, the permission mode (`bypassPermissions` in warning style), the folder and the schedule. Everyone accepts, the host included. The acceptance, stored as a choice (§16), is a SHA-256 of `[cron, prompt, cwd, permissionMode, timeoutMinutes, args]`; any change revokes it and unregisters the task until the member accepts the new version. The runner checks the hash again before every run. A per-job toggle turns an accepted job off (unregisters it) and on.
 
-**Without asking.** A member can turn on "Run this group's jobs without asking" for one group on one device: from a pending job ("Always allow jobs from <group>") or from the top of the group's Scheduled jobs section, which says plainly that new or changed jobs then run without review. It is off by default, stored in `jobs.json` (`auto_accept`), never synced, and forgotten when the member leaves the group. While it is on, every reconcile (after each sync, and when it is turned on) accepts the current version of each of that group's jobs itself, storing the same hash an Accept stores, and the app shows a notification per job ("New job from <group>" or "Job changed in <group>"). A job the member turned off stays off. Turning it off keeps what was accepted; the next change asks again. The runner is unchanged: it still checks the stored hash.
+**Without asking.** A member can turn on "Run this group's jobs without asking" for one group on one device: from a pending job ("Always allow jobs from <group>") or from the top of the group's Scheduled jobs section, which says plainly that new or changed jobs then run without review. It is off by default, stored as a choice (§16, `autoAccept`), per account, and forgotten when the member leaves the group. While it is on, every reconcile (after each sync, and when it is turned on) accepts the current version of each of that group's jobs itself, storing the same hash an Accept stores, and the app shows a notification per job ("New job from <group>" or "Job changed in <group>"). A job the member turned off stays off. Turning it off keeps what was accepted; the next change asks again. The runner is unchanged: it still checks the stored hash.
 
 **Reconcile.** After every sync, at app start (checking that the tasks still exist) and after accept, toggle or leave: register accepted and enabled jobs, unregister the rest, drop the records of left groups. A group whose `schedules.json` can't be read keeps its tasks.
 
@@ -498,7 +511,7 @@ Explains a collision (§7), a pending CLAUDE.md change (§7a) and incoming group
 - **On demand only:** "Explain" (collisions, CLAUDE.md review) and "Summarise" (activity feed) run `claude -p --model sonnet --output-format json --max-turns 1` with all tools disallowed, from the temp folder (so no project files are read), the prompt on stdin and the `result` field as the answer, with a 2-minute timeout. Nothing runs automatically. It counts against the user's own Claude plan.
 - **Before sending:** the §9 secret scan runs on the text; a hit refuses with a message that names the pattern, not the text. Input over 40 KB is cut with a note.
 - **Old key:** earlier versions kept a pasted API key in the keychain (account `@anthropic-key`). On every start the app deletes that entry if present.
-- **Code:** `crates/core/src/helper.rs` (a `Runner` trait so tests use a fake and never start `claude`), commands `helper_status` and `helper_explain` in `app/src-tauri/src/commands.rs`, `app/ui/src/screens/helper.ts`.
+- **Code:** `crates/actions/src/extras.rs` (the helper switch and the explain task; tests never start `claude`), shown in `app/ui/src/screens/` where a change is explained.
 
 ## 20. Creating the GitHub App (owner checklist, issue #39)
 
@@ -517,7 +530,7 @@ Create it at GitHub, Settings, Developer settings, GitHub Apps, New GitHub App:
 
 ## 21. Reaching your own machines over SSH (issue #166)
 
-Opt-in and personal: `sshPeers` `{on, ts}` in the choices file (§16a), merged by its own `ts`, so it is on or off for every device of the account. `claude-sync-cli ssh enable|disable|status|alias <name>` (and the same in the app binary, §11a) only set the choice and this machine's alias; the sync pass does the work.
+Opt-in and personal: `sshPeers` `{on, ts}` in the choices file (§16), merged by its own `ts`, so it is on or off for every device of the account. `claude-sync-cli ssh enable|disable|status|alias <name>` (and the same in the app binary, §11a) only set the choice and this machine's alias; the sync pass does the work.
 
 - **Records.** Each device with the choice on writes `<state_dir>/machines/<machine-id>.json` (`id, name, alias, os, user, host, pubkey, ts`) and personal sync carries it as `machines/<id>.json` in the personal repo (`personal::is_personal_path` and `Kinds::syncs` accept it whatever kinds are chosen). It is rewritten only when a field other than `ts` changes. Without personal sync the records do not travel. `pubkey` is `~/.ssh/id_ed25519.pub`; `ssh-keygen` runs only when no key exists. `host` is `tailscale ip -4` or the host name. `alias` is `mac` on macOS, else `pc`, or the chosen one. On every pass a name counts as taken only by a record with a lower `id` (string order; `ts` is not used because every rewrite changes it), so the higher id moves to `-2`, `-3` and the lower id keeps its name without coordination.
 - **Apply** (`ssh_peers::apply`, after personal sync in the app loop and in the daemon, under the `ssh-peers` caller). For each other record whose alias, user, host and key pass the checks (only `ssh-ed25519` and `ecdsa-sha2-*` keys on one line, no options): a line in the managed block `# >>> claude-sync peers >>>` of `~/.ssh/authorized_keys` with `from="100.64.0.0/10,fd7a:115c:a1e0::/48",no-agent-forwarding,no-X11-forwarding` (skipped on Windows), and a `Host` entry in `~/.ssh/claude-sync.conf`. `~/.ssh/config` gets `Include claude-sync.conf` as its first line (top-level scope); `ssh_peers::host_names` gives each peer its `Host` name: the alias, or `<alias>-cs` when the user's own config already defines it, and while that name is a user Host, an earlier peer's name or an earlier `<name>-lan`, `-<first 4 chars of id>` and then `-2`, `-3` are appended; `status` shows these names. Lines outside the block are never touched; files are 0600, `~/.ssh` 0700.
@@ -528,20 +541,20 @@ Opt-in and personal: `sshPeers` `{on, ts}` in the choices file (§16a), merged b
 
 ## Headless CLI and the shared loop
 
-`crates/cli` runs the same engine as the app without Tauri. Shared pieces live in core so both behave alike: `wake::next_wake` (when the loop wakes), `report::StatusReport` (the `status` text and JSON) and `lock::SyncLock`.
+`crates/cli` runs the same actor as the app without Tauri and without WebKit. It depends on `claude-sync-github` with `default-features = false` (no Linux keyring, no libdbus); `cargo test -p claude-sync-cli` builds exactly that.
 
-- **Lock.** Every sync takes an exclusive file lock on `<state>/sync.lock` (`File::try_lock`). If another process holds it, a background pass is skipped with "Another claude-sync is syncing right now"; `sync` by hand waits up to 60 s. The app keeps its in-process mutex as well. The daemon also holds `<state>/daemon.lock` so a cron check or a second start exits at once.
-- **Token.** The CLI stores `{login, tokens}` in `<state>/token` with mode 0600 (written through a temp file and renamed). A refresh saves the new tokens; an expired refresh token deletes the file. The daemon reloads the file each pass and rebuilds its engine if the token changed, so two processes do not fight over a refresh token.
-- **Loop.** One pass (`daemon::tick`): honor pause and the rate limit, take the lock, `sync_all` or `sync_if_changed`, check personal memory, then the hooks (job reconcile, plugin ensure).
-- **Service.** `service install` writes `~/.config/systemd/user/claude-sync.service` (`Restart=on-failure`) when systemd runs, otherwise crontab lines `@reboot` and `*/5 * * * *`.
-- **Adopting an existing setup.** `join` backs up `CLAUDE.md` and strips group text pasted outside the managed block before the first sync delivers it.
-- **Release.** `release.yml` builds `claude-sync-cli-<target>` for Linux (x86_64, aarch64), macOS (both) and Windows, with `.sha256` files; `update` checks the relay and downloads from the public release.
+- **Lock.** Every sync takes `<state>/sync.lock` (§6). The daemon also holds `<state>/daemon.lock` and writes `daemon.owner` (§26), so a cron check or a second start exits at once.
+- **Token.** `{login, tokens}` in `<state>/token`, mode 0600 (written through a temp file and renamed), the same JSON as v1. A refresh saves the new tokens; an expired refresh token deletes the file. The daemon reloads the file each pass, so a `login` or `logout` in another terminal takes effect without a restart.
+- **Loop.** `daemon` runs the actor (§24) with the same schedule as the app.
+- **Service.** `service install` writes `~/.config/systemd/user/claude-sync.service` (`Restart=on-failure`) when systemd runs, otherwise crontab lines `@reboot` and `*/5 * * * *`. The text is byte-for-byte v1's (`crates/cli/tests/service.rs`).
+- **Adopting an existing setup.** `join` backs up `CLAUDE.md` to `~/.claude-sync/backup/<time>/` and strips group text pasted outside the managed block before the first sync delivers it (`crates/cli/src/adopt.rs`).
+- **Install.** `scripts/install-cli.sh` installs the release archive after checking its `.sha256`.
 
 ## 22. Sharing whether you are at the computer (issue #195, step 1)
 
-Opt-in and personal: `activity` `{share, ts}` in the choices file (§16a), off by default, merged by its own `ts`. Step 1 is local only: nothing is sent between machines (that is step 2).
+Opt-in and personal: `activity` `{share, ts}` in the choices file (§16), off by default, merged by its own `ts`. Step 1 is local only: nothing is sent between machines (that is step 2).
 
-- **Reader** (`core::activity::idle_seconds`): seconds since the last keyboard or mouse input, by direct OS calls. Windows: `GetLastInputInfo` and `GetTickCount` (wrapping subtraction). macOS: IOKit `IOHIDSystem` property `HIDIdleTime` (nanoseconds). Other systems: `None`, written as `unknown`, never as idle.
+- **Reader** (the shell reads it and sends `Command::ActivityTick { idle_secs }`; `crates/actions/src/extras.rs`): seconds since the last keyboard or mouse input, by direct OS calls. Windows: `GetLastInputInfo` and `GetTickCount` (wrapping subtraction). macOS: IOKit `IOHIDSystem` property `HIDIdleTime` (nanoseconds). Other systems: `None`, written as `unknown`, never as idle.
 - **State machine** (`activity::Tracker`, pure, clock and reading passed in): `active` below 120 s idle, `idle` from 120 s, `unknown` with no reading. It asks for a write on a change of state or after 300 s without one.
 - **File** `<state>/activity.json`: `{schema: 1, state, idleSeconds, updatedAt}`. Removed when sharing is off.
 - **Loop** (`activity::run_loop`): one pass every 30 s in the app (`background::start`) and in the daemon. A pass reads the choice first; off means the file is removed and no OS call is made. Idle cost: one OS call per 30 s, 0 to 12 small local writes per hour, no network.
@@ -553,13 +566,52 @@ Opt-in and personal: `activity` `{share, ts}` in the choices file (§16a), off b
 A group can offer **packs**: extras that need something on one computer (an app, a sign-in, a permission) and so turn on there only after the member set them up and a check passed. Members get the group's core; each pack is one "Set up with Claude" away. A group without a `packs/` folder behaves exactly as before: every part below does nothing.
 
 - **A pack** is a folder `packs/<id>/` in the group repo: `pack.json`, `setup.md` (what Claude is asked to do, at most 8 KiB), an optional `CLAUDE.md` (the rule lines, imported only where the pack is on) and the check's script. Like `schedules.json` it is repo only (`group::is_repo_only`): read from the base snapshot, copied to `<state>/groups/<owner>__<repo>/packs/<id>/`, never into `~/.claude`. The catalog of the last sync is `<state>/groups/<owner>__<repo>/packs.index.json`.
-- **`pack.json`** (`core::packs`): `schema` (1), `id` (equals the folder; `[a-z0-9][a-z0-9-]{0,30}`), `title` (at most 40), `summary` (at most 200), `needs` (`[{name, url?}]`, urls `https://`), `os` (`windows`, `macos`, `linux`; WSL is `linux`; default all), `plugins` (`name@marketplace`), `jobs` (ids in `schedules.json`), `files` (`skills/<name>` or `agents/<name>.md`), `claudeMd` (`"CLAUDE.md"`), `setup` (`"setup.md"`), `check` (`{run: [argv] (1 to 8), timeoutSeconds: 1..120, default 60}`), `hostCarryOver` (default true), `order` (display order, then id). At most 20 packs. A bad pack is skipped and listed on the group screen with the reason, never half-applied; a job, plugin or file may belong to one pack only. A plugin of a pack should be `false` in `settings.shared.json`; one the group still turns on for everyone is listed (`groupEnabled`) and stays on, so the move can be made in two steps.
-- **Per-machine state** `<state>/packs.json` (`packs::state`, never synced; `choices.json` is per account): per group and pack a record `{state, by, since, packHash, lastCheck, jobHashes}`. No record is "not set up". States: `tried` (set up started or the check failed), `ready` (the check passed, waiting for Turn on), `on`, `failing` (on, but the check fails after a change), `off`. `on` and `failing` are applied. `by` is `setup`, `carry-over` or `host-auto`.
+- **`pack.json`** (`crates/engine/src/formats`): `schema` (1), `id` (equals the folder; `[a-z0-9][a-z0-9-]{0,30}`), `title` (at most 40), `summary` (at most 200), `needs` (`[{name, url?}]`, urls `https://`), `os` (`windows`, `macos`, `linux`; WSL is `linux`; default all), `plugins` (`name@marketplace`), `jobs` (ids in `schedules.json`), `files` (`skills/<name>` or `agents/<name>.md`), `claudeMd` (`"CLAUDE.md"`), `setup` (`"setup.md"`), `check` (`{run: [argv] (1 to 8), timeoutSeconds: 1..120, default 60}`), `hostCarryOver` (default true), `order` (display order, then id). At most 20 packs. A bad pack is skipped and listed on the group screen with the reason, never half-applied; a job, plugin or file may belong to one pack only. A plugin of a pack should be `false` in `settings.shared.json`; one the group still turns on for everyone is listed (`groupEnabled`) and stays on, so the move can be made in two steps.
+- **Per-machine state** the store `settings` row `packs` (`crates/actions/src/packs.rs`, never synced; `choices` is per account): per group and pack a record `{state, by, since, packHash, lastCheck, jobHashes}`. No record is "not set up". States: `tried` (set up started or the check failed), `ready` (the check passed, waiting for Turn on), `on`, `failing` (on, but the check fails after a change), `off`. `on` and `failing` are applied. `by` is `setup`, `carry-over` or `host-auto`.
 - **Check** (`packs::check`): `check.run` runs with no shell in the pack folder with the timeout; exit 0 passes; only the last stderr line is kept (at most 200 characters, through `secrets::redact`). A pack that is on changes only to `failing`: nothing that worked stops (D9). Checks run: after the setup terminal closes, on "Check again", before Turn on again, once per app start for packs that were tried, and once after an upstream change for packs that are on (`ops::recheck_due`). Never for packs that are not set up or are off.
 - **Turn on** (`ops::turn_on`) needs a passed check against the pack as it is now (its hash), and the consent hash of every job of the pack as the member saw it. It sets the plugins' value in this machine's `settings.json` to `true` (backup first), records `on`, and the next apply (`Engine::reapply_group`) places the pack's `files` and adds one import line per pack to the managed `CLAUDE.md` block; the job reconcile then accepts and registers the jobs. **Turn off** reverses it: the plugin gets the group's value back, the line and unchanged files go, jobs unregister.
 - **The plugin override** is a local-only value, handled like a mods-canary (§8): `packs::pinned_pointers` joins `canary_pointers` in `settings::keep_overrides` (apply), `edited_pointers_with` (the watcher: no local edit, no Share), `reconstruct_with` (never pushed) and `personal::settings_file::skip_set` (never carried to other devices).
 - **Jobs** of a pack register only where the pack is on (`packs::job_gate` in `Jobs::reconcile`); the group screen lists them under the pack until then. Jobs in no pack are unchanged.
 - **Host carry-over** (D6): when the signed-in login owns the repo, the sync reads the catalog and `settings.json` *before* the apply merges the group's values (`packs::prepare`, called by `Engine::pull_push`), and gives every pack without a record a state: `on` when a plugin is `true` here, a job is accepted and on, or the pack has neither (its rule lines and files are in use); otherwise `off`, which stays off (reflect). No check runs. A machine that is offline across the switch does the same on its first sync, because the read comes first in the same pass.
 - **Setup** (`packs::launch`): "Set up with Claude" writes a small script into `<state>/packs-setup/` and opens a terminal on it: Windows Terminal or `cmd` on Windows, Terminal on macOS, the first terminal found on Linux. The script runs interactive `claude` in the pack folder with a short first message (`Read setup.md in this folder and help me set up ...`), normal permission mode, then writes a `.done` marker; the group screen sees it and runs the check. If Claude Code or a terminal is missing, the command to run by hand is shown.
-- **Commands.** App: `list_packs`, `start_pack_setup`, `check_pack`, `turn_on_pack`, `turn_off_pack` (`app/src-tauri/src/packs.rs`); the card is `app/ui/src/screens/packs.ts` and its words are `packs-copy.ts`. Command line (app binary and `claude-sync-cli`): `packs [list | setup <id> | check <id> | on <id> | off <id>] [--group owner/repo] [--json]`; on a machine with no window `setup` runs `claude` in the same terminal, then the check, then asks `[y/N]`. Exit 0 done, 1 failed, 2 wrong usage. All of it is `core::packs::cli`; the two binaries supply only how a change is applied.
+- **Commands.** The window sends the pack `Command`s of `crates/actions/src/model.rs` (`crates/actions/src/packs.rs`, launch in `launch.rs`); command line (app binary and `claude-sync-cli`): `packs [list | setup <id> | check <id> | on <id> | off <id>] [--group owner/repo] [--json]`; on a machine with no window `setup` runs `claude` in the same terminal, then the check, then asks `[y/N]`. Exit 0 done, 1 failed, 2 wrong usage. Both binaries use `crates/cli/src/run.rs`.
 - **Never nags** (D8): claude-sync says nothing about packs by itself: no notification, no badge.
+
+## 24. Actor model
+
+`crates/actions/src/actor.rs`. One tokio task owns `Core` (the engine inputs, the store, the GitHub client and the filesystem handles). Nothing else mutates state.
+
+- **Commands in, events out.** The window, the tray and the CLI call `Handle::send(Command)` and get one `Event` back (`model.rs`). Commands run one at a time on a blocking thread, because the engine, the store and the GitHub client are synchronous.
+- **Snapshots.** After every change the actor publishes a read-only `Snapshot` on a `watch` channel. The window and the tray render snapshots only (`Handle::snapshot`, `Handle::watch`); they never touch state.
+- **The loop.** The actor wakes every second and asks `schedule::due` (pure, tested with a fake clock) what is due: the sync pass at the person's interval (default 60 s), pending invitations every 15 minutes (and when the window opens), the rename check once a day per group, a wait while rate limited, nothing while paused, signed out or expired. After each pass it reconciles jobs (§17) and group plugins (§18) and retries the feedback outbox.
+- **Types for the window.** `Command`, `Event` and `Snapshot` derive TypeScript types with ts-rs (`--features ts`); `scripts/gen-types.sh` writes `app/ui/src/generated/`.
+- **Panics.** The release profile keeps `panic = "unwind"`: the shell catches an engine panic instead of aborting the app.
+
+## 25. Store schema and migrations
+
+`crates/store/src/lib.rs`: SQLite (`rusqlite`, bundled) in `~/.claude-sync/claude-sync.db`, mode 0600 on Unix, WAL, foreign keys on. The engine sees it through the `Store` trait (key and bytes, the `settings` table); the actions use the typed tables.
+
+| Table | What |
+|---|---|
+| `groups` | repo, role (`host` or `member`), state, `order_idx`, `off`, `renamed_from` |
+| `bases` | per group: head sha, head ETag, last sync time |
+| `base_files` | per group and path: blob sha, hash of the placed bytes, the base bytes (migration 2) |
+| `personal_base_files` | the personal repo's base bytes (migration 2) |
+| `review_items` | CLAUDE.md review (§7a): line, author, status `pending`, `accepted` or `declined` |
+| `jobs` | per group and job id: spec hash, accepted hash, enabled, last result and run (§17) |
+| `notifications` | history (§11) |
+| `conflicts` | saved local versions (§6) |
+| `requests` | request counts by caller, endpoint and result (§6) |
+| `feedback_queue` | reports waiting to be sent (§12) |
+| `settings` | key to JSON value (§10) |
+
+**Migrations.** `MIGRATIONS` is a list of SQL scripts; `PRAGMA user_version` says how many ran. `open` runs the missing ones, each in a transaction that also bumps `user_version`. A database whose version is higher than the build knows is refused with "store.db is schema N, this build knows up to M; update claude-sync", never opened read-write. A new migration is a new list entry; an entry is never edited once released.
+
+## 26. The v1 hand-over and import
+
+2.0.0 keeps its data in `claude-sync.db`; the 0.1.x files are read once and never written, moved or deleted, so a downgrade starts from them as they were.
+
+- **Import.** `store::import_v1` runs only into an empty store (no report, no import marker) and only while the caller holds `daemon.lock`. Every v1 file is classified (`classify`): read into the store, left in place (base trees, `packs-setup/`, logs, backups), or unknown (the fixture test fails on an unknown file). A file that cannot be read is skipped and named on the sign-in screen ("Could not read N of M old v1 files"); nothing is deleted. The choices come from `~/.claude/personal-state/claude-sync/choices.json`. Values not modelled as tables are kept whole as `settings` rows `v1/<path>`. The first v2 pass is never a first sync: the bases point at the v1 base trees.
+- **Hand-over.** A 0.1.x daemon may hold `daemon.lock`. `crates/actions/src/handover.rs`: a v2 start that finds the lock held by a process that is not a live v2 daemon takes it for a v1 daemon. It waits for the v1 pass to end (`sync.lock`), stops the process and polls the lock, all within 30 s. A v1 daemon that does not stop leaves a note (its pid and the command that ends it), nothing is imported and nothing is written; the sign-in screen offers Try again. When the hand-over stopped a systemd service, the unit is restarted so the machine does not stay without a daemon. The process list and the kill go through the `Procs` trait, so tests never touch real processes.
+- **`daemon.owner`.** Every v2 daemon writes `<state>/daemon.owner` (`pid`, OS start time, version, exe) after it takes `daemon.lock` and removes it on exit. A program that finds the lock held reads it to tell a live v2 daemon (pid and start time match a running process) from a stale file or a v1 daemon (no file).
+- **Order.** The app opens `Core`, which hands over and imports under `daemon.lock`; a live v2 daemon that holds the lock does the import itself.

@@ -1,0 +1,97 @@
+# Budgets (v2-Budgets): installer size, UI JavaScript and idle GitHub requests fail the run when
+# over. Runs on ubuntu, macos and windows.
+#
+# The installer is built here only when a pull request touches code that ships in it (path
+# filter below), because a full Tauri bundle is the slowest thing CI does. release.yml checks
+# every release installer with the same script, so an oversize installer never ships.
+# Linux measures the .deb, macOS the .dmg and Windows the NSIS setup.exe; the AppImage carries
+# its own copy of the system libraries and is not the installer people are held to.
+
+name: bench
+
+on:
+  pull_request:
+    paths:
+      - "app/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/check-installer-size.mjs"
+      - ".github/workflows/bench.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  budgets:
+    name: budgets (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Linux system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev \
+            libpipewire-0.3-dev libdbus-1-dev libgbm-dev libxcb1-dev libclang-dev
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/ui/pnpm-lock.yaml
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: UI JavaScript is at most 200 KB gzipped
+        run: |
+          pnpm -C app/ui install --frozen-lockfile
+          pnpm -C app/ui build
+          pnpm -C app/ui size
+
+      - name: Idle GitHub requests are at most 424 an hour
+        run: cargo test -p claude-sync-actions --test actions an_idle_hour_costs_at_most_424_requests -- --nocapture
+
+      # Unsigned, no updater artifacts (they need the signing key); the size is the same.
+      - name: Installer is at most 15 MB
+        run: |
+          pnpm -C app install --frozen-lockfile
+          build() { pnpm -C app tauri build --bundles "$1" --ci --config '{"bundle":{"createUpdaterArtifacts":false}}'; }
+          case "${{ runner.os }}" in
+            Windows) build nsis && node scripts/check-installer-size.mjs target/release/bundle/nsis/*.exe ;;
+            macOS) build dmg && node scripts/check-installer-size.mjs target/release/bundle/dmg/*.dmg ;;
+            Linux) build deb && node scripts/check-installer-size.mjs target/release/bundle/deb/*.deb ;;
+          esac

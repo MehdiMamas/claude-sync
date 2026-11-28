@@ -1,430 +1,254 @@
-//! The background loop (`daemon`) and the one sync pass it and `sync` share.
-use crate::auth::{self, Signed, Standing};
-use crate::config;
-use crate::jobs::Hooks;
-use claude_sync_core::engine::SyncReport;
-use claude_sync_core::github::{self, with_caller};
-use claude_sync_core::lock::SyncLock;
-use claude_sync_core::personal::NewDevice;
-use claude_sync_core::state::AppState;
-use claude_sync_core::wake::next_wake;
-use claude_sync_core::{Engine, Paths};
-use std::fs::{File, OpenOptions, TryLockError};
-use std::future::Future;
+//! `daemon`: sync in a loop. One daemon per machine: it holds `<state>/daemon.lock` (the OS
+//! drops the lock when the process dies) and writes `<state>/daemon.owner`, so another
+//! program (the app, the importer) can tell a live daemon from a stale file.
+//!
+//! The token file is read on every pass: a `login` or `logout` in another terminal takes
+//! effect at the next pass without restarting the daemon.
+use crate::token::FileSecrets;
+use claude_sync_actions::handover::{own_owner, write_owner};
+use claude_sync_actions::{Core, Env};
+use std::fs::{File, TryLockError};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// What one pass did.
-#[derive(Default)]
-pub struct Outcome {
-    /// Why nothing ran (paused, rate limited, another syncer is busy).
-    pub skipped: Option<String>,
-    pub report: Option<SyncReport>,
-    /// The sync itself failed.
-    pub error: Option<String>,
-    /// Personal memory: a repo from another device waits for `personal enable`.
-    pub personal_offer: bool,
+pub use claude_sync_actions::handover::{live_owner, owner_path, Owner};
+
+pub fn lock_path(state: &Path) -> PathBuf {
+    state.join("daemon.lock")
 }
 
-/// One pass: sync the groups (`full` = everything, else only what changed), then personal
-/// memory, then the job and plugin hooks. Takes the shared sync lock, waiting up to
-/// `wait` for another process.
-pub async fn tick(
-    engine: &Engine,
-    paths: &Paths,
-    full: bool,
-    wait: Duration,
-    personal_checked: &mut bool,
-    hooks: &Arc<dyn Hooks>,
-) -> Outcome {
-    let mut out = Outcome::default();
-    let state = match AppState::load(paths) {
-        Ok(s) => s,
-        Err(e) => {
-            out.error = Some(e.to_string());
-            return out;
-        }
-    };
-    if state.paused && !full {
-        out.skipped = Some("Syncing is paused".into());
-        return out;
-    }
-    if let Some(reset) = engine.gh.limited_until() {
-        out.skipped = Some(format!(
-            "GitHub limit reached, resumes at {}",
-            claude_sync_core::error::reset_text(reset)
-        ));
-        return out;
-    }
-    let _lock = match SyncLock::acquire(paths, wait) {
-        Ok(l) => l,
-        Err(_) => {
-            out.skipped = Some("Another claude-sync is syncing right now".into());
-            return out;
-        }
-    };
-    let synced = with_caller("tick", async {
-        if full {
-            engine.sync_all().await
-        } else {
-            engine.sync_if_changed().await
-        }
-    })
-    .await;
-    match synced {
-        Ok(r) => out.report = Some(r),
-        Err(e) => out.error = Some(e.to_string()),
-    }
-    with_caller("personal", async {
-        if !*personal_checked {
-            match engine.personal_check_new_device().await {
-                Ok(found) => {
-                    *personal_checked = true;
-                    out.personal_offer = found == NewDevice::Offer;
-                }
-                // Offline or rate limited: asked again after the next pass.
-                Err(e) => tracing::info!("personal memory check: {e}"),
-            }
-        }
-        if let Err(e) = engine.personal_sync(!full).await {
-            tracing::info!("personal memory sync: {e}");
-        }
-    })
-    .await;
-    with_caller("ssh-peers", async {
-        let (p, host) = (paths.clone(), crate::auth::default_device_name());
-        match tokio::task::spawn_blocking(move || claude_sync_core::ssh_peers::sync_pass(&p, host))
-            .await
-        {
-            Ok(Err(e)) => tracing::info!("ssh peers: {e}"),
-            Err(e) => tracing::error!("ssh peers failed: {e}"),
-            Ok(Ok(())) => {}
-        }
-    })
-    .await;
-    let (h, p) = (hooks.clone(), paths.clone());
-    if let Err(e) = tokio::task::spawn_blocking(move || h.after_sync(&p)).await {
-        tracing::error!("after-sync hooks failed: {e}");
-    }
-    out
+/// Holds the lock and the owner file; both go when it drops.
+pub struct Instance {
+    _lock: File,
+    owner: PathBuf,
 }
 
-/// Held for as long as this daemon runs, so a second `daemon` (cron's 5-minute check)
-/// exits at once.
-pub fn single_instance(paths: &Paths) -> Option<File> {
-    std::fs::create_dir_all(&paths.state_dir).ok()?;
-    let f = OpenOptions::new()
+impl Drop for Instance {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.owner);
+        // flock goes with the open file description: a child forked right now (another thread
+        // spawning a process) would keep the lock after our fd closes, so release it by hand
+        let _ = self._lock.unlock();
+    }
+}
+
+/// `Ok(None)`: another daemon holds the lock.
+pub fn single_instance(state: &Path, version: &str) -> Result<Option<Instance>, String> {
+    std::fs::create_dir_all(state)
+        .map_err(|e| format!("cannot create {}: {e}", state.display()))?;
+    let lock = File::options()
         .create(true)
         .truncate(false)
         .write(true)
-        .open(paths.state_dir.join("daemon.lock"))
-        .ok()?;
-    match f.try_lock() {
-        Ok(()) => Some(f),
-        Err(TryLockError::WouldBlock) | Err(TryLockError::Error(_)) => None,
+        .open(lock_path(state))
+        .map_err(|e| format!("cannot open daemon.lock: {e}"))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => return Ok(None),
+        Err(TryLockError::Error(e)) => return Err(format!("cannot lock daemon.lock: {e}")),
+    }
+    write_owner(state, &own_owner(version))?;
+    let path = owner_path(state);
+    Ok(Some(Instance {
+        _lock: lock,
+        owner: path,
+    }))
+}
+
+/// The lock for this daemon; a v1 daemon holding it is handed over from first (v2-Cutover).
+/// `Ok(None)`: a live v2 daemon has it.
+pub fn take(
+    state: &Path,
+    version: &str,
+    procs: &dyn claude_sync_actions::handover::Procs,
+) -> Result<Option<Instance>, String> {
+    use claude_sync_actions::handover::*;
+    if let Some(i) = single_instance(state, version)? {
+        return Ok(Some(i));
+    }
+    let exe = std::env::current_exe().ok();
+    match free_daemon_lock(
+        state,
+        procs,
+        (std::process::id(), exe.as_deref()),
+        WAIT,
+        POLL,
+    ) {
+        Handover::Free { .. } => single_instance(state, version),
+        Handover::V2Holds => Ok(None),
+        Handover::Stuck { pid } => Err(crate::run::v1_daemon_message(pid)),
     }
 }
 
-fn poll_interval(paths: &Paths) -> Duration {
-    let s = AppState::load(paths)
-        .ok()
-        .and_then(|s| s.poll_seconds)
-        .unwrap_or(config::DEFAULT_POLL_SECONDS)
-        .max(config::MIN_POLL_SECONDS);
-    Duration::from_secs(s)
-}
-
-fn now_unix() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
-
-struct AbortOnDrop(tokio::task::JoinHandle<()>);
-
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
+/// The app's single-instance key (the plugin keys its socket, mutex or D-Bus name on the bundle
+/// identifier). The default state folder keeps `base`, so the release app stays one instance;
+/// a state folder moved by `CLAUDE_SYNC_HOME` gets its own key, so a dev build never hands over to
+/// the installed app (v1 had one key for every home).
+pub fn instance_id(base: &str, default_state: &Path, state: &Path) -> String {
+    if state == default_state {
+        return base.into();
     }
+    // FNV-1a: the same key in every process and every build, unlike `DefaultHasher`
+    let h = state
+        .to_string_lossy()
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+        });
+    format!("{base}.h{h:016x}")
 }
 
-/// Sync every poll interval until `shutdown` completes. The token file is read again at
-/// every pass, so `login` and `logout` take effect without a restart.
-pub async fn run(paths: &Paths, hooks: Arc<dyn Hooks>, shutdown: impl Future<Output = ()>) {
-    tokio::pin!(shutdown);
-    let mut cached: Option<(Signed, Arc<Engine>)> = None;
-    let mut was_limited = false;
-    let mut personal_checked = false;
-    let mut expired_logged = false;
-    tracing::info!("daemon started, version {}", config::VERSION);
-    // Idle only while the choice is off; it reads the choice every pass.
-    let activity = tokio::spawn(claude_sync_core::activity::run_loop(paths.clone()));
-    let _stop_activity = AbortOnDrop(activity);
-    loop {
-        let wait = match auth::standing(paths) {
-            Ok(Standing::In(signed)) => {
-                expired_logged = false;
-                // A token another process refreshed replaces ours (refresh tokens are
-                // used once).
-                let same = cached.as_ref().is_some_and(|(c, _)| {
-                    c.login == signed.login
-                        && c.session.tokens().access_token == signed.session.tokens().access_token
-                        && !c.session.is_expired()
-                });
-                if !same {
-                    match auth::engine(paths, &signed) {
-                        Ok(e) => {
-                            cached = Some((signed, Arc::new(e)));
-                            personal_checked = false;
-                        }
-                        Err(e) => tracing::error!("cannot start the engine: {e}"),
-                    }
-                }
-                match &cached {
-                    Some((_, engine)) => {
-                        let o = tick(
-                            engine,
-                            paths,
-                            was_limited,
-                            Duration::ZERO,
-                            &mut personal_checked,
-                            &hooks,
-                        )
-                        .await;
-                        log_outcome(&o);
-                        let limited = engine.gh.limited_until();
-                        was_limited = limited.is_some();
-                        next_wake(now_unix(), poll_interval(paths), limited)
-                    }
-                    None => poll_interval(paths),
+/// Sets `stop` on SIGTERM or Ctrl-C. The runtime lives as long as the returned value.
+fn stop_on_signal(stop: Arc<AtomicBool>) -> Result<tokio::runtime::Runtime, String> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    rt.spawn(async move {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            if let Ok(mut term) = signal(SignalKind::terminate()) {
+                tokio::select! {
+                    _ = term.recv() => {}
+                    _ = tokio::signal::ctrl_c() => {}
                 }
             }
-            Ok(Standing::Expired(l)) => {
-                cached = None;
-                match auth::recover_from_gh(paths, github::API, &l).await {
-                    Ok(true) => Duration::ZERO,
-                    Ok(false) => {
-                        if !expired_logged {
-                            expired_logged = true;
-                            tracing::error!(
-                                "sign-in of {l} expired and no gh sign-in for it was found; run `claude-sync-cli login` (sync is stopped until then)"
-                            );
-                        }
-                        poll_interval(paths)
-                    }
-                    Err(e) => {
-                        tracing::error!("sign-in recovery failed: {e}");
-                        poll_interval(paths)
-                    }
-                }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+        stop.store(true, Ordering::SeqCst);
+    });
+    Ok(rt)
+}
+
+/// Run until `stop`. `open` builds the core (called again when the token file changes);
+/// `step` is the pause between ticks (the schedule inside the core decides when to sync).
+pub fn run_loop(
+    state: &Path,
+    open: &dyn Fn() -> Result<Core, String>,
+    stop: &AtomicBool,
+    step: Duration,
+    gh: &dyn Fn() -> Option<String>,
+) {
+    // `gh auth token` at most once a minute while the sign-in is expired (never after logout).
+    let mut last_gh: Option<std::time::Instant> = None;
+    let token = state.join("token");
+    let mut seen: Option<Vec<u8>> = None;
+    let mut core: Option<Core> = None;
+    while !stop.load(Ordering::SeqCst) {
+        let now = std::fs::read(&token).ok();
+        if core.is_none() || now != seen {
+            match open() {
+                Ok(c) => core = Some(c),
+                Err(e) => tracing::error!("{e}"),
             }
-            Ok(Standing::Out) => {
-                cached = None;
-                tracing::info!("not signed in; waiting for `claude-sync-cli login`");
-                poll_interval(paths)
+            seen = now;
+        }
+        if let Some(c) = core.as_mut() {
+            if let Err(e) = c.tick() {
+                tracing::error!("sync tick failed: {e}");
             }
-            Err(e) => {
-                tracing::error!("{e}");
-                poll_interval(paths)
+            if c.token_refused() && last_gh.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
+                last_gh = Some(std::time::Instant::now());
+                crate::token::recover(c, gh);
             }
-        };
-        tokio::select! {
-            _ = tokio::time::sleep(wait) => {}
-            _ = &mut shutdown => {
-                tracing::info!("daemon stopping");
-                return;
-            }
+            // A refresh (or a recovery) the core wrote itself is not a reason to reopen it.
+            seen = std::fs::read(&token).ok();
+        }
+        let mut waited = Duration::ZERO;
+        while waited < step && !stop.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(100).min(step));
+            waited += Duration::from_millis(100);
         }
     }
 }
 
-fn log_outcome(o: &Outcome) {
-    if let Some(s) = &o.skipped {
-        tracing::info!("sync skipped: {s}");
-    }
-    if let Some(e) = &o.error {
-        tracing::warn!("sync failed: {e}");
-    }
-    if let Some(r) = &o.report {
-        for g in &r.groups {
-            if let Some(e) = &g.error {
-                tracing::warn!(group = %g.id, "sync error: {e}");
-            }
-        }
-    }
-    if o.personal_offer {
-        tracing::info!(
-            "personal memory from another device is waiting: run `claude-sync-cli personal enable`"
-        );
-    }
+/// The `daemon` command. Returns the line to print.
+pub fn run(state: &Path, version: &str, env: Env) -> Result<String, String> {
+    let Some(_one) = take(state, version, &*env.procs)? else {
+        return Ok("claude-sync-cli daemon is already running.".into());
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let _rt = stop_on_signal(stop.clone())?;
+    let open = || {
+        Core::open_locked(env.clone())
+            .map(|mut c| {
+                crate::token::dev_sign_in(&mut c, crate::token::dev_token());
+                c.start_watch();
+                c
+            })
+            .map_err(|e| e.to_string())
+    };
+    run_loop(
+        state,
+        &open,
+        &stop,
+        Duration::from_secs(1),
+        &crate::token::gh_token,
+    );
+    Ok("claude-sync-cli daemon stopped.".into())
 }
 
-/// Resolves on Ctrl-C or, on Unix, SIGTERM (what systemd sends).
-pub async fn stop_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        if let Ok(mut term) = signal(SignalKind::terminate()) {
-            tokio::select! {
-                _ = term.recv() => {}
-                _ = tokio::signal::ctrl_c() => {}
-            }
-            return;
-        }
-    }
-    let _ = tokio::signal::ctrl_c().await;
+/// For tests and the app: an `Env` whose sign-in is the token file under `state`.
+pub fn file_secrets(state: &Path) -> claude_sync_actions::Secrets {
+    claude_sync_actions::Secrets(Arc::new(FileSecrets(state.join("token"))))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use claude_sync_core::github::GitHub;
-    use claude_sync_core::group::{self, GroupFile};
-    use claude_sync_core::remote::fake::{FakeGitHub, FakeRepo};
-    use claude_sync_core::GroupId;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    #[derive(Default)]
-    struct Counting(AtomicUsize);
-    impl Hooks for Counting {
-        fn after_sync(&self, _: &Paths) {
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
-    struct World {
-        _dir: tempfile::TempDir,
-        paths: Paths,
-        repo: FakeRepo,
-        id: GroupId,
-        engine: Engine,
-    }
-
-    /// `bo` on a temp "machine", joined to ana's group in the fake GitHub.
-    async fn world() -> World {
-        let gh = FakeGitHub::new();
-        let id = GroupId::new("ana", group::DEFAULT_REPO);
-        let json = String::from_utf8(GroupFile::new("Friends", "ana").to_bytes()).unwrap();
-        let repo = FakeRepo::with_files(
-            id.clone(),
-            &[
-                (group::FILE, &json),
-                (group::CLAUDE_MD, "# Friends\n"),
-                ("agents/a.md", "base\n"),
-            ],
-        );
-        repo.add_collaborator("bo");
-        gh.add(&repo);
-        let dir = tempfile::tempdir().unwrap();
-        let paths = Paths {
-            claude_home: dir.path().join("claude"),
-            state_dir: dir.path().join("state"),
-        };
-        // Never called: every repo comes from the fake world.
-        let engine = Engine::with_remotes(
-            paths.clone(),
-            GitHub::with_api(String::new(), "http://127.0.0.1:9"),
-            "bo".into(),
-            "pc".into(),
-            Arc::new(gh.account("bo")),
-        );
-        engine.join(&id).await.unwrap();
-        World {
-            _dir: dir,
-            paths,
-            repo,
-            id,
-            engine,
-        }
-    }
-
-    #[tokio::test]
-    async fn one_tick_pulls_the_groups_change_and_runs_the_hooks() {
-        let w = world().await;
-        let agent = w.paths.claude_home.join("agents/a.md");
-        assert_eq!(std::fs::read_to_string(&agent).unwrap(), "base\n");
-        w.repo.set_file("agents/a.md", "changed\n");
-        let hooks = Arc::new(Counting::default());
-        let dynh: Arc<dyn Hooks> = hooks.clone();
-        let mut checked = false;
-        let o = tick(
-            &w.engine,
-            &w.paths,
-            true,
-            Duration::ZERO,
-            &mut checked,
-            &dynh,
-        )
-        .await;
-        assert!(o.skipped.is_none() && o.error.is_none(), "{:?}", o.error);
-        let report = o.report.unwrap();
-        assert_eq!(report.groups.len(), 1);
-        assert_eq!(report.groups[0].id, w.id);
-        assert!(report.groups[0].pulled);
-        assert_eq!(std::fs::read_to_string(&agent).unwrap(), "changed\n");
-        assert_eq!(hooks.0.load(Ordering::SeqCst), 1);
-        assert!(checked, "personal memory was looked at once");
-    }
-
-    #[tokio::test]
-    async fn a_pass_skips_while_paused_or_while_another_process_syncs() {
-        let w = world().await;
-        let hooks = Arc::new(Counting::default());
-        let dynh: Arc<dyn Hooks> = hooks.clone();
-        let mut checked = false;
-
-        // Another process holds the sync lock: nothing is synced, nothing is hooked.
-        let held = SyncLock::acquire(&w.paths, Duration::ZERO).unwrap();
-        let o = tick(
-            &w.engine,
-            &w.paths,
-            true,
-            Duration::ZERO,
-            &mut checked,
-            &dynh,
-        )
-        .await;
-        assert!(o.skipped.unwrap().contains("Another claude-sync"));
-        assert!(o.report.is_none());
-        drop(held);
-
-        // Paused: the loop's passes skip, a person's `sync` does not.
-        let mut st = AppState::load(&w.paths).unwrap();
-        st.paused = true;
-        st.save(&w.paths).unwrap();
-        let o = tick(
-            &w.engine,
-            &w.paths,
-            false,
-            Duration::ZERO,
-            &mut checked,
-            &dynh,
-        )
-        .await;
-        assert_eq!(o.skipped.as_deref(), Some("Syncing is paused"));
-        let o = tick(
-            &w.engine,
-            &w.paths,
-            true,
-            Duration::ZERO,
-            &mut checked,
-            &dynh,
-        )
-        .await;
-        assert!(o.report.is_some());
-        assert_eq!(hooks.0.load(Ordering::SeqCst), 1);
+    #[test]
+    fn separate_state_folders_are_separate_app_instances_the_default_one_keeps_its_name() {
+        let home = Path::new("/home/ann");
+        let default = home.join(".claude-sync");
+        let base = "com.example.app";
+        assert_eq!(instance_id(base, &default, &default), base);
+        let a = instance_id(base, &default, Path::new("/tmp/dev-a"));
+        let b = instance_id(base, &default, Path::new("/tmp/dev-b"));
+        assert_ne!(a, base);
+        assert_ne!(a, b);
+        assert_eq!(a, instance_id(base, &default, Path::new("/tmp/dev-a")));
+        // the plugin's socket path stays under the 100 characters a unix socket allows
+        assert!(format!("/tmp/{}_si.sock", a.replace(['.', '-'], "_")).len() < 100);
     }
 
     #[test]
-    fn only_one_daemon_runs() {
+    fn one_daemon_per_state_folder_and_an_owner_file_while_it_lives() {
         let d = tempfile::tempdir().unwrap();
-        let p = Paths {
-            claude_home: d.path().join("c"),
-            state_dir: d.path().join("s"),
-        };
-        let first = single_instance(&p).unwrap();
-        assert!(single_instance(&p).is_none());
+        let state = d.path().join("s");
+        let first = single_instance(&state, "9.9.9").unwrap().unwrap();
+        // a second one cannot take the lock
+        assert!(single_instance(&state, "9.9.9").unwrap().is_none());
+        let o = live_owner(&state).unwrap();
+        assert_eq!(o.pid, std::process::id());
+        assert_eq!(o.version, "9.9.9");
+        assert!(o.started > 0);
         drop(first);
-        assert!(single_instance(&p).is_some());
+        assert!(!owner_path(&state).exists());
+        assert!(live_owner(&state).is_none());
+        // the lock is free again
+        assert!(single_instance(&state, "9.9.9").unwrap().is_some());
+    }
+
+    #[test]
+    fn an_owner_file_of_a_dead_or_reused_pid_is_not_live() {
+        let d = tempfile::tempdir().unwrap();
+        let mine = Owner {
+            pid: std::process::id(),
+            started: 1, // not when this process started
+            version: "1".into(),
+            exe: "x".into(),
+        };
+        std::fs::write(owner_path(d.path()), serde_json::to_vec(&mine).unwrap()).unwrap();
+        assert!(live_owner(d.path()).is_none());
+        std::fs::write(owner_path(d.path()), b"not json").unwrap();
+        assert!(live_owner(d.path()).is_none());
     }
 }

@@ -1,0 +1,14 @@
+{
+  "0123456789abcdef0123456789abcdef01234567": {
+    "before": "Notes were saved by hand.",
+    "now": "Notes save themselves.",
+    "author": "sample"
+  },
+  "89abcdef0123456789abcdef0123456789abcdef": {
+    "now": "A faster start.",
+    "author": "sample"
+  },
+  "extraTopLevel": {
+    "unused": true
+  }
+}

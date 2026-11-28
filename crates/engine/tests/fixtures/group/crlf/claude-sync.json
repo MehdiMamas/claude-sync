@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "name": "Windows Team",
+  "members": [
+    "carol"
+  ],
+  "sync": {
+    "settings": true,
+    "claudeMd": true,
+    "skills": true,
+    "agents": true,
+    "commands": true,
+    "outputStyles": true,
+    "plugins": true
+  },
+  "autoAcceptClaudeMd": false
+}

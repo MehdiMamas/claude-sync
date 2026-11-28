@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node '/Users/mehdi/Projects/Git/claude-sync/.codex/hooks/guard-files.mjs'",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node '/Users/mehdi/Projects/Git/claude-sync/.codex/hooks/format-rust.mjs'",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

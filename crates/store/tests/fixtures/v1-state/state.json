@@ -1,0 +1,9 @@
+{
+  "login": "sample-user",
+  "deviceName": "sample-laptop",
+  "groups": ["sample-org/friends-data", "sample-org/team-data"],
+  "pollSeconds": 120,
+  "paused": true,
+  "disabled": ["sample-org/team-data"],
+  "githubApp": false
+}

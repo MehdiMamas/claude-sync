@@ -88,6 +88,38 @@ describe("GET /api/update", () => {
     assert.equal(body.url, "https://relay.example.test/api/download/105");
   });
 
+  describe("aarch64 Linux (no desktop build)", () => {
+    const CLI = "claude-sync-cli-aarch64-unknown-linux-gnu.tar.gz";
+    const withCli = [...FULL, CLI, `${CLI}.sha256`];
+
+    it("answers with the command-line archive and no signature when it and its .sha256 are in the release", async () => {
+      fm.on("GET", `${REPO}/releases/latest`, release("v0.3.0", withCli));
+      const res = await update(updateReq("linux", "aarch64", "0.2.0"));
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), {
+        version: "0.3.0",
+        url: "https://relay.example.test/api/download/107",
+        signature: "",
+      });
+      assert.equal(fm.calls.filter((c) => c.url.includes("/releases/assets/")).length, 0);
+    });
+
+    it("204 without the .sha256, and 204 when already current", async () => {
+      fm.on("GET", `${REPO}/releases/latest`, release("v0.3.0", [...FULL, CLI]));
+      assert.equal((await update(updateReq("linux", "aarch64", "0.2.0"))).status, 204);
+      resetUpdateCache();
+      fm.on("GET", `${REPO}/releases/latest`, release("v0.3.0", withCli));
+      assert.equal((await update(updateReq("linux", "aarch64", "0.3.0"))).status, 204);
+    });
+
+    it("leaves the other targets alone", async () => {
+      fm.on("GET", `${REPO}/releases/latest`, release("v0.3.0", withCli));
+      fm.on("GET", `${REPO}/releases/assets/106`, new Response(SIG_MAC));
+      const res = await update(updateReq("linux", "x86_64", "0.2.0"));
+      assert.equal(((await res.json()) as { url: string }).url, "https://relay.example.test/api/download/105");
+    });
+  });
+
   it("uses RELAY_PUBLIC_URL for the download url", async () => {
     setEnv({ RELAY_PUBLIC_URL: "https://claude-sync-relay.vercel.app/" });
     const res = await update(updateReq("windows", "x86_64", "0.1.0"));

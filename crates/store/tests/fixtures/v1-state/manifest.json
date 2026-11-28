@@ -1,0 +1,8 @@
+{
+  "files": { "skills/demo/SKILL.md": { "owner": "sample-org/friends-data", "hash": "abc123" } },
+  "marketplaces": {},
+  "groups": {},
+  "order": ["sample-org/friends-data"],
+  "createdDirs": ["skills/demo"],
+  "createdClaudeMd": false
+}

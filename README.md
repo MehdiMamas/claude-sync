@@ -149,9 +149,9 @@ pnpm -C app tauri dev
 
 The layout:
 
-- `crates/core`: the sync engine (Rust library `claude-sync-core`).
+- `crates/engine` (pure rules), `crates/github`, `crates/store`, `crates/fs`, `crates/actions`: the sync engine in layers; `crates/cli`: the command line. See [docs/architecture.md](docs/architecture.md) §2.
 - `app/src-tauri`: the desktop app (Tauri 2): tray, background sync, commands for the window.
-- `app/ui`: the app's window (TypeScript and Vite, no framework).
+- `app/ui`: the app's window (React, TypeScript and Vite).
 - `relay/`: the web service for updates and feedback ([relay/README.md](relay/README.md)).
 
 `pnpm -C app/ui dev` serves the window in a browser with a fake backend (`?signedOut`, `?empty` and `?noHistory` show other states).

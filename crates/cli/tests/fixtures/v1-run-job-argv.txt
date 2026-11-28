@@ -1,0 +1,2 @@
+run-job acme/a setup-scout
+run-job acme/a setup-scout --now

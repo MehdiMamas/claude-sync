@@ -1,2 +1,5 @@
 * text=auto
 *.sh text eol=lf
+crates/cli/tests/fixtures/** -text
+crates/store/tests/fixtures/** -text
+crates/engine/tests/fixtures/** -text

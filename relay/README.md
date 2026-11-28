@@ -75,7 +75,7 @@ Body (JSON, at most 4.5 MB, the Vercel limit):
 
 The screenshot type is checked by its magic bytes. The app should send at most the last ~500 KB of logs so the whole body stays under 4.5 MB.
 
-1. Title, description and logs are redacted again (the patterns of `crates/core/src/secrets.rs` plus `Bearer <token>`), then the logs are cut to their last 200 KB.
+1. Title, description and logs are redacted again (the patterns of `crates/engine/src/secrets.rs` plus `Bearer <token>`), then the logs are cut to their last 200 KB.
 2. The issue goes to `FEEDBACK_REPO`, opened with the caller's token, so GitHub shows the user as its author. It has the title and a body with the description, kind, app version and OS. Nothing from the user's disk goes into it, and no labels yet.
 3. The screenshot (`screenshot.png` or `.jpg`), the logs (`logs.txt`) and `report.json` (issue repo, number and URL, login, kind, app version, OS, time) are committed with the relay token to the private `FEEDBACK_ATTACHMENTS_REPO` at `issues/<number>/`, as one commit on its default branch (Git Data API: blobs, tree, commit, then the ref, retried when another post moved the ref first). Skipped when there is neither a screenshot nor logs. Best effort: on a failure the issue body says the attachments could not be stored. Because this runs after the create, a refused issue leaves no files behind.
 4. GitHub drops labels and milestone sent by someone without push access, so the relay then sets labels `feedback` and `type:bug` / `type:idea` and the milestone with its own token (`PATCH /issues/{n}`, which also rewrites the body when storing failed). This comes last because the triage script (below) reads the attachments. Best effort: a failure is logged and the post still answers 201.
@@ -121,7 +121,7 @@ If you ever run it in CI instead, the runner must sign in with `CLAUDE_CODE_OAUT
 
 ## Install page
 
-`GET /install` is a self-contained page for people: **Sign in with GitHub**, then buttons for the latest release's Windows `-setup.exe` and macOS `.dmg`, the version, and the macOS first-run steps (the build is not notarized). The group README links to it.
+`GET /install` redirects to the Releases page of `RELEASES_REPO` (v2; group READMEs already in the field link to it). The sign-in routes below are kept but no page uses them.
 
 - `GET /api/install/login` redirects to GitHub's OAuth web flow (scope `read:user` only) with a random `state` in a 10-minute HttpOnly, Secure, SameSite=Lax cookie.
 - `GET /api/install/callback` checks `state` against the cookie, exchanges the code with the client secret, reads the login with `GET /user`, **discards the token** (never stored or logged) and sets the `cs_install` session cookie: `<login + expiry>.<HMAC-SHA256 with INSTALL_SESSION_SECRET>`, 1 day, HttpOnly, Secure, SameSite=Lax.

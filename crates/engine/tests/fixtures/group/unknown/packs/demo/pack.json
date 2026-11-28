@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "id": "demo",
+  "title": "Demo pack",
+  "summary": "An example opt-in pack.",
+  "needs": [
+    {
+      "name": "Example CLI",
+      "url": "https://example.com/cli"
+    }
+  ],
+  "os": [
+    "macos",
+    "linux"
+  ],
+  "plugins": [
+    "helper@demo-market"
+  ],
+  "jobs": [
+    "morning-digest"
+  ],
+  "files": [
+    "skills/hello",
+    "agents/reviewer.md"
+  ],
+  "claudeMd": "CLAUDE.md",
+  "setup": "setup.md",
+  "check": {
+    "run": [
+      "example"
+    ],
+    "retries": 3
+  },
+  "hostCarryOver": false,
+  "order": 2,
+  "futureKey": [
+    1,
+    2
+  ]
+}

@@ -1,0 +1,5 @@
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE0000 user@example
+# >>> claude-sync peers >>>
+from="100.64.0.0/10",no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEERPEERPEERPEERPEERPEERPEERPEER000000 claude-sync:laptop
+# <<< claude-sync peers <<<
+ssh-rsa AAAAB3NzaC1yc2EEXAMPLE later@example

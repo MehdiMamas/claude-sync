@@ -1,26 +1,24 @@
 //! Joining a group on a machine that already has the group's text pasted into
-//! `~/.claude/CLAUDE.md` by hand (issue #158, decision C): the file is saved first to
-//! `~/.claude-sync/backup/<time>/`, the pasted text is taken out, and the sync delivers it
-//! again inside the managed block.
-use claude_sync_core::apply::{BLOCK_BEGIN, BLOCK_END};
-use claude_sync_core::{GroupId, Paths};
-use std::path::PathBuf;
+//! `~/.claude/CLAUDE.md` by hand: the file is saved first to `<state>/backup/<time>/`, the
+//! pasted text is taken out, and the sync delivers it again inside the managed block.
+use claude_sync_engine::formats::text::{BLOCK_BEGIN, BLOCK_END};
+use std::path::{Path, PathBuf};
 
 /// Smallest run of the group's lines that counts as "the group text pasted in".
 const MIN_RUN: usize = 3;
 
-/// Copy `~/.claude/CLAUDE.md` to `<state>/backup/<time>/CLAUDE.md`. `None`: no such file.
-pub fn backup(paths: &Paths) -> Result<Option<PathBuf>, String> {
-    let src = paths.claude_home.join("CLAUDE.md");
+/// Copy `claude/CLAUDE.md` to `<state>/backup/<UTC time>/CLAUDE.md`. `None`: no such file.
+pub fn backup(claude: &Path, state: &Path) -> Result<Option<PathBuf>, String> {
+    let src = claude.join("CLAUDE.md");
     if !src.is_file() {
         return Ok(None);
     }
     let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
-    let mut dir = paths.state_dir.join("backup").join(&stamp);
+    let mut dir = state.join("backup").join(&stamp);
     let mut n = 1;
     while dir.exists() {
         n += 1;
-        dir = paths.state_dir.join("backup").join(format!("{stamp}-{n}"));
+        dir = state.join("backup").join(format!("{stamp}-{n}"));
     }
     let err = |e: std::io::Error| format!("cannot back up {}: {e}", src.display());
     std::fs::create_dir_all(&dir).map_err(err)?;
@@ -54,7 +52,7 @@ pub fn strip_inlined(existing: &str, group_text: &str) -> (String, usize) {
     let mut i = 0;
     let mut removed = 0;
     while i < lines.len() {
-        let mut best = (0usize, 0usize); // (length in existing lines, non-blank lines)
+        let mut best = 0usize;
         if !protected[i] && !lines[i].trim_end().is_empty() {
             for j in 0..group.len() {
                 if group[j] != lines[i].trim_end() {
@@ -73,17 +71,17 @@ pub fn strip_inlined(existing: &str, group_text: &str) -> (String, usize) {
                 while k > 0 && group[j + k - 1].is_empty() {
                     k -= 1;
                 }
-                if solid >= need && k > best.0 {
-                    best = (k, solid);
+                if solid >= need && k > best {
+                    best = k;
                 }
             }
         }
-        if best.0 > 0 {
-            for flag in keep.iter_mut().skip(i).take(best.0) {
+        if best > 0 {
+            for flag in keep.iter_mut().skip(i).take(best) {
                 *flag = false;
             }
-            removed += best.0;
-            i += best.0;
+            removed += best;
+            i += best;
         } else {
             i += 1;
         }
@@ -96,24 +94,19 @@ pub fn strip_inlined(existing: &str, group_text: &str) -> (String, usize) {
     (out, removed)
 }
 
-/// After a join: take the pasted group text out of `~/.claude/CLAUDE.md`. Returns the
-/// number of lines removed.
-pub fn remove_inlined(paths: &Paths, group: &GroupId) -> Result<usize, String> {
-    let copy = paths
-        .group_dir(group)
-        .join(claude_sync_core::group::CLAUDE_MD);
-    let target = paths.claude_home.join("CLAUDE.md");
-    let (Ok(group_text), Ok(existing)) = (
-        std::fs::read_to_string(&copy),
-        std::fs::read_to_string(&target),
-    ) else {
+/// Take the pasted group text out of `claude/CLAUDE.md`; the number of lines removed.
+pub fn remove_inlined(claude: &Path, group_text: &str) -> Result<usize, String> {
+    let target = claude.join("CLAUDE.md");
+    let Ok(existing) = std::fs::read_to_string(&target) else {
         return Ok(0);
     };
-    let (stripped, removed) = strip_inlined(&existing, &group_text);
+    let (stripped, removed) = strip_inlined(&existing, group_text);
     if removed == 0 {
         return Ok(0);
     }
-    claude_sync_core::state::write_atomic(&target, stripped.as_bytes())
+    let tmp = target.with_extension("md.tmp");
+    std::fs::write(&tmp, stripped.as_bytes())
+        .and_then(|_| std::fs::rename(&tmp, &target))
         .map_err(|e| format!("cannot write {}: {e}", target.display()))?;
     Ok(removed)
 }
@@ -145,35 +138,43 @@ mod tests {
     #[test]
     fn a_stray_line_or_two_is_not_the_group_text() {
         let existing = "- Use worktrees.\n- Run tests first.\nsomething else\n";
-        let (out, removed) = strip_inlined(existing, GROUP);
-        assert_eq!(out, existing);
-        assert_eq!(removed, 0);
+        assert_eq!(strip_inlined(existing, GROUP), (existing.to_string(), 0));
     }
 
     #[test]
     fn a_short_group_text_is_matched_whole() {
-        let (out, removed) = strip_inlined("a\nOnly line\nb\n", "Only line\n");
-        assert_eq!(out, "a\nb\n");
-        assert_eq!(removed, 1);
+        assert_eq!(
+            strip_inlined("a\nOnly line\nb\n", "Only line\n"),
+            ("a\nb\n".to_string(), 1)
+        );
         assert_eq!(strip_inlined("a\n", "").1, 0);
     }
 
     #[test]
     fn backup_copies_the_file_and_never_overwrites() {
         let d = tempfile::tempdir().unwrap();
-        let p = Paths {
-            claude_home: d.path().join("claude"),
-            state_dir: d.path().join("state"),
-        };
-        assert_eq!(backup(&p).unwrap(), None);
-        std::fs::create_dir_all(&p.claude_home).unwrap();
-        std::fs::write(p.claude_home.join("CLAUDE.md"), "mine").unwrap();
-        let a = backup(&p).unwrap().unwrap();
-        let b = backup(&p).unwrap().unwrap();
+        let (claude, state) = (d.path().join("claude"), d.path().join("state"));
+        assert_eq!(backup(&claude, &state).unwrap(), None);
+        std::fs::create_dir_all(&claude).unwrap();
+        std::fs::write(claude.join("CLAUDE.md"), "mine").unwrap();
+        let a = backup(&claude, &state).unwrap().unwrap();
+        let b = backup(&claude, &state).unwrap().unwrap();
         assert_ne!(a, b);
         assert_eq!(
             std::fs::read_to_string(a.join("CLAUDE.md")).unwrap(),
             "mine"
         );
+    }
+
+    #[test]
+    fn remove_inlined_rewrites_only_when_something_went() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("CLAUDE.md"), format!("mine\n{GROUP}")).unwrap();
+        assert_eq!(remove_inlined(d.path(), GROUP).unwrap(), 5);
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("CLAUDE.md")).unwrap(),
+            "mine\n"
+        );
+        assert_eq!(remove_inlined(d.path(), GROUP).unwrap(), 0);
     }
 }

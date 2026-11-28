@@ -98,42 +98,27 @@ function Compare-Semver($A, $B) {
 }
 
 # --- version files ----------------------------------------------------------------
-# Every place the app version lives (found with an uncapped grep); scripts/bump-version.mjs
-# has the same list, keep them in step. The app and the core
-# take theirs from [workspace.package] (version.workspace = true), and tauri.conf.json has
-# no "version", so Tauri uses the Cargo one.
+# scripts/bump-version.mjs owns the list of files and patterns; this script only calls it and
+# puts the files back after a dry run.
 
 $Utf8 = New-Object System.Text.UTF8Encoding $false
+$VersionFiles = @('Cargo.toml', 'Cargo.lock', 'app/package.json', 'app/ui/package.json')
+$Bump = Join-Path $Root 'scripts/bump-version.mjs'
 
-$VersionFiles = @(
-  @{ Path = 'Cargo.toml'; Pattern = '(?m)(^\[workspace\.package\][^\[]*?^version = ")([^"]+)(")' },
-  @{ Path = 'Cargo.lock'; Pattern = '(?m)(^name = "claude-sync-app"\r?\nversion = ")([^"]+)(")' },
-  @{ Path = 'Cargo.lock'; Pattern = '(?m)(^name = "claude-sync-core"\r?\nversion = ")([^"]+)(")' },
-  @{ Path = 'app/package.json'; Pattern = '(?m)(^  "version": ")([^"]+)(")' },
-  @{ Path = 'app/ui/package.json'; Pattern = '(?m)(^  "version": ")([^"]+)(")' }
-)
-
-function Read-Text([string]$Rel) { [System.IO.File]::ReadAllText((Join-Path $Root $Rel)) }
-
-function Current-Versions {
-  foreach ($f in $VersionFiles) {
-    $m = [regex]::Match((Read-Text $f.Path), $f.Pattern)
-    if (-not $m.Success) { Die "no version found in $($f.Path) (pattern $($f.Pattern))" }
-    [pscustomobject]@{ Path = $f.Path; Version = $m.Groups[2].Value }
-  }
+function Current-Version {
+  $v = (node $Bump --print)
+  if ($LASTEXITCODE -ne 0) { Die "the version files disagree or are unreadable: $v" }
+  $v.Trim()
 }
 
 $Backups = @{}
 function Set-Versions([string]$New) {
-  foreach ($f in $VersionFiles) {
-    $abs = Join-Path $Root $f.Path
+  foreach ($rel in $VersionFiles) {
+    $abs = Join-Path $Root $rel
     if (-not $Backups.ContainsKey($abs)) { $Backups[$abs] = [System.IO.File]::ReadAllBytes($abs) }
-    $text = [System.IO.File]::ReadAllText($abs)
-    $re = New-Object System.Text.RegularExpressions.Regex $f.Pattern
-    $eval = [System.Text.RegularExpressions.MatchEvaluator] { param($m) $m.Groups[1].Value + $New + $m.Groups[3].Value }
-    $out = $re.Replace($text, $eval, 1)
-    [System.IO.File]::WriteAllText($abs, $out, $Utf8)
   }
+  node $Bump $New
+  if ($LASTEXITCODE -ne 0) { throw "bump-version failed (exit $LASTEXITCODE)" }
 }
 function Restore-Versions {
   foreach ($abs in $Backups.Keys) { [System.IO.File]::WriteAllBytes($abs, $Backups[$abs]) }
@@ -148,12 +133,7 @@ if (-not $target) { Die "-Version must be semver like 0.2.0 or 0.2.0-rc.1 (no le
 if ($DryRun -and $Publish) { Die '-DryRun and -Publish cannot be combined' }
 if ($Publish) { $NoBump = $true }
 
-$versions = @(Current-Versions)
-$distinct = @($versions | Select-Object -ExpandProperty Version -Unique)
-if ($distinct.Count -ne 1) {
-  Die ("the version files disagree: " + (($versions | ForEach-Object { "$($_.Path)=$($_.Version)" }) -join ', '))
-}
-$current = $distinct[0]
+$current = Current-Version
 $cmp = Compare-Semver $target (Parse-Semver $current)
 if ($NoBump) {
   if ($cmp -ne 0) {
@@ -224,8 +204,8 @@ try {
   if (-not $NoBump) {
     Info "version $current -> $Version"
     Set-Versions $Version
-    $after = @(Current-Versions | Where-Object { $_.Version -ne $Version })
-    if ($after.Count -gt 0) { throw "version bump missed: $(($after | ForEach-Object { $_.Path }) -join ', ')" }
+    node $Bump --check $Version
+    if ($LASTEXITCODE -ne 0) { throw "version bump missed a file" }
   }
 
   Info 'building the NSIS installer and its updater signature'

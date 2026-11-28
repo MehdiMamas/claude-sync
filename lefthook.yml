@@ -1,0 +1,27 @@
+# Git hooks (https://lefthook.dev). Installed by `pnpm install` at the repo root.
+# pre-commit: fast checks on what is staged. pre-push: the full local suite (scripts/check.sh).
+# Windows-only and Linux-only issues are caught by CI, which every PR must pass before merge.
+pre-commit:
+  parallel: true
+  commands:
+    secrets:
+      run: gitleaks git --pre-commit --staged --redact --no-banner
+    rust-fmt:
+      glob: "*.rs"
+      run: cargo fmt --all -- --check
+    rust-clippy:
+      glob: "*.rs"
+      run: cargo clippy -q --workspace --all-targets -- -D warnings
+    ui-lint:
+      root: "app/ui/"
+      glob: "*.{ts,tsx,js,json,css}"
+      run: pnpm exec biome check --no-errors-on-unmatched {staged_files}
+    ui-types:
+      root: "app/ui/"
+      glob: "*.{ts,tsx}"
+      run: pnpm exec tsc --noEmit -p .
+
+pre-push:
+  commands:
+    check:
+      run: scripts/check.sh

@@ -1,0 +1,7 @@
+{
+  "jobs": {
+    "nightly": { "group": "sample-org/friends-data", "accepted": "old-hash", "enabled": false, "claude": "/usr/local/bin/claude", "registered": "spec-1", "error": null },
+    "weekly": { "group": "sample-org/team-data", "claude": null, "registered": null, "error": "no claude" }
+  },
+  "autoAccept": ["sample-org/team-data"]
+}
