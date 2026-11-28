@@ -143,20 +143,29 @@ pub fn plan(remote: &FileSet, base: &FileSet, local: &FileSet, o: &Opts) -> Plan
             both_changed(&mut out, o, p, (b, l, r), &mut total);
         }
     }
-    hold_secrets(&mut out, base);
+    hold_secrets(&mut out, base, remote);
     out
 }
 
 /// The one secret scan: every push, whichever branch made it, is scanned here. A hit stays
-/// local (not pushed, base kept as it was so the next pass tries again).
-fn hold_secrets(out: &mut Plan, base: &FileSet) {
+/// local (not pushed; a hit on a line the remote already has is no new leak, base kept as it was so the next pass tries again).
+fn hold_secrets(out: &mut Plan, base: &FileSet, remote: &FileSet) {
     let hits: Vec<(String, Hit)> = out
         .pushes
         .iter()
         .filter_map(|(p, v)| {
-            let hit = scan(&String::from_utf8_lossy(v.as_ref()?))
+            let text = String::from_utf8_lossy(v.as_ref()?).into_owned();
+            // a line already in base or remote is on the remote: pushing it leaks nothing new
+            let known: BTreeSet<&[u8]> = [base.get(p), remote.get(p)]
                 .into_iter()
-                .next()?;
+                .flatten()
+                .flat_map(|f| f.split(|c| *c == b'\n'))
+                .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
+                .collect();
+            let lines: Vec<&str> = text.split('\n').collect();
+            let hit = scan(&text)
+                .into_iter()
+                .find(|h| !known.contains(lines[h.line - 1].as_bytes()))?;
             Some((p.clone(), hit))
         })
         .collect();

@@ -36,3 +36,14 @@ fn unchanged_crlf_local_with_a_remote_change_is_no_conflict() {
     assert!(pl.conflicts.is_empty());
     assert_eq!(pl.writes.get("CLAUDE.md"), remote.get("CLAUDE.md"));
 }
+
+#[test]
+fn a_secret_line_already_on_the_remote_does_not_hold_the_merged_push() {
+    let token = format!("ghp_{}", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8");
+    let base = set("- a\n");
+    let local = set("- a\n- c\n");
+    let remote = set(&format!("- a\n- key {token}\n"));
+    let pl = plan(&remote, &base, &local, &opts());
+    assert!(pl.pushes.contains_key(P), "held: {:?}", pl.secrets);
+    assert!(pl.secrets.is_empty());
+}
