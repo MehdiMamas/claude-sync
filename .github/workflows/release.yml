@@ -375,7 +375,7 @@ jobs:
           pnpm -C app install --frozen-lockfile
           for f in dist/release/$VERSION/claude-sync-cli-*.zip dist/release/$VERSION/claude-sync-cli-*.tar.gz; do
             [ -f "$f" ] || continue
-            pnpm -C app tauri signer sign --password "" "$GITHUB_WORKSPACE/$f"
+            pnpm -C app tauri signer sign --password "" "$(pwd)/$f"
             test -s "$f.sig"
           done
           ls -l dist/release/$VERSION
